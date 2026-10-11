@@ -26,7 +26,7 @@ const zhTW = {
   "settings.modeSmart": "智慧模式",
   "settings.modeAll": "攔截所有",
   "settings.hintSmart": "綜合檔名、型別、大小智慧判斷",
-  "settings.hintAll": "攔截所有下載（除排除網網域外）",
+  "settings.hintAll": "攔截所有下載（除排除網域外）",
   "settings.localDownloadHint":
     "網頁本地生成的 blob:/data: 檔案不支援接管，將由瀏覽器下載",
   "settings.minFileSize": "最小檔案大小",
@@ -122,18 +122,18 @@ const zhTW = {
 
 
   // Domain exclusion
-  "domain.title": "排除網網域",
-  "domain.addTitle": "手動新增網網域",
+  "domain.title": "排除網域",
+  "domain.addTitle": "手動新增網域",
   "domain.add": "新增",
   "domain.cancel": "取消",
-  "domain.placeholder": "輸入網網域，如 example.com",
+  "domain.placeholder": "輸入網域，如 example.com",
   "domain.currentSite": "當前站點",
-  "domain.empty": "暫無排除網網域",
+  "domain.empty": "暫無排除網域",
   "domain.removed": "已移除 {domain}",
   "domain.exists": "{domain} 已在排除列表中",
   "domain.excluded": "已排除 {domain}",
-  "domain.invalid": "無效的網網域：{domain}",
-  "domain.cannotGetDomain": "無法獲取當前頁面網網域",
+  "domain.invalid": "無效的網域：{domain}",
+  "domain.cannotGetDomain": "無法獲取當前頁面網域",
   "domain.excludeCurrent": "排除當前站點",
 
   // Notifications
@@ -203,13 +203,13 @@ const zhTW = {
   "panel.downloadCandidate": "下載影片",
   "panel.previewTitle": "預覽",
   "panel.previewClose": "關閉預覽",
-  "panel.previewFailed": "預覽載入失敗，可能需要登入或存在跨網域限制",
+  "panel.previewFailed": "預覽載入失敗，可能需要登入或存在跨域限制",
   "panel.previewUnsupported": "該型別暫不支援預覽",
   "panel.previewFragmentUnsupported": "此分片無法獨立預覽，需合併後檢視",
   "panel.previewHlsUnsupported": "當前瀏覽器無法直接預覽 HLS，請在播放頁檢視或下載後用播放器開啟",
   "panel.previewDashUnsupported": "當前瀏覽器無法直接預覽此 DASH 流，請在播放頁檢視或下載後用播放器開啟",
   "panel.previewLimited": "預覽受限",
-  "panel.previewLimitedHint": "瀏覽器預覽受跨網域/登入限制失敗，但下載仍可能成功（引擎會帶上登入態）",
+  "panel.previewLimitedHint": "瀏覽器預覽受跨域/登入限制失敗，但下載仍可能成功（引擎會帶上登入態）",
   "panel.clearFailed": "清理預覽失敗項",
   "panel.clearFailedHint": "把預覽失敗的資源從列表隱藏（不影響其他資源，也不代表無法下載）",
   "panel.exportDebugLog": "匯出除錯記錄",
@@ -273,7 +273,7 @@ const zhTW = {
   // Options 迁移项补充说明
   "options.general.statsDesc": "重置彈出視窗中顯示的已下載/失敗計數",
   "options.rules.minFileSizeDesc": "小於該大小的檔案不會被攔截",
-  "options.rules.domainDesc": "這些網網域（含子網網域）下的下載，以及從這些網網域頁面發起的下載不會被攔截",
+  "options.rules.domainDesc": "這些網域（含子網域）下的下載，以及從這些網域頁面發起的下載不會被攔截",
 
   // 自定义协议（fluxdown://）
   "options.protocol.label": "FluxDown 自定義協議",
