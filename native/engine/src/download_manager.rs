@@ -2605,8 +2605,8 @@ pub struct DownloadManager {
     /// Auto 模式最大连接数上限（config `auto_max_connections`）。
     /// <=0 = 不限（罕见，仅显式配置），默认 [`DEFAULT_AUTO_MAX_CONNECTIONS`]。
     auto_max_connections: i32,
-    /// 下载完成后是否把文件修改时间设为服务器提供的 `Last-Modified` 时间
-    /// （config `use_server_time`，默认关闭）。
+    /// 下载完成后是否把文件修改时间设为服务器提供的原始时间（HTTP
+    /// `Last-Modified` / FTP `MDTM`；config `use_server_time`，默认关闭）。
     use_server_time: bool,
     /// 文件已存在时的处理策略（config `file_exists_behavior`，默认
     /// `Rename` = 自动重命名）。`Overwrite`/`Skip` 都只在重名冲突**只**
