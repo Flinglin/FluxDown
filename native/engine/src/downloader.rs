@@ -165,9 +165,11 @@ pub(crate) fn is_range_not_satisfiable(e: &DownloadError) -> bool {
 // Public types
 // ---------------------------------------------------------------------------
 
-/// 完成期定名（见 [`crate::naming::refine_inferred_name`]）：仅当任务名由引擎推断
-/// （`tasks.name_inferred`）时，按记录的响应命名证据与临时文件头魔数给出新名；否则
-/// 原样返回。读状态 / 读文件头失败只放弃精修，不影响下载完成。
+/// 完成期定名：任务名由引擎推断（`tasks.name_inferred`）时按记录的响应命名证据与临时
+/// 文件头魔数精修（见 [`crate::naming::refine_inferred_name`]）；显式名（用户改名 / API
+/// `out=` / CD 名）只在缺类型扩展名时按同一证据补扩展名（见
+/// [`crate::naming::complete_explicit_extension`]），其余原样返回。读状态 / 读文件头失败
+/// 只放弃精修，不影响下载完成。
 async fn refine_completed_name(p: &DownloadParams, temp_path: &Path, current: &str) -> String {
     let (inferred, resp_name, resp_mime) = match p.db.get_task_naming_state(&p.task_id).await {
         Ok(state) => state,
@@ -181,7 +183,7 @@ async fn refine_completed_name(p: &DownloadParams, temp_path: &Path, current: &s
             return current.to_string();
         }
     };
-    if !inferred {
+    if !inferred && !crate::naming::needs_type_extension(current) {
         return current.to_string();
     }
     let head = match read_file_head(temp_path, SNIFF_HEAD_BYTES).await {
@@ -201,11 +203,17 @@ async fn refine_completed_name(p: &DownloadParams, temp_path: &Path, current: &s
         mime: (!resp_mime.is_empty()).then_some(resp_mime.as_str()),
         sniffed_ext: crate::naming::sniff_extension(&head),
     };
-    match crate::naming::refine_inferred_name(current, &evidence) {
+    let refined = if inferred {
+        crate::naming::refine_inferred_name(current, &evidence)
+    } else {
+        crate::naming::complete_explicit_extension(current, &evidence)
+    };
+    match refined {
         Some(name) => {
             log_info!(
-                "[download] task {} refined inferred file name '{}' → '{}' (evidence: {:?})",
+                "[download] task {} refined {} file name '{}' → '{}' (evidence: {:?})",
                 p.task_id,
+                if inferred { "inferred" } else { "explicit" },
                 current,
                 name,
                 evidence
@@ -3848,8 +3856,8 @@ async fn run_download_inner(
     // (兄弟任务预订名),防 DB 指针别名。
     //
     // 完成期定名：引擎推断的名字（HEAD 被拒 / 无 Content-Disposition 时的 URL 占位、
-    // 无扩展名、脚本端点名）按实际响应证据与文件头魔数精修；显式名永不改。精修名
-    // 没有启动期预订，同样经下方原子占名环避让冲突。
+    // 无扩展名、脚本端点名）按实际响应证据与文件头魔数精修；显式名只在缺类型扩展名
+    // 时补扩展名，主名不改。精修名没有启动期预订，同样经下方原子占名环避让冲突。
     let target_name = refine_completed_name(p, &temp_path, &actual_name).await;
     let mut chosen = target_name.clone();
     let mut avoid: std::collections::HashSet<String> = std::collections::HashSet::new();
