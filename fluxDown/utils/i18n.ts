@@ -8,6 +8,7 @@
 
 import { browser } from 'wxt/browser';
 import zhCN from './locales/zh-CN';
+import zhTW from './locales/zh-TW';
 import en from './locales/en';
 import type { MessageKey } from './locales/zh-CN';
 
@@ -16,8 +17,9 @@ type LocaleMessages = Record<MessageKey, string>;
 const locales: Record<string, LocaleMessages> = {
   'zh': zhCN,
   'zh-CN': zhCN,
-  'zh-TW': zhCN,
-  'zh-HK': zhCN,
+  'zh-TW': zhTW,
+  'zh-HK': zhTW,
+  'zh-Hant': zhTW,
   'en': en,
 };
 
@@ -35,6 +37,7 @@ function detectBrowserLocale(): string {
   for (const lang of langs) {
     // 精确匹配 (如 zh-CN)
     if (locales[lang]) return lang;
+    if (lang.toLowerCase().startsWith('zh-hant')) return 'zh-TW';
     // 语言前缀匹配 (如 zh-TW → zh)
     const prefix = lang.split('-')[0];
     if (locales[prefix]) return prefix;
@@ -67,6 +70,7 @@ export async function initI18n(): Promise<string> {
  */
 export function setLocale(locale: string): void {
   // 精确匹配
+  if (locale.toLowerCase().startsWith('zh-hant')) locale = 'zh-TW';
   if (locales[locale]) {
     currentLocale = locale;
     currentMessages = locales[locale];
@@ -179,8 +183,9 @@ export function applyI18nToDOM(): void {
   const langMap: Record<string, string> = {
     'zh': 'zh-CN',
     'zh-CN': 'zh-CN',
-    'zh-TW': 'zh-CN',
-    'zh-HK': 'zh-CN',
+    'zh-TW': 'zh-TW',
+    'zh-HK': 'zh-TW',
+    'zh-Hant': 'zh-TW',
     'en': 'en',
   };
   document.documentElement.lang = langMap[currentLocale] || 'en';

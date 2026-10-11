@@ -140,6 +140,15 @@ impl I18nCatalog {
             return code;
         }
 
+        if (normalized.starts_with("zh-hant") || normalized == "zh-hk" || normalized == "zh-mo")
+            && self.tables.contains_key("zh-tw")
+        {
+            return self
+                .tables
+                .get_key_value("zh-tw")
+                .expect("the zh-tw table was just checked")
+                .0;
+        }
         let prefix = normalized
             .split_once('-')
             .map_or(normalized.as_str(), |(prefix, _)| prefix);
@@ -299,7 +308,7 @@ fn locale_rank(locale: &str) -> u8 {
 mod tests {
     use std::{collections::BTreeSet, sync::Arc};
 
-    use super::{I18nCatalog, I18nError, resolve_system_locale};
+    use super::{resolve_system_locale, I18nCatalog, I18nError};
 
     fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |key| {

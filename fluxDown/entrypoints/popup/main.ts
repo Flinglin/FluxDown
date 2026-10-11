@@ -1597,12 +1597,14 @@ function isZh(): boolean {
 }
 
 function updateLangButton() {
-  langLabel.textContent = isZh() ? '中' : 'EN';
-  langBtn.title = isZh() ? 'Switch to English' : '切换到中文';
+  const lang = getLocale();
+  langLabel.textContent = lang === 'zh-TW' || lang === 'zh-HK' ? '繁' : isZh() ? '简' : 'EN';
+  langBtn.title = lang === 'zh-TW' || lang === 'zh-HK' ? '切換至英文' : isZh() ? 'Switch to Traditional Chinese' : '切換至簡體中文';
 }
 
 async function toggleLang() {
-  const next = isZh() ? 'en' : 'zh-CN';
+  const current = getLocale();
+  const next = current === 'zh-TW' || current === 'zh-HK' ? 'en' : isZh() ? 'zh-TW' : 'zh-CN';
   await saveLocale(next);
   applyI18nToDOM();
   updateLangButton();
