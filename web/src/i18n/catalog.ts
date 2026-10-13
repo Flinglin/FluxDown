@@ -32,9 +32,13 @@ export const AVAILABLE_LOCALES: readonly string[] = Object.keys(TABLES).sort(
 /** 把系统/用户 locale 解析为实际可用代码。 */
 export function resolveLocale(locale: string): string {
   const normalized = normalizeLocale(locale)
-  if (normalized.startsWith('zh-hant') || normalized === 'zh-hk' || normalized === 'zh-mo') return 'zh-tw'
   if (normalized in TABLES) return normalized
-  const prefix = normalized.split('-')[0] ?? normalized
+  const [prefix = normalized, scriptOrRegion] = normalized.split('-')
+  if (prefix === 'zh') {
+    return scriptOrRegion === 'hant' || scriptOrRegion === 'tw' || scriptOrRegion === 'hk' || scriptOrRegion === 'mo'
+      ? 'zh-tw'
+      : 'zh'
+  }
   if (prefix in TABLES) return prefix
   for (const code of AVAILABLE_LOCALES) {
     if ((code.split('-')[0] ?? code) === prefix) return code

@@ -140,18 +140,17 @@ impl I18nCatalog {
             return code;
         }
 
-        if (normalized.starts_with("zh-hant") || normalized == "zh-hk" || normalized == "zh-mo")
-            && self.tables.contains_key("zh-tw")
-        {
-            return self
-                .tables
-                .get_key_value("zh-tw")
-                .expect("the zh-tw table was just checked")
-                .0;
+        let mut subtags = normalized.split('-');
+        let prefix = subtags.next().unwrap_or(&normalized);
+        if prefix == "zh" {
+            let preferred = match subtags.next() {
+                Some("hant" | "tw" | "hk" | "mo") => "zh-tw",
+                _ => "zh",
+            };
+            if let Some((code, _)) = self.tables.get_key_value(preferred) {
+                return code;
+            }
         }
-        let prefix = normalized
-            .split_once('-')
-            .map_or(normalized.as_str(), |(prefix, _)| prefix);
         if let Some((code, _)) = self.tables.get_key_value(prefix) {
             return code;
         }
@@ -308,7 +307,7 @@ fn locale_rank(locale: &str) -> u8 {
 mod tests {
     use std::{collections::BTreeSet, sync::Arc};
 
-    use super::{resolve_system_locale, I18nCatalog, I18nError};
+    use super::{I18nCatalog, I18nError, resolve_system_locale};
 
     fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |key| {
@@ -339,6 +338,43 @@ mod tests {
         let catalog = I18nCatalog::load_embedded()?;
         assert_eq!(catalog.resolve_locale("zh-Hans-CN"), "zh");
         assert_eq!(catalog.resolve_locale("zh_CN"), "zh");
+        Ok(())
+    }
+
+    #[test]
+    fn chinese_scripts_take_precedence_over_regions() -> Result<(), I18nError> {
+        let catalog = I18nCatalog::load_embedded()?;
+        for locale in [
+            "zh_TW",
+            "zh-Hant",
+            "zh-Hant-TW",
+            "zh-Hant-CN",
+            "zh-HK",
+            "zh-MO",
+            "zh-TW-u-nu-hanidec",
+            "zh-HK-u-nu-hanidec",
+            " ZH_hant_hk ",
+        ] {
+            assert_eq!(catalog.resolve_locale(locale), "zh-tw", "{locale}");
+        }
+        for locale in [
+            "zh",
+            "zh-CN",
+            "zh-SG",
+            "zh-Hans",
+            "zh-Hans-TW",
+            "zh-hantfoo",
+        ] {
+            assert_eq!(catalog.resolve_locale(locale), "zh", "{locale}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn traditional_chinese_falls_back_when_not_bundled() -> Result<(), I18nError> {
+        let catalog = I18nCatalog::from_sources(&[("en", "{}"), ("zh", "{}")])?;
+        assert_eq!(catalog.resolve_locale("zh-Hant-TW"), "zh");
+        assert_eq!(catalog.resolve_locale("zh-HK"), "zh");
         Ok(())
     }
 

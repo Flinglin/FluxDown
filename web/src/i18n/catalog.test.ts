@@ -12,6 +12,18 @@ describe('i18n catalog', () => {
     expect(resolveLocale('fr')).toBe('en')
   })
 
+  test('中文显式文字优先于地区，地区可带 Unicode 扩展', () => {
+    for (const locale of [
+      'zh_TW', 'zh-Hant', 'zh-Hant-TW', 'zh-Hant-CN', 'zh-HK', 'zh-MO',
+      'zh-TW-u-nu-hanidec', 'zh-HK-u-nu-hanidec', ' ZH_hant_hk ',
+    ]) {
+      expect(resolveLocale(locale)).toBe('zh-tw')
+    }
+    for (const locale of ['zh', 'zh-CN', 'zh-SG', 'zh-Hans', 'zh-Hans-TW', 'zh-hantfoo']) {
+      expect(resolveLocale(locale)).toBe('zh')
+    }
+  })
+
   test('占位插值：全量替换、未知占位保留、数字参数', () => {
     expect(interpolate('{n} of {n} / {m}', { n: 3 })).toBe('3 of 3 / {m}')
     expect(interpolate('Connected, latency {ms} ms', { ms: 12 })).toBe('Connected, latency 12 ms')
