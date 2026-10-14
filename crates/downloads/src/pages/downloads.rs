@@ -345,12 +345,6 @@ impl DownloadView {
         submission: NewDownloadSubmission,
         cx: &mut Context<Self>,
     ) -> gpui::Task<SubmitNotice> {
-        if self.controller.is_stale() {
-            return gpui::Task::ready(SubmitNotice {
-                ok: false,
-                message: self.strings.disconnected.to_string(),
-            });
-        }
         let starts_immediately = submission.starts_immediately();
         let port = Arc::clone(&self.port);
         cx.spawn(async move |this, cx| {

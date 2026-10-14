@@ -409,6 +409,7 @@
   "importTxtFile": "导入 TXT 文件",
   "importTxtNoUrls": "未在文件中找到有效链接",
   "importTxtFound": "已导入 {count} 个链接",
+  "downloadImportInterrupted": "导入已暂停。下列请求的结果未知，不会自动重试；请先检查下载列表，再决定是否重新提交。连接恢复后，点击“全部开始”继续导入尚未发送的链接。",
   "newDownloadNoValidUrl": "未识别到有效链接：每行一个 HTTP / FTP / 磁力 / ed2k 链接，且需位于行首。",
   "btFileSelectTitle": "选择要下载的文件",
   "btFileSelectDescSingle": "该种子包含 1 个文件，确认后开始下载。",

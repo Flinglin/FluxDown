@@ -3221,6 +3221,29 @@ impl DownloadView {
     }
 
     pub(crate) fn execute_toolbar(&mut self, action: ToolbarCommand, cx: &mut Context<Self>) {
+        if matches!(action, ToolbarCommand::PauseAll | ToolbarCommand::ResumeAll) {
+            let command = if matches!(action, ToolbarCommand::PauseAll) {
+                DownloadsCommand::PauseAll
+            } else {
+                DownloadsCommand::ResumeAll
+            };
+            // The host must close import admission during the click handler,
+            // not after another async submission has been scheduled.
+            let future = self.port.execute(command);
+            cx.spawn(async move |this, cx| {
+                let result = future.await;
+                if let Err(error) = this.update(cx, |this, cx| {
+                    this.last_error = result.as_ref().err().map(|error| {
+                        SharedString::from(error_text(this.translator.read(cx), error))
+                    });
+                    cx.notify();
+                }) {
+                    eprintln!("download view released before global command reply: {error:#}");
+                }
+            })
+            .detach();
+            return;
+        }
         let commands = self.commands_for_selection(action, cx);
         self.execute_commands(commands, cx);
     }
