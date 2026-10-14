@@ -37,8 +37,9 @@ use prompt_launch::UiLaunches;
 const IDLE_EXIT_GRACE: Duration = Duration::from_secs(15);
 const CLOSE_TO_TRAY_KEY: &str = "close_to_tray";
 const START_MINIMIZED_TO_TRAY_KEY: &str = "start_minimized_to_tray";
-/// 官方 UI 的进度窗口开关（设备本地偏好，缺省开启）。
+/// 官方 UI 的下载提示窗口开关（设备本地偏好，缺省开启）。
 const PROGRESS_WINDOW_PREF: &str = "desktop.progress_window";
+const COMPLETION_WINDOW_PREF: &str = "desktop.completion_window";
 
 /// 托盘可用性，在 runtime 启动前由宿主确定，进程生命周期内不变。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,13 +134,29 @@ fn preference_bool(preferences: &AgentPreferencesDto, key: &str, default: bool) 
         .unwrap_or(default)
 }
 
+fn task_windows_enabled(preferences: &AgentPreferencesDto) -> bool {
+    preference_bool(preferences, PROGRESS_WINDOW_PREF, true)
+        || preference_bool(preferences, COMPLETION_WINDOW_PREF, true)
+}
+
+fn has_desktop_session(availability: TrayAvailability) -> bool {
+    !matches!(
+        availability,
+        TrayAvailability::Unavailable(
+            TrayUnavailableReason::NotBuilt | TrayUnavailableReason::NoDisplay
+        )
+    )
+}
+
 /// gateway / capture / 控制器共享的外壳状态。
 pub struct ShellState {
     availability: TrayAvailability,
     ui_clients: AtomicUsize,
+    /// 已订阅事件且取得初始快照的官方 UI；hello 本身不足以安全接收瞬时任务意图。
+    ready_ui_clients: AtomicUsize,
     resident: AtomicBool,
     tray_visible: AtomicBool,
-    /// 为待确认交互 / 进度窗口拉起的桌面进程记账；回收线程在进程退出时更新。
+    /// 为待确认交互 / 下载提示窗口拉起的桌面进程及待交付意图；回收线程在进程退出时更新。
     launches: Arc<Mutex<UiLaunches>>,
     /// 本 agent 在当前 daemon 连接上是否已订阅选择请求。
     selection_subscribed: tokio::sync::Mutex<bool>,
@@ -159,6 +176,7 @@ impl ShellState {
         Arc::new(Self {
             availability,
             ui_clients: AtomicUsize::new(0),
+            ready_ui_clients: AtomicUsize::new(0),
             resident: AtomicBool::new(status.resident),
             tray_visible: AtomicBool::new(status.tray_available && status.resident),
             launches: Arc::new(Mutex::new(UiLaunches::default())),
@@ -186,16 +204,40 @@ impl ShellState {
         self.changed.notify_one();
     }
 
+    /// 初始快照成功应答后才重放：订阅早于快照，重放 sequence 严格晚于快照。
+    /// 与捕获入队共用同一把锁，避免就绪切换间隙漏掉意图；每个 ID 单独发布，消费后即移除。
+    pub fn ui_snapshot_ready(&self) {
+        let mut launches = self.launches();
+        self.ready_ui_clients.fetch_add(1, Ordering::AcqRel);
+        if !self
+            .events
+            .inspect(|snapshot| task_windows_enabled(&snapshot.preferences))
+        {
+            launches.clear_tasks();
+            return;
+        }
+        for task_id in launches.take_tasks() {
+            self.events
+                .publish(AgentEvent::CaptureTasksStarted(vec![task_id]));
+        }
+    }
+
     /// 官方 UI 断开。最后一个 UI 断开后留静默期给重连，之后若仍有待确认交互由控制循环拉起界面。
-    pub async fn ui_disconnected(&self) {
-        let previous = self
-            .ui_clients
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                Some(count.saturating_sub(1))
-            })
-            .unwrap_or_else(|_| panic!("UI client decrement always supplies an updated count"));
-        if previous <= 1 {
-            self.launches().ui_left(Instant::now());
+    pub async fn ui_disconnected(&self, was_ready: bool) {
+        {
+            let mut launches = self.launches();
+            if was_ready {
+                self.ready_ui_clients.fetch_sub(1, Ordering::AcqRel);
+            }
+            let previous = self
+                .ui_clients
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                    Some(count.saturating_sub(1))
+                })
+                .unwrap_or_else(|_| panic!("UI client decrement always supplies an updated count"));
+            if previous <= 1 {
+                launches.ui_left(Instant::now());
+            }
         }
         self.reconcile_selection(false).await;
         self.changed.notify_one();
@@ -268,29 +310,59 @@ impl ShellState {
         }
     }
 
-    /// 静默捕获建成单个任务且没有 UI 连接时，拉起界面承载该任务的进度窗口（界面收到
-    /// `--progress-task` 后按用户开始处理；已有主实例时经单实例通道转交）。进度窗口偏好关闭
-    /// （`desktop.progress_window` 为 false）或已有 UI（它会收到 `CaptureTasksStarted`）时不拉起。
-    pub fn launch_for_progress(&self, task_id: &str) {
-        let enabled = self.events.inspect(|snapshot| {
-            snapshot
-                .preferences
-                .values
-                .get(PROGRESS_WINDOW_PREF)
-                .and_then(Value::as_bool)
-                .unwrap_or(true)
-        });
-        if !enabled || self.ui_clients() > 0 {
+    /// 单任务捕获需要进度或完成提示时登记意图；批量捕获不调用此入口。
+    /// hello 后尚未取快照的 UI 仍需补投，已就绪 UI 则继续消费原始 CaptureTasksStarted。
+    pub fn launch_for_task_windows(&self, task_id: &str) {
+        if !has_desktop_session(self.availability) {
             return;
         }
-        self.launches().begin_progress(Instant::now());
-        let mut args = Vec::with_capacity(3);
-        if self.resident() {
-            args.push("--capture");
+        {
+            let mut launches = self.launches();
+            if !self
+                .events
+                .inspect(|snapshot| task_windows_enabled(&snapshot.preferences))
+            {
+                launches.clear_tasks();
+                return;
+            }
+            if self.ready_ui_clients.load(Ordering::Acquire) > 0 {
+                return;
+            }
+            launches.queue_task(task_id);
         }
-        args.extend(["--progress-task", task_id]);
-        if let Err(error) = self.launch_tracked(&args) {
-            tracing::warn!(error = %error, "could not launch desktop for progress window");
+        self.reconcile_task_windows(Instant::now());
+        self.changed.notify_one();
+    }
+
+    /// 与确认窗口共享单飞进程、退出回调和静默期；剩余重试由已有控制循环节拍触发。
+    fn reconcile_task_windows(&self, now: Instant) {
+        if self.ui_clients() > 0 || !has_desktop_session(self.availability) {
+            return;
+        }
+        let task_id = {
+            let mut launches = self.launches();
+            if !self
+                .events
+                .inspect(|snapshot| task_windows_enabled(&snapshot.preferences))
+            {
+                launches.clear_tasks();
+                return;
+            }
+            let Some(task_id) = launches.begin_task(now) else {
+                return;
+            };
+            task_id
+        };
+        // 首项保活兼容现有命令行；首个快照后也会重放，UI 必须幂等消费。
+        let resident_args = ["--capture", "--progress-task", task_id.as_str()];
+        let foreground_args = ["--progress-task", task_id.as_str()];
+        let args = if self.resident() {
+            resident_args.as_slice()
+        } else {
+            foreground_args.as_slice()
+        };
+        if let Err(error) = self.launch_tracked(args) {
+            tracing::warn!(error = %error, "could not launch desktop for task windows");
         }
     }
 
@@ -321,6 +393,12 @@ impl ShellState {
 
     /// 偏好变化后重算驻留与托盘可见；有变化时发布 `ShellChanged` 并返回 `true`。
     async fn refresh(&self) -> bool {
+        if !self
+            .events
+            .inspect(|snapshot| task_windows_enabled(&snapshot.preferences))
+        {
+            self.launches().clear_tasks();
+        }
         let (current, next) = self.events.inspect(|snapshot| {
             (
                 snapshot.shell.clone(),
@@ -411,10 +489,12 @@ pub async fn run_controller(
         // 完全退出流程中不再拉起界面：桌面进程会把刚关停的后台重新拉起来。
         if !lifecycle.quit_requested() {
             state.reconcile_prompt(Instant::now());
+            state.reconcile_task_windows(Instant::now());
         }
         #[cfg(feature = "desktop")]
         tray.update(&events);
     }
+    state.launches().clear_tasks();
 }
 
 async fn receive_action(
@@ -595,6 +675,123 @@ mod tests {
     }
 
     #[test]
+    fn either_task_window_preference_allows_launch() {
+        assert!(task_windows_enabled(&preferences(&[])));
+        assert!(task_windows_enabled(&preferences(&[
+            (PROGRESS_WINDOW_PREF, Value::Bool(false)),
+            (COMPLETION_WINDOW_PREF, Value::Bool(true)),
+        ])));
+        assert!(task_windows_enabled(&preferences(&[
+            (PROGRESS_WINDOW_PREF, Value::Bool(true)),
+            (COMPLETION_WINDOW_PREF, Value::Bool(false)),
+        ])));
+        assert!(!task_windows_enabled(&preferences(&[
+            (PROGRESS_WINDOW_PREF, Value::Bool(false)),
+            (COMPLETION_WINDOW_PREF, Value::Bool(false)),
+        ])));
+    }
+
+    #[test]
+    fn task_windows_require_a_desktop_session_not_a_working_tray() {
+        assert!(has_desktop_session(TrayAvailability::Available));
+        for reason in [
+            TrayUnavailableReason::NoHost,
+            TrayUnavailableReason::InitFailed,
+        ] {
+            assert!(has_desktop_session(TrayAvailability::Unavailable(reason)));
+        }
+        for reason in [
+            TrayUnavailableReason::NotBuilt,
+            TrayUnavailableReason::NoDisplay,
+        ] {
+            assert!(!has_desktop_session(TrayAvailability::Unavailable(reason)));
+        }
+    }
+
+    #[tokio::test]
+    async fn task_intents_replay_individually_after_snapshot_and_not_again_on_reconnect() {
+        let events = AgentEventHub::new(AgentSnapshot {
+            preferences: preferences(&[
+                (PROGRESS_WINDOW_PREF, Value::Bool(false)),
+                (COMPLETION_WINDOW_PREF, Value::Bool(true)),
+            ]),
+            ..AgentSnapshot::default()
+        });
+        let state = ShellState::new(
+            TrayAvailability::Available,
+            Arc::new(DaemonClient::disconnected()),
+            events.clone(),
+        );
+        // 首项已经在单飞启动队列里；hello 尚不足以消费它。
+        state.launches().queue_task("before-hello");
+        state.ui_connected().await;
+        let (mut receiver, _) = events.subscribe_and_snapshot();
+        state.launch_for_task_windows("during-hello");
+        // 握手后、快照前断线不能消费队列；下一条连接仍能取得全部意图。
+        state.ui_disconnected(false).await;
+        state.ui_connected().await;
+        let baseline = events.snapshot();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        state.ui_snapshot_ready();
+        for (offset, task_id) in ["before-hello", "during-hello"].into_iter().enumerate() {
+            let frame = receiver.try_recv().expect("replayed task intent");
+            assert_eq!(frame.sequence, baseline.sequence + offset as u64 + 1);
+            assert!(matches!(
+                frame.event,
+                ServiceEvent::Agent(AgentEvent::CaptureTasksStarted(ids)) if ids == [task_id]
+            ));
+        }
+        state.launch_for_task_windows("already-ready");
+        assert!(state.launches().take_tasks().is_empty());
+        state.ui_disconnected(true).await;
+        state.ui_connected().await;
+        state.launch_for_task_windows("during-reconnect");
+        state.ui_snapshot_ready();
+        let frame = receiver.try_recv().expect("new reconnect intent");
+        assert!(matches!(
+            frame.event,
+            ServiceEvent::Agent(AgentEvent::CaptureTasksStarted(ids)) if ids == ["during-reconnect"]
+        ));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        state.ui_disconnected(true).await;
+    }
+
+    #[tokio::test]
+    async fn disabling_both_windows_clears_unshown_task_intents() {
+        let events = AgentEventHub::new(AgentSnapshot {
+            preferences: preferences(&[
+                (PROGRESS_WINDOW_PREF, Value::Bool(false)),
+                (COMPLETION_WINDOW_PREF, Value::Bool(false)),
+            ]),
+            ..AgentSnapshot::default()
+        });
+        let state = ShellState::new(
+            TrayAvailability::Available,
+            Arc::new(DaemonClient::disconnected()),
+            events.clone(),
+        );
+        state.launches().queue_task("before-disabled");
+        state.refresh().await;
+        assert!(state.launches().take_tasks().is_empty());
+        state.launch_for_task_windows("while-disabled");
+        assert!(state.launches().take_tasks().is_empty());
+        let (mut receiver, _) = events.subscribe_and_snapshot();
+        state.ui_connected().await;
+        state.ui_snapshot_ready();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        state.ui_disconnected(true).await;
+    }
+
+    #[test]
     fn available_tray_follows_close_to_tray_defaulting_to_resident() {
         let status = shell_status(TrayAvailability::Available, &preferences(&[]));
         assert!(status.tray_available && status.resident);
@@ -699,7 +896,7 @@ mod tests {
             &mut idle_since,
             start + IDLE_EXIT_GRACE
         ));
-        state.ui_disconnected().await;
+        state.ui_disconnected(false).await;
         let reconnect = start + IDLE_EXIT_GRACE;
         assert!(!should_idle_exit(
             &state,

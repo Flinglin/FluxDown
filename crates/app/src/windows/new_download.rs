@@ -471,7 +471,12 @@ fn submit(submission: NewDownloadSubmission, port: &Arc<AgentDownloadsPort>, cx:
                 // 与主窗口下载页同一规则：恰好一个任务立即开始才弹进度窗口。
                 if let ([task_id], true) = (report.created_task_ids(), starts_immediately) {
                     let task_id = task_id.clone();
-                    cx.update(|cx| crate::progress_windows::user_started(task_id, cx));
+                    cx.update(|cx| {
+                        crate::progress_windows::user_started(
+                            fluxdown_ui_downloads::UserStartIntent::Created(task_id),
+                            cx,
+                        );
+                    });
                 }
                 cx.update(|cx| report.notice(translator.read(cx)))
             })
