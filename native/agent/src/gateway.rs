@@ -1981,6 +1981,7 @@ fn server_mode_denies(request: &RpcRequest, local_log_export: bool) -> bool {
                         | crate::diagnostics::ACTION_ENABLE_AUTOSTART
                         | crate::diagnostics::ACTION_OPEN_SETTINGS
                         | crate::diagnostics::ACTION_TEST_NOTIFICATION
+                        | crate::diagnostics::ACTION_FIX_COMSPEC
                 )
             }),
         _ => false,
@@ -3597,6 +3598,7 @@ mod tests {
             }),
             serde_json::json!({ "action": crate::diagnostics::ACTION_REREGISTER }),
             serde_json::json!({ "action": crate::diagnostics::ACTION_USE_THIS_INSTALL }),
+            serde_json::json!({ "action": crate::diagnostics::ACTION_FIX_COMSPEC }),
         ];
         for association in ["fluxdown", "magnet", "ed2k", "torrent"] {
             denied_repairs.push(serde_json::json!({
