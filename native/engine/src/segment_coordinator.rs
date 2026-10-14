@@ -1041,6 +1041,10 @@ impl FileSyncGate {
             // panic 也必须清掉 `syncing`，否则 sync_covering 会永远等这次 fsync。
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| file.sync_data()))
                 .unwrap_or_else(|_| Err(std::io::Error::other("background fdatasync panicked")));
+            // 先释放复制句柄再通知：Windows 上它与写入句柄共享同一文件对象，最后一个
+            // 句柄关闭时 NTFS 会把修改时间刷成当前时间。若晚于完成期 apply_server_mtime
+            // 才关闭，会覆盖服务器文件时间；等待者被唤醒前释放即排除该时序。
+            drop(file);
             {
                 let mut st = gate.inner.lock().unwrap_or_else(|e| e.into_inner());
                 st.syncing = false;

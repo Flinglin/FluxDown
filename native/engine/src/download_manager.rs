@@ -5664,6 +5664,8 @@ impl DownloadManager {
                 self.auto_failover_attempts.remove(task_id);
                 // 来源标记：插件 onDone 可能移动/改写文件，须在通知前打上。后台执行，
                 // 不阻塞 actor；BT 多文件产物是目录，由模块递归展开。
+                // 开启「使用服务器文件时间」时标记不得刷掉服务器时间（Windows NTFS
+                // 写 ADS 会改主文件修改时间）；BT / eD2k 没有服务器时间，不付回写成本。
                 if !adopted && let Some(target) = task_target_path(&task.save_dir, &task.file_name)
                 {
                     let host_url = if task.origin_url.is_empty() {
@@ -5671,10 +5673,14 @@ impl DownloadManager {
                     } else {
                         task.origin_url.clone()
                     };
+                    let keep_mtime = self.use_server_time
+                        && !is_bt_url(&task.url)
+                        && !crate::ed2k::link::is_ed2k_url(&task.url);
                     crate::mark_of_the_web::spawn_mark_downloaded(
                         target,
                         host_url,
                         task.referrer.clone(),
+                        keep_mtime,
                     );
                 }
             }

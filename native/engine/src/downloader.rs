@@ -4086,9 +4086,20 @@ pub(crate) async fn apply_server_mtime(dest: &Path, last_modified: &str, task_id
         return;
     };
     let path = dest.to_path_buf();
-    // set_times 是同步系统调用，且 Windows 上需要以写权限打开句柄。
+    // set_times 是同步系统调用，放阻塞线程池。
     let result = tokio::task::spawn_blocking(move || {
-        let file = std::fs::OpenOptions::new().write(true).open(&path)?;
+        let mut options = std::fs::OpenOptions::new();
+        // Windows 只申请 FILE_WRITE_ATTRIBUTES：仅含属性权限的打开不参与共享模式
+        // 检查，刚 rename 完时杀软 / 索引服务以拒绝共享写的方式打开文件也不会
+        // ERROR_SHARING_VIOLATION（完整写权限会因此失败、退回本地完成时间）。
+        #[cfg(windows)]
+        std::os::windows::fs::OpenOptionsExt::access_mode(
+            &mut options,
+            windows_sys::Win32::Storage::FileSystem::FILE_WRITE_ATTRIBUTES,
+        );
+        #[cfg(not(windows))]
+        options.write(true);
+        let file = options.open(&path)?;
         file.set_times(std::fs::FileTimes::new().set_modified(mtime))
     })
     .await;
