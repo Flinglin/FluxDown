@@ -163,12 +163,19 @@ fn leading_manual_url(text: &str) -> Option<&str> {
 /// 是否以可建任务的链接开头（`http(s)://` / `ftp://` / `thunder://` / `magnet:?` /
 /// `ed2k://`，忽略大小写）。
 fn starts_with_link(text: &str) -> bool {
-    ["https://", "http://", "ftp://", "thunder://", "magnet:?", "ed2k://"]
-        .into_iter()
-        .any(|scheme| {
-            text.len() >= scheme.len()
-                && text.as_bytes()[..scheme.len()].eq_ignore_ascii_case(scheme.as_bytes())
-        })
+    [
+        "https://",
+        "http://",
+        "ftp://",
+        "thunder://",
+        "magnet:?",
+        "ed2k://",
+    ]
+    .into_iter()
+    .any(|scheme| {
+        text.len() >= scheme.len()
+            && text.as_bytes()[..scheme.len()].eq_ignore_ascii_case(scheme.as_bytes())
+    })
 }
 
 /// 行内首个 `(https?|ftp|thunder)://\S+` 匹配（忽略大小写）。
