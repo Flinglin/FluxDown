@@ -13,6 +13,8 @@ GPUI 关于页更新说明（`crates/settings/src/sections/about.rs`）按 `i18n
 
 GPUI 下载设置的 User-Agent 在 `sections/user_agent.rs` 自渲染整行：标题/说明与预设下拉优先同行，按卡片实际可用宽度 flex-wrap，空间不足时下拉移到下一行；仅自定义模式在下方显示占满卡片宽度的输入框。复用设置页字号、间距和控件宽度档位，保留标题/说明搜索元数据；不按窗口单双列写死断点，也不把长输入塞进右侧控件列。
 
+GPUI 与 Web 的下载设置「线程数量 / 最大 CDN 节点数」采用「自动 / 自定义」下拉，仅自定义显示正整数输入；底层仍以 0 表示自动，不新增配置键。切回自动再选自定义时恢复当前会话记住的数量，首次自定义为线程 16 / CDN 节点 2，范围取协议目录；线程自动模式下单独显示自动模式线程上限，手动高线程数仍显示风险提示。两项不是乘法关系：CDN 数量约束节点 IP，线程数量约束单任务并发。
+
 依赖方向固定为 `i18n` / `theme` / `icon_pack` → `components` → `shell` / capability crates → `app`。`app` 只做窗口与单一 agent 会话装配；capability 之间不互相依赖。
 
 - `i18n`：`build.rs` 自动嵌入共享 `assets/i18n/*.json`；locale 规范化、英文键级回退、空值回退和插值契约跨端一致。繁体中文（台湾）资源为 `zh-TW.json`：GPUI/Web 内部代码 `zh-tw`，iOS 保留文件名大小写，扩展代码 `zh-TW`。中文显式 `Hans`/`Hant` 优先地区，无显式文字时 TW/HK/MO 使用繁中；GPUI 基础组件经 `settings::component_locale` 映射为 `zh-TW`。社区翻译后续仍由 Weblate 维护，新增语言不仅要导入词库，还须同步客户端目录、系统语言声明及资源打包。
