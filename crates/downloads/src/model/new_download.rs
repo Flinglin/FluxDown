@@ -615,6 +615,36 @@ mod tests {
         assert_eq!(entries[0].url, "https://a.example/x.zip");
     }
 
+    /// #696：`thunder://` 迅雷链接与 http(s)/ftp 同等识别（解封装由引擎建任务时完成）。
+    #[test]
+    fn parse_accepts_thunder_links() {
+        let strict = parse_entries(
+            "thunder://QUFodHRwOi8vYS5iL2MuemlwWlo=\n  out=c.zip\nTHUNDER://QUFodHRwOi8vYS5iL2QuemlwWlo= 迅雷\nhttps://a.example/x?q=1 2 thunder://QUFodHRwOi8vYS5iL2MuemlwWlo=",
+            false,
+        );
+        assert_eq!(
+            strict,
+            vec![
+                UrlEntry {
+                    url: "thunder://QUFodHRwOi8vYS5iL2MuemlwWlo=".to_owned(),
+                    file_name: "c.zip".to_owned(),
+                    ..UrlEntry::default()
+                },
+                UrlEntry {
+                    url: "THUNDER://QUFodHRwOi8vYS5iL2QuemlwWlo=".to_owned(),
+                    ..UrlEntry::default()
+                },
+                UrlEntry {
+                    url: "https://a.example/x?q=1 2".to_owned(),
+                    ..UrlEntry::default()
+                },
+            ]
+        );
+        let loose = parse_entries("迅雷：thunder://QUFodHRwOi8vYS5iL2MuemlwWlo=.\n", true);
+        assert_eq!(loose.len(), 1);
+        assert_eq!(loose[0].url, "thunder://QUFodHRwOi8vYS5iL2MuemlwWlo=");
+    }
+
     #[test]
     fn merge_imported_dedupes_by_url_and_keeps_option_lines() {
         let merged = merge_imported(
