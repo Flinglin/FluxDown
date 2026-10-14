@@ -12,6 +12,7 @@
 #[cfg(feature = "desktop")]
 pub mod host;
 mod prompt_launch;
+mod show_window;
 #[cfg(feature = "desktop")]
 mod tray_model;
 
@@ -32,11 +33,11 @@ use crate::event_hub::AgentEventHub;
 use crate::lifecycle::Lifecycle;
 use crate::power::PowerService;
 use prompt_launch::UiLaunches;
+use show_window::ShowWindowGuard;
 
 /// 非驻留模式下没有 UI、也没有任何待处理工作多久后完全退出。
 const IDLE_EXIT_GRACE: Duration = Duration::from_secs(15);
 const CLOSE_TO_TRAY_KEY: &str = "close_to_tray";
-const START_MINIMIZED_TO_TRAY_KEY: &str = "start_minimized_to_tray";
 /// 官方 UI 的下载提示窗口开关（设备本地偏好，缺省开启）。
 const PROGRESS_WINDOW_PREF: &str = "desktop.progress_window";
 const COMPLETION_WINDOW_PREF: &str = "desktop.completion_window";
@@ -158,6 +159,8 @@ pub struct ShellState {
     tray_visible: AtomicBool,
     /// 为待确认交互 / 下载提示窗口拉起的桌面进程及待交付意图；回收线程在进程退出时更新。
     launches: Arc<Mutex<UiLaunches>>,
+    /// 托盘「显示窗口」的单飞拉起；双击 / 成批点击只拉起一个桌面进程。
+    show_window: Arc<Mutex<ShowWindowGuard>>,
     /// 本 agent 在当前 daemon 连接上是否已订阅选择请求。
     selection_subscribed: tokio::sync::Mutex<bool>,
     daemon: Arc<DaemonClient>,
@@ -180,6 +183,7 @@ impl ShellState {
             resident: AtomicBool::new(status.resident),
             tray_visible: AtomicBool::new(status.tray_available && status.resident),
             launches: Arc::new(Mutex::new(UiLaunches::default())),
+            show_window: Arc::new(Mutex::new(ShowWindowGuard::default())),
             selection_subscribed: tokio::sync::Mutex::new(false),
             daemon,
             events,
@@ -200,6 +204,7 @@ impl ShellState {
     /// 官方 UI（声明 `client.selections`）完成握手。
     pub async fn ui_connected(&self) {
         self.ui_clients.fetch_add(1, Ordering::AcqRel);
+        self.show_window_guard().settled();
         self.reconcile_selection(false).await;
         self.changed.notify_one();
     }
@@ -277,6 +282,12 @@ impl ShellState {
 
     fn launches(&self) -> MutexGuard<'_, UiLaunches> {
         self.launches.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn show_window_guard(&self) -> MutexGuard<'_, ShowWindowGuard> {
+        self.show_window
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// 待确认交互发生变化：确认拉起重新计数。
@@ -384,9 +395,22 @@ impl ShellState {
         launched
     }
 
-    /// 显示（或新开）主窗口。
+    /// 显示（或新开）主窗口。上一次拉起尚未落定（进程未退出、UI 未连上）或仍在双击间隔内时
+    /// 忽略：已运行的界面会被那次拉起唤起。
     pub fn show_window(&self) {
-        if let Err(error) = crate::platform::launch_desktop(&[]) {
+        if !self.show_window_guard().try_begin(Instant::now()) {
+            tracing::debug!("desktop launch for show-window already in flight; coalesced");
+            return;
+        }
+        let guard = Arc::clone(&self.show_window);
+        let launched = crate::platform::launch_desktop_observed(&[], move || {
+            guard
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .settled();
+        });
+        if let Err(error) = launched {
+            self.show_window_guard().settled();
             tracing::warn!(error = %error, "could not launch desktop");
         }
     }
@@ -451,7 +475,7 @@ pub async fn run_controller(
     state.refresh().await;
     state.reconcile_selection(true).await;
     if host.autostart {
-        start_from_autostart(&state, &events);
+        start_from_autostart(&state);
     }
     #[cfg(feature = "desktop")]
     tray.update(&events);
@@ -605,13 +629,11 @@ async fn submit_opened_urls(gateway: &crate::gateway::GatewayService, urls: Vec<
     }
 }
 
-/// 开机自启：托盘可见且偏好「启动时最小化到托盘」时只驻留托盘，否则拉起最小化的主窗口。
-fn start_from_autostart(state: &ShellState, events: &AgentEventHub) {
-    let tray_only = state.tray_visible.load(Ordering::Acquire)
-        && events.inspect(|snapshot| {
-            preference_bool(&snapshot.preferences, START_MINIMIZED_TO_TRAY_KEY, false)
-        });
-    if tray_only {
+/// 开机自启：托盘可见（可用且驻留）时只驻留托盘，用户随时可从托盘打开窗口；托盘不可见时
+/// 没有其它入口，拉起最小化的主窗口。`start_minimized_to_tray` 只决定手动冷启动是否开窗。
+fn start_from_autostart(state: &ShellState) {
+    if state.tray_visible.load(Ordering::Acquire) {
+        tracing::info!("started at login; staying in the tray");
         return;
     }
     if let Err(error) = crate::platform::launch_desktop(&["--minimized"]) {
