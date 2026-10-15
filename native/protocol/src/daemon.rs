@@ -190,6 +190,61 @@ pub struct DaemonCreateTaskParams {
     pub name_hint: Option<String>,
 }
 
+/// `daemon.task.createMany` 单次调用的条目上限；客户端须按块拆分更大的导入。
+pub const CREATE_TASKS_MAX_ITEMS: usize = 512;
+/// `daemon.task.createMany` 幂等键的最大长度（字节）。
+pub const CREATE_TASKS_BATCH_ID_MAX_LEN: usize = 128;
+
+/// `daemon.task.createMany` 参数：一块链接共享同一份建任务选项，整块一个事务落库。
+///
+/// 幂等：同一 `batchId` 已成功落库时，重放直接返回首次结果、不再建任务；连接中断等
+/// 结果不确定的调用可以原样重发。
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonCreateTasksParams {
+    /// 调用方为每块生成的唯一键（非空，不超过 [`CREATE_TASKS_BATCH_ID_MAX_LEN`] 字节）。
+    pub batch_id: String,
+    /// 整块共享的选项。`url` / `fileName` / `checksum` 由条目决定，这里必须为空；
+    /// 不支持种子、音轨与自定义 method / body（这些只走 `daemon.task.create`）。
+    pub common: CreateTaskRequest,
+    /// 1..=[`CREATE_TASKS_MAX_ITEMS`] 条。
+    pub items: Vec<CreateTaskItem>,
+}
+
+/// `daemon.task.createMany` 的单条链接。
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTaskItem {
+    pub url: String,
+    /// 空 = 从 URL / Content-Disposition 推断；允许 `子目录/文件名`。
+    #[serde(default)]
+    pub file_name: String,
+    /// Checksum spec，格式 `algo=hexhash`（空 = 跳过校验）。
+    #[serde(default)]
+    pub checksum: String,
+}
+
+/// `daemon.task.createMany` 结果：`results` 与请求 `items` 逐条同序对应。
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonCreateTasksResult {
+    pub results: Vec<CreateTaskOutcome>,
+}
+
+/// 单条建任务结果：成功带 `taskId`（开启 URL 去重时可能是已有任务），失败带 `error`。
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTaskOutcome {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<crate::RpcErrorData>,
+}
+
 /// 批量任务操作参数（`daemon.task.pauseMany` / `daemon.task.resumeMany`）。
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

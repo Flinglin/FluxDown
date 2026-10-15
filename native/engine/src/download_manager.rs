@@ -18,7 +18,7 @@ use crate::bt_seeding::{
     SeedingStopReason, SeedingUploadSnapshot, seed_times_persist_due,
 };
 use crate::dash_downloader;
-use crate::db::Db;
+use crate::db::{CreateBatchRecord, Db, DbError, NewTaskRow};
 use crate::downloader::{self, DownloadParams, ProgressUpdate, SegmentProgressInfo};
 use crate::events::{EngineEvent, EventSink};
 use crate::ftp_downloader;
@@ -717,7 +717,7 @@ async fn scan_missing_files(
         });
 
     // 先收齐全部探测结果，再一次事务写回。逐条独立 UPDATE 在「外置盘掉线」
-    // 这类上万条同时翻转的场景下是上万次 fsync（SQLite 默认 synchronous=FULL）。
+    // 这类上万条同时翻转的场景下是上万次独立事务（写锁往返 + WAL 追加）。
     let probed: Vec<(String, bool)> = futures_util::stream::iter(probe_futures)
         .buffered(FILE_SCAN_CONCURRENCY)
         .collect::<Vec<_>>()
@@ -2129,6 +2129,214 @@ pub struct NewTaskSpec {
     pub save_site_auth: bool,
 }
 
+/// 单个任务被拒绝创建的原因（逐项拒绝，不影响同批其它任务；也是批量创建
+/// 幂等记录的一部分，故可序列化）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CreateRejection {
+    /// BT 被用户禁用（magnet / 种子字节 / 解出 BT 地址的 thunder 链接）。
+    BtDisabled,
+    /// thunder:// 链接解码失败。
+    InvalidThunderLink(String),
+    /// checksum spec 畸形（未知算法 / 哈希非十六进制 / 长度不符）。
+    InvalidChecksum(String),
+    /// 请求头无法序列化落库。
+    InvalidHeaders(String),
+}
+
+impl std::fmt::Display for CreateRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BtDisabled => formatter.write_str(BT_DISABLED_MESSAGE),
+            Self::InvalidThunderLink(reason) => write!(formatter, "invalid thunder link: {reason}"),
+            Self::InvalidChecksum(reason) => write!(formatter, "invalid checksum: {reason}"),
+            Self::InvalidHeaders(reason) => write!(formatter, "invalid request headers: {reason}"),
+        }
+    }
+}
+
+/// [`DownloadManager::create_tasks_batch`] 的单项结果（与入参同序）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BatchItemOutcome {
+    /// 新建成功的任务 ID；`dedup_same_url` 命中时为已有活跃任务的 ID。
+    Created(String),
+    /// 该项被拒绝，未创建任务。
+    Rejected(CreateRejection),
+}
+
+/// 「解析插件不可用」fail-closed 任务的错误文案。
+const RESOLVER_UNAVAILABLE_MESSAGE: &str = "解析插件不可用";
+
+/// 专属 HTTP client 缓存的容量上限；超出后整体清空重建（与 `system_client`
+/// 同风格的有界缓存，键空间由 代理×UA×TLS 策略 决定，通常只有个位数）。
+const TASK_CLIENT_CACHE_CAP: usize = 64;
+
+/// 后台元数据探测的并发上限。批量导入会一次登记上千个探测，不设闸门会同时
+/// 发起上千个 HEAD 请求。
+const META_PROBE_CONCURRENCY: usize = 8;
+
+/// 代理配置的缓存指纹：覆盖决定出口的全部字段（含鉴权与 no_proxy）。
+fn proxy_fingerprint(proxy: &ProxyConfig) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}|{}",
+        proxy.mode.as_str(),
+        proxy.proxy_type.as_str(),
+        proxy.host,
+        proxy.port,
+        proxy.username,
+        proxy.password,
+        proxy.no_proxy_list
+    )
+}
+
+/// 创建流水线「准备」阶段的产物：落库行与发布动作所需的全部内存事实。
+struct PreparedTask {
+    task_id: String,
+    /// 真实下载地址（thunder 已解码）。
+    url: String,
+    /// 落库 URL：种子文件任务为 `torrent-file://local` 哨兵。
+    db_url: String,
+    /// 展示用原始来源（thunder 原链接 / 种子任务的 http 来源）；空 = 无。
+    origin_url: String,
+    save_dir: String,
+    file_name: String,
+    /// hint 稍后下载任务的 URL 推断占位名及其「推断」标记；随创建行一并落库。
+    provisional_name: Option<(String, bool)>,
+    segments: i32,
+    hint_file_size: i64,
+    torrent_file_bytes: Vec<u8>,
+    proxy_url: String,
+    user_agent: String,
+    queue_id: String,
+    checksum: String,
+    ignore_tls_errors: bool,
+    cookies: String,
+    referrer: String,
+    extra_headers: HashMap<String, String>,
+    extra_headers_json: String,
+    selected_file_indices: Vec<i32>,
+    method: Option<String>,
+    body: Option<downloader::CapturedRequestBody>,
+    audio_url: Option<String>,
+    start_paused: bool,
+    group_id: String,
+    resolver_item: String,
+    unattended_selection: bool,
+    resolver_plugin_id: String,
+    is_bt: bool,
+}
+
+impl PreparedTask {
+    fn has_resolver(&self) -> bool {
+        !self.resolver_plugin_id.is_empty()
+    }
+
+    /// `resolver_item` 非空但未命中插件：fail-closed，任务直接以 error 落库。
+    fn resolver_unavailable(&self) -> bool {
+        !self.resolver_item.is_empty() && !self.has_resolver()
+    }
+
+    /// 稍后下载以 paused(2) 落库；正常创建 pending(0)。
+    fn initial_status(&self) -> i32 {
+        if self.start_paused { 2 } else { 0 }
+    }
+
+    fn row(&self) -> NewTaskRow<'_> {
+        let (status, error_message) = if self.resolver_unavailable() {
+            (4, RESOLVER_UNAVAILABLE_MESSAGE)
+        } else {
+            (self.initial_status(), "")
+        };
+        let (file_name, name_inferred) = match &self.provisional_name {
+            Some((name, inferred)) => (name.as_str(), *inferred),
+            None => (self.file_name.as_str(), false),
+        };
+        NewTaskRow {
+            id: &self.task_id,
+            url: &self.db_url,
+            file_name,
+            name_inferred,
+            save_dir: &self.save_dir,
+            segments: self.segments,
+            status,
+            error_message,
+            proxy_url: &self.proxy_url,
+            queue_id: &self.queue_id,
+            checksum: &self.checksum,
+            ignore_tls_errors: self.ignore_tls_errors,
+            cookies: &self.cookies,
+            referrer: &self.referrer,
+            extra_headers_json: &self.extra_headers_json,
+            origin_url: &self.origin_url,
+            audio_url: self
+                .audio_url
+                .as_deref()
+                .filter(|audio| !audio.is_empty())
+                .unwrap_or(""),
+            resolver_plugin_id: &self.resolver_plugin_id,
+            group_id: &self.group_id,
+            resolver_item: &self.resolver_item,
+            unattended: self.unattended_selection,
+            // 无人值守的 BT 任务按「全部文件」落库（三态语义见 `save_bt_selected_files`）。
+            bt_selected_files: if self.unattended_selection && self.is_bt {
+                "all"
+            } else {
+                ""
+            },
+            torrent_file_bytes: &self.torrent_file_bytes,
+        }
+    }
+}
+
+/// 单项「准备」结果。
+enum PrepareOutcome {
+    Ready(Box<PreparedTask>),
+    /// `dedup_same_url` 命中：返回已有活跃任务 ID，不创建。
+    Deduped(String),
+    Rejected(CreateRejection),
+}
+
+/// 一次创建调用内共享的只读/累积上下文：去重候选与站点凭据库各只读一次。
+struct CreateBatchContext {
+    /// 归一化 URL → 活跃任务 ID；`None` = 去重关闭（或本批无可比较 URL）。
+    /// 新接受的任务即时并入，批内重复链接因此解析为首项的 ID。
+    dedup: Option<HashMap<String, String>>,
+    site_auth: SiteAuthSession,
+}
+
+impl CreateBatchContext {
+    /// 登记已接受的任务，使同批后续重复项命中它。创建即失败（status=4）
+    /// 的任务不属于活跃集合，与逐条创建时 `active_task_urls` 的状态过滤一致。
+    fn note_accepted(&mut self, task: &PreparedTask) {
+        if let Some(active) = self.dedup.as_mut()
+            && !task.resolver_unavailable()
+        {
+            active
+                .entry(normalize_url_for_dedup(&task.db_url))
+                .or_insert_with(|| task.task_id.clone());
+        }
+    }
+}
+
+/// 站点 Basic 认证凭据库的批内会话：首次需要时读取一次，新保存的凭据在
+/// 内存中累积、批末最多写回一次。
+#[derive(Default)]
+struct SiteAuthSession {
+    store: Option<std::collections::BTreeMap<String, crate::site_auth::SiteCredential>>,
+    /// 读取失败后本批不再重试（已记录一次警告）；失败时绝不能用空库覆盖。
+    unavailable: bool,
+    /// 有新保存的凭据待写回。
+    dirty: bool,
+}
+
+/// 创建事实的发布形态。
+#[derive(Clone, Copy)]
+enum CreationAnnounce {
+    /// 单个创建：每个任务一条 [`EngineEvent::TaskChanged`]（建组/裂变抑制时不发）。
+    Single,
+    /// 批量创建：整批一条 [`EngineEvent::TasksChanged`]。
+    Batch,
+}
+
 /// [`DownloadManager::create_task_group`] 的单个组成员条目（清单条目的引擎侧
 /// 投影；`resolver_item` 拼接规则见设计文档 D5/§7.2，由调用方按
 /// `<itemId>` / `<itemId>@<variantId>` 固定规则拼接）。
@@ -2687,6 +2895,11 @@ pub struct DownloadManager {
     bt_paused_idle_since: Option<std::time::Instant>,
     /// System 代理模式下按系统代理指纹缓存的全局 client（见 `global_client`）。
     system_client: std::sync::Mutex<Option<(String, Client)>>,
+    /// 专属（任务级代理 / UA / 忽略 TLS / 队列默认 UA / Auto 代理）HTTP client 缓存，
+    /// 键 = (代理指纹, 生效 UA, ignore_tls)。构建一次约 70ms，批量导入不能逐任务重建。
+    task_clients: std::sync::Mutex<HashMap<(String, String, bool), Client>>,
+    /// 后台元数据探测的并发闸门（见 [`META_PROBE_CONCURRENCY`]）。
+    probe_gate: Arc<Semaphore>,
     /// 用户可配的最大自动重试次数（config `max_auto_retries`）。
     /// `-1` = 无限重试，`0` = 关闭，`1..=10` = 次数上限。
     max_auto_retries: i32,
@@ -2882,6 +3095,8 @@ impl DownloadManager {
             last_seed_time_persist: Mutex::new(std::time::Instant::now()),
             bt_paused_idle_since: None,
             system_client: std::sync::Mutex::new(None),
+            task_clients: std::sync::Mutex::new(HashMap::new()),
+            probe_gate: Arc::new(Semaphore::new(META_PROBE_CONCURRENCY)),
             #[cfg(feature = "plugins")]
             plugin_manager: None,
             #[cfg(feature = "plugins")]
@@ -6547,15 +6762,17 @@ impl DownloadManager {
     /// HTTP Basic 认证注入（见 [`crate::site_auth`]）。
     ///
     /// - `http_user` 非空：生成 `Authorization: Basic` 覆盖 extra_headers 中
-    ///   既有同名头；`save` 为 true 且 URL 属 http(s) 时按站点键落库。
+    ///   既有同名头；`save` 为 true 且 URL 属 http(s) 时按站点键并入会话凭据库，
+    ///   由 [`Self::flush_site_auth`] 批末写回。
     /// - `http_user` 为空：extra_headers 无 Authorization 且站点凭据库命中
     ///   该 URL 的站点键时自动注入。
     ///
     /// 凭据库读写失败仅记日志，不阻断建任务。
     async fn apply_site_auth(
         &self,
+        session: &mut SiteAuthSession,
         url: &str,
-        extra_headers: &mut std::collections::HashMap<String, String>,
+        extra_headers: &mut HashMap<String, String>,
         http_user: &str,
         http_password: &str,
         save: bool,
@@ -6563,20 +6780,11 @@ impl DownloadManager {
         use crate::site_auth;
         if !http_user.is_empty() {
             site_auth::inject_basic_auth(extra_headers, http_user, http_password);
-            if save && let Some(key) = site_auth::site_key(url) {
-                let json = match self.db.get_config(site_auth::SITE_AUTH_CONFIG_KEY).await {
-                    Ok(value) => value.unwrap_or_default(),
-                    Err(error) => {
-                        // 显式凭据已注入本任务；读取失败时不能用空库覆盖其他站点。
-                        crate::logger::report_warning(
-                            "download-manager",
-                            "load credential store before saving",
-                            &error,
-                        );
-                        return;
-                    }
-                };
-                let mut store = site_auth::parse_store(&json);
+            if save
+                && let Some(key) = site_auth::site_key(url)
+                && self.load_site_auth_store(session).await
+                && let Some(store) = session.store.as_mut()
+            {
                 store.insert(
                     key,
                     site_auth::SiteCredential {
@@ -6584,16 +6792,7 @@ impl DownloadManager {
                         pass: http_password.to_string(),
                     },
                 );
-                if let Err(e) = self
-                    .db
-                    .set_config(
-                        site_auth::SITE_AUTH_CONFIG_KEY,
-                        &site_auth::serialize_store(&store),
-                    )
-                    .await
-                {
-                    log_info!("[site-auth] save credential error: {}", e);
-                }
+                session.dirty = true;
             }
             return;
         }
@@ -6603,23 +6802,62 @@ impl DownloadManager {
         let Some(key) = site_auth::site_key(url) else {
             return;
         };
-        let json = match self.db.get_config(site_auth::SITE_AUTH_CONFIG_KEY).await {
-            Ok(value) => value.unwrap_or_default(),
+        if !self.load_site_auth_store(session).await {
+            return;
+        }
+        if let Some(cred) = session.store.as_ref().and_then(|store| store.get(&key)) {
+            site_auth::inject_basic_auth(extra_headers, &cred.user, &cred.pass);
+            log_info!("[site-auth] applied saved credential for {}", key);
+        }
+    }
+
+    /// 确保会话已载入凭据库（每个会话至多读一次库）；读取失败返回 `false`。
+    async fn load_site_auth_store(&self, session: &mut SiteAuthSession) -> bool {
+        if session.store.is_some() {
+            return true;
+        }
+        if session.unavailable {
+            return false;
+        }
+        match self
+            .db
+            .get_config(crate::site_auth::SITE_AUTH_CONFIG_KEY)
+            .await
+        {
+            Ok(value) => {
+                session.store = Some(crate::site_auth::parse_store(&value.unwrap_or_default()));
+                true
+            }
             Err(error) => {
                 crate::logger::report_warning(
                     "download-manager",
-                    "load saved site credentials",
+                    "load site credential store",
                     &error,
                 );
-                return;
+                session.unavailable = true;
+                false
             }
-        };
-        if json.is_empty() {
+        }
+    }
+
+    /// 把本批新保存的站点凭据一次性写回（无变更不写）。
+    async fn flush_site_auth(&self, session: &mut SiteAuthSession) {
+        if !session.dirty {
             return;
         }
-        if let Some(cred) = site_auth::parse_store(&json).get(&key) {
-            site_auth::inject_basic_auth(extra_headers, &cred.user, &cred.pass);
-            log_info!("[site-auth] applied saved credential for {}", key);
+        let Some(store) = session.store.as_ref() else {
+            return;
+        };
+        session.dirty = false;
+        if let Err(e) = self
+            .db
+            .set_config(
+                crate::site_auth::SITE_AUTH_CONFIG_KEY,
+                &crate::site_auth::serialize_store(store),
+            )
+            .await
+        {
+            log_info!("[site-auth] save credential error: {}", e);
         }
     }
 
@@ -6661,12 +6899,155 @@ impl DownloadManager {
             .collect())
     }
 
-    /// 创建下载任务，返回新任务 ID（插入失败时 `None`）。
+    /// 创建下载任务，返回新任务 ID（被拒绝或落库失败时 `None`）。
     ///
     /// `spec.start_paused` = 稍后下载：任务以 paused(2) 落库，不占并发、
     /// 不进等待队列，由「启动队列」按序恢复或用户手动恢复；后台元数据
     /// 探测照常进行，UI 能立即显示文件名/大小。
+    ///
+    /// 与 [`Self::create_tasks_batch`] 共用同一条「准备 → 落库 → 发布」流水线，
+    /// 单个创建就是只含一项、无幂等记录的批次，创建事实以 `TaskChanged` 发布。
     pub async fn create_task(&mut self, spec: NewTaskSpec) -> Option<String> {
+        match self
+            .create_tasks_inner(None, vec![spec], CreationAnnounce::Single)
+            .await
+        {
+            Ok(outcomes) => match outcomes.into_iter().next() {
+                Some(BatchItemOutcome::Created(task_id)) => Some(task_id),
+                Some(BatchItemOutcome::Rejected(reason)) => {
+                    log_info!("[manager] task creation rejected: {}", reason);
+                    None
+                }
+                None => None,
+            },
+            Err(error) => {
+                crate::logger::report_error("download-manager", "create task", &error);
+                None
+            }
+        }
+    }
+
+    /// 批量创建任务（幂等）。返回与 `specs` 同序的逐项结果；逐项拒绝（thunder
+    /// 解码失败 / BT 被禁用 / checksum 畸形…）不影响同批其它项。
+    ///
+    /// - 同一 `batch_id` 已提交过 → 原样返回首次结果，不创建任何任务；
+    ///   客户端可对状态不明的批次原样重发。
+    /// - 全部任务行与幂等记录在**一个事务**内落库；失败整体回滚并返回 `Err`。
+    /// - 去重候选与站点凭据库每批只读一次；`dedup_same_url` 开启时批内重复
+    ///   链接解析为首项的任务 ID（与逐条创建的结果一致）。
+    /// - 先发一条 [`EngineEvent::TasksChanged`]（整批创建事实），随后才逐项
+    ///   发 webhook / 解析失败进度 / 探测 / 入队；队列位置广播仍由脏标记合并。
+    pub async fn create_tasks_batch(
+        &mut self,
+        batch_id: &str,
+        specs: Vec<NewTaskSpec>,
+    ) -> Result<Vec<BatchItemOutcome>, DbError> {
+        if specs.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.create_tasks_inner(Some(batch_id), specs, CreationAnnounce::Batch)
+            .await
+    }
+
+    /// 单个 / 批量创建的唯一实现：读上下文 → 逐项准备 → 单事务落库 → 发布。
+    async fn create_tasks_inner(
+        &mut self,
+        batch_id: Option<&str>,
+        specs: Vec<NewTaskSpec>,
+        announce: CreationAnnounce,
+    ) -> Result<Vec<BatchItemOutcome>, DbError> {
+        if let Some(batch_id) = batch_id
+            && let Some(stored) = self.db.load_create_batch_results(batch_id).await?
+        {
+            log_info!(
+                "[manager] create batch {} already committed — replaying stored results",
+                batch_id
+            );
+            return serde_json::from_str(&stored).map_err(|error| {
+                DbError::InvalidConfig(format!("stored task create batch {batch_id}: {error}"))
+            });
+        }
+
+        // (a) 准备：纯内存判定，不触库（上下文只读一次）。
+        let mut context = self.begin_create_context(&specs).await?;
+        let mut outcomes = Vec::with_capacity(specs.len());
+        let mut prepared: Vec<PreparedTask> = Vec::with_capacity(specs.len());
+        for spec in specs {
+            match self.prepare_new_task(spec, &mut context).await {
+                PrepareOutcome::Ready(task) => {
+                    context.note_accepted(&task);
+                    outcomes.push(BatchItemOutcome::Created(task.task_id.clone()));
+                    prepared.push(*task);
+                }
+                PrepareOutcome::Deduped(existing_id) => {
+                    outcomes.push(BatchItemOutcome::Created(existing_id));
+                }
+                PrepareOutcome::Rejected(reason) => {
+                    outcomes.push(BatchItemOutcome::Rejected(reason));
+                }
+            }
+        }
+        self.flush_site_auth(&mut context.site_auth).await;
+
+        // (b) 落库：全部行 + 幂等记录同事务。没有新行且无需记录时不开事务。
+        let tasks = if prepared.is_empty() && batch_id.is_none() {
+            Vec::new()
+        } else {
+            let results = match batch_id {
+                Some(_) => Some(serde_json::to_string(&outcomes).map_err(|error| {
+                    DbError::InvalidConfig(format!("serialize task create outcomes: {error}"))
+                })?),
+                None => None,
+            };
+            let rows: Vec<NewTaskRow<'_>> = prepared.iter().map(PreparedTask::row).collect();
+            let record = batch_id
+                .zip(results.as_deref())
+                .map(|(batch_id, results)| CreateBatchRecord { batch_id, results });
+            self.db.insert_new_tasks(&rows, record).await?
+        };
+
+        // (c) 发布。
+        self.publish_created_tasks(prepared, tasks, announce).await;
+        Ok(outcomes)
+    }
+
+    /// 读取本次创建调用的共享上下文。去重开关与活跃 URL 集合各至多读一次，
+    /// 且仅当存在可比较 URL（非种子上传、URL 非空）时才读。
+    async fn begin_create_context(
+        &self,
+        specs: &[NewTaskSpec],
+    ) -> Result<CreateBatchContext, DbError> {
+        let comparable = specs
+            .iter()
+            .any(|spec| spec.torrent_file_bytes.is_empty() && !spec.url.is_empty());
+        let dedup = if comparable
+            && self.db.get_config("dedup_same_url").await?.as_deref() == Some("true")
+        {
+            let candidates = self.db.active_task_urls().await?;
+            let mut active = HashMap::with_capacity(candidates.len());
+            for (task_id, url) in candidates {
+                active
+                    .entry(normalize_url_for_dedup(&url))
+                    .or_insert(task_id);
+            }
+            Some(active)
+        } else {
+            None
+        };
+        Ok(CreateBatchContext {
+            dedup,
+            site_auth: SiteAuthSession::default(),
+        })
+    }
+
+    /// 「准备」阶段：把一份 [`NewTaskSpec`] 变成可落库/可发布的 [`PreparedTask`]，
+    /// 或判定为去重命中 / 被拒绝。除站点凭据库首次读取与 resolver 插件匹配外
+    /// 不做任何 I/O。
+    async fn prepare_new_task(
+        &self,
+        spec: NewTaskSpec,
+        context: &mut CreateBatchContext,
+    ) -> PrepareOutcome {
         let NewTaskSpec {
             mut url,
             save_dir,
@@ -6704,59 +7085,35 @@ impl DownloadManager {
                 Ok(decoded) => Some(std::mem::replace(&mut url, decoded)),
                 Err(e) => {
                     log_info!("[manager] thunder link decode failed: {}", e);
-                    return None;
+                    return PrepareOutcome::Rejected(CreateRejection::InvalidThunderLink(
+                        e.to_string(),
+                    ));
                 }
             }
         } else {
             None
         };
         // BT 禁用门禁：BT 被用户显式禁用时，拒绝创建 magnet 链接或种子文件任务。
-        // 调用方（daemon）在进入前用 `rejects_new_bt_task` 预检以回报明确原因；
-        // 这里是兜底，保证其它调用方绕过预检也不会落库。
+        // 调用方（daemon）可用 `rejects_new_bt_task` 预检；这里是兜底，
+        // 保证绕过预检的调用方也不会落库。
         if self.rejects_new_bt_task(&url, &torrent_file_bytes) {
             log_info!(
                 "[manager] BitTorrent download rejected: {}",
                 BT_DISABLED_MESSAGE
             );
-            return None;
+            return PrepareOutcome::Rejected(CreateRejection::BtDisabled);
         }
         // URL 去重（config `dedup_same_url`，默认关闭）：种子上传没有真实 URL 可比较。
-        if torrent_file_bytes.is_empty() && !url.is_empty() {
-            let dedup_enabled = match self.db.get_config("dedup_same_url").await {
-                Ok(value) => value.as_deref() == Some("true"),
-                Err(error) => {
-                    crate::logger::report_error(
-                        "download-manager",
-                        "read task URL deduplication setting",
-                        &error,
-                    );
-                    return None;
-                }
-            };
-            if dedup_enabled {
-                let candidates = match self.db.active_task_urls().await {
-                    Ok(candidates) => candidates,
-                    Err(error) => {
-                        crate::logger::report_error(
-                            "download-manager",
-                            "check task URL duplicates",
-                            &error,
-                        );
-                        return None;
-                    }
-                };
-                let normalized = normalize_url_for_dedup(&url);
-                if let Some((existing_id, _)) = candidates
-                    .iter()
-                    .find(|(_, candidate_url)| normalize_url_for_dedup(candidate_url) == normalized)
-                {
-                    log_info!(
-                        "[manager] create_task: URL already active as task {} — dedup_same_url returns existing task instead of creating a duplicate",
-                        existing_id
-                    );
-                    return Some(existing_id.clone());
-                }
-            }
+        if torrent_file_bytes.is_empty()
+            && !url.is_empty()
+            && let Some(active) = &context.dedup
+            && let Some(existing_id) = active.get(&normalize_url_for_dedup(&url))
+        {
+            log_info!(
+                "[manager] create_task: URL already active as task {} — dedup_same_url returns existing task instead of creating a duplicate",
+                existing_id
+            );
+            return PrepareOutcome::Deduped(existing_id.clone());
         }
         // BUG-CHECKSUM-PREFIX：畸形 checksum spec（未知算法 / 哈希非十六进制 /
         // 长度不符）此前要等一次完整下载结束后 verify_checksum 才报错。提前
@@ -6768,13 +7125,14 @@ impl DownloadManager {
                 "[manager] invalid checksum spec rejected at task creation: {}",
                 e
             );
-            return None;
+            return PrepareOutcome::Rejected(CreateRejection::InvalidChecksum(e.to_string()));
         }
         // HTTP Basic 认证：显式凭据 → 生成 Authorization 头
         // （覆盖捕获到的同名头）并按需保存到站点凭据库；未显式提供且头中
         // 无 Authorization → 自动套用该站点已保存的凭据。注入发生在请求
         // 上下文持久化之前，resume / probe 全链路自动携带。
         self.apply_site_auth(
+            &mut context.site_auth,
             &url,
             &mut extra_headers,
             &http_user,
@@ -6798,8 +7156,6 @@ impl DownloadManager {
         } else {
             queue_id
         };
-        let task_id = Uuid::new_v4().to_string();
-        let created_id = task_id.clone();
         // ED2K 链接自带文件名/大小/root hash：调用方未显式给名时从链接回填，
         // 并把 hint_file_size 设为链接声明的大小（run_ed2k_download 以链接为准）。
         let (file_name, hint_file_size) = if crate::ed2k::link::is_ed2k_url(&url) {
@@ -6834,7 +7190,7 @@ impl DownloadManager {
         // When segments <= 0 ("auto"), store 0 in DB and let the downloader
         // dynamically calculate the optimal count after probing file size,
         // CPU cores, and bandwidth.
-        let seg = if segments <= 0 { 0 } else { segments };
+        let segments = if segments <= 0 { 0 } else { segments };
 
         // Determine the URL to store in DB.  For .torrent file tasks, use a
         // sentinel URL since the actual content is in torrent_file_bytes.
@@ -6843,128 +7199,139 @@ impl DownloadManager {
         } else {
             url.clone()
         };
-
-        // 稍后下载以 paused(2) 落库；正常创建 pending(0)。
-        let initial_status = if start_paused { 2 } else { 0 };
-        if let Err(e) = self
-            .db
-            .insert_task_with_tls_policy(
-                &task_id,
-                &db_url,
-                &file_name,
-                &save_dir,
-                seg,
-                0,
-                &proxy_url,
-                &queue_id,
-                &checksum,
-                ignore_tls_errors,
-                initial_status,
-            )
-            .await
-        {
-            log_info!("insert_task error: {}", e);
-            return None;
-        }
-
-        // 原始来源、鉴权、种子、音轨与解析选择均属于创建任务的持久化配置。
-        // 创建配置必须全部落库后才能广播或排队，失败撤销新行，不把半成品当成功。
-        let resolver_plugin_id = self.plugin_match_resolver(&url).await;
-        let has_resolver = !resolver_plugin_id.is_empty();
-        let is_bt = is_magnet(&url) || !torrent_file_bytes.is_empty();
-        let persisted: Result<TaskInfo, downloader::DownloadError> = async {
-            if db_url != url && (url.starts_with("http://") || url.starts_with("https://")) {
-                self.db.set_task_origin_url(&task_id, &url).await?;
-            }
-            if let Some(origin) = thunder_origin_url {
-                self.db.set_task_origin_url(&task_id, &origin).await?;
-            }
-            if !cookies.is_empty() || !referrer.is_empty() || !extra_headers.is_empty() {
-                let headers_json = if extra_headers.is_empty() {
-                    String::new()
-                } else {
-                    serde_json::to_string(&extra_headers).map_err(|error| {
-                        downloader::DownloadError::Other(format!(
-                            "serialize request headers: {error}"
-                        ))
-                    })?
-                };
-                self.db
-                    .set_task_request_context(&task_id, &cookies, &referrer, &headers_json)
-                    .await?;
-            }
-            if !torrent_file_bytes.is_empty() {
-                self.db
-                    .save_torrent_file_bytes(&task_id, &torrent_file_bytes)
-                    .await?;
-            }
-            if let Some(au) = audio_url.as_ref().filter(|au| !au.is_empty()) {
-                self.db.save_audio_url(&task_id, au).await?;
-            }
-            if has_resolver {
-                self.db
-                    .set_task_resolver(&task_id, &resolver_plugin_id)
-                    .await?;
-            }
-            if !group_id.is_empty() {
-                self.db.set_task_group(&task_id, &group_id).await?;
-            }
-            if !resolver_item.is_empty() {
-                self.db
-                    .set_task_resolver_item(&task_id, &resolver_item)
-                    .await?;
-                if !has_resolver {
-                    self.db
-                        .update_task_status(&task_id, 4, "解析插件不可用")
-                        .await?;
+        // 展示用原始来源：thunder 原链接优先；其次是被哨兵替换掉的 http(s) 来源。
+        let origin_url = if let Some(origin) = thunder_origin_url {
+            origin
+        } else if db_url != url && (url.starts_with("http://") || url.starts_with("https://")) {
+            url.clone()
+        } else {
+            String::new()
+        };
+        let extra_headers_json = if extra_headers.is_empty() {
+            String::new()
+        } else {
+            match serde_json::to_string(&extra_headers) {
+                Ok(json) => json,
+                Err(error) => {
+                    return PrepareOutcome::Rejected(CreateRejection::InvalidHeaders(
+                        error.to_string(),
+                    ));
                 }
-            }
-            if unattended_selection {
-                self.db.set_task_unattended(&task_id).await?;
-                if is_bt {
-                    self.db.save_bt_selected_files(&task_id, &[], true).await?;
-                }
-            }
-            self.db.load_task_by_id(&task_id).await?.ok_or_else(|| {
-                downloader::DownloadError::Other("new task disappeared before publication".into())
-            })
-        }
-        .await;
-        let task = match persisted {
-            Ok(task) => task,
-            Err(error) => {
-                crate::logger::report_error(
-                    "download-manager",
-                    "persist new task configuration",
-                    &error,
-                );
-                if let Err(rollback_error) = self.db.delete_task(&task_id).await {
-                    crate::logger::report_error(
-                        "download-manager",
-                        "roll back new task",
-                        &rollback_error,
-                    );
-                    if let Err(status_error) = self
-                        .db
-                        .update_task_status(&task_id, 4, &format!("task creation failed: {error}"))
-                        .await
-                    {
-                        crate::logger::report_error(
-                            "download-manager",
-                            "persist failed task creation",
-                            &status_error,
-                        );
-                    }
-                }
-                return None;
             }
         };
+        let resolver_plugin_id = self.plugin_match_resolver(&url).await;
+        let is_bt = is_magnet(&url) || !torrent_file_bytes.is_empty();
+        // 稍后下载的 hint 任务（一次性 URL，不探测）：名字为空时按 URL 推断占位名
+        // （含预签名 URL 的 `response-content-disposition`），随创建行一并落库，
+        // 供 UI 立即显示；HTTP 完成期按实际 GET 响应精修。无网络 I/O。
+        let provisional_name = if start_paused
+            && resolver_plugin_id.is_empty()
+            && resolver_item.is_empty()
+            && !is_bt
+            && hint_file_size != 0
+            && file_name.is_empty()
+            && (db_url.starts_with("http://") || db_url.starts_with("https://"))
+        {
+            naming::name_from_url(&db_url).map(|resolved| {
+                let inferred = resolved.source != naming::NameSource::QueryDisposition;
+                (resolved.name, inferred)
+            })
+        } else {
+            None
+        };
+        PrepareOutcome::Ready(Box::new(PreparedTask {
+            task_id: Uuid::new_v4().to_string(),
+            url,
+            db_url,
+            origin_url,
+            save_dir,
+            file_name,
+            provisional_name,
+            segments,
+            hint_file_size,
+            torrent_file_bytes,
+            proxy_url,
+            user_agent,
+            queue_id,
+            checksum,
+            ignore_tls_errors,
+            cookies,
+            referrer,
+            extra_headers,
+            extra_headers_json,
+            selected_file_indices,
+            method,
+            body,
+            audio_url,
+            start_paused,
+            group_id,
+            resolver_item,
+            unattended_selection,
+            resolver_plugin_id,
+            is_bt,
+        }))
+    }
 
-        // 尚未 spawn/probe，完整事实必定先于所有进度帧；不用完成后再读库补发，
-        // 也就不会把已完成任务退回 pending。建组/裂变仍在尾部统一快照。
-        if !self.suppress_bulk_broadcasts {
-            self.sink.emit(EngineEvent::TaskChanged(Box::new(task)));
+    /// 「发布」阶段。创建事实先于所有进度帧——尚未 spawn/probe，完整事实必定
+    /// 先于任何进度帧；不用完成后再读库补发，也就不会把已完成任务退回 pending。
+    /// 建组/裂变仍在尾部统一快照（`suppress_bulk_broadcasts`）。
+    async fn publish_created_tasks(
+        &mut self,
+        prepared: Vec<PreparedTask>,
+        tasks: Vec<TaskInfo>,
+        announce: CreationAnnounce,
+    ) {
+        match announce {
+            CreationAnnounce::Single => {
+                if !self.suppress_bulk_broadcasts {
+                    for task in tasks {
+                        self.sink.emit(EngineEvent::TaskChanged(Box::new(task)));
+                    }
+                }
+            }
+            CreationAnnounce::Batch => {
+                if !tasks.is_empty() {
+                    self.sink.emit(EngineEvent::TasksChanged(tasks));
+                }
+            }
         }
+        for task in prepared {
+            self.publish_created_task(task).await;
+        }
+    }
+
+    /// 单个已落库任务的后续发布：webhook、解析失败进度、稍后下载探测、入队。
+    async fn publish_created_task(&mut self, task: PreparedTask) {
+        let has_resolver = task.has_resolver();
+        let initial_status = task.initial_status();
+        let PreparedTask {
+            task_id,
+            url,
+            db_url,
+            save_dir,
+            file_name,
+            provisional_name,
+            segments,
+            hint_file_size,
+            torrent_file_bytes,
+            proxy_url,
+            user_agent,
+            queue_id,
+            checksum,
+            ignore_tls_errors,
+            cookies,
+            referrer,
+            extra_headers,
+            selected_file_indices,
+            method,
+            body,
+            audio_url,
+            start_paused,
+            resolver_item,
+            resolver_plugin_id,
+            is_bt,
+            ..
+        } = task;
 
         // Webhook：task.created（落库成功后，早于任何早退分支；`url` 用真实
         // 来源而非 torrent-file:// 哨兵）。
@@ -6973,7 +7340,7 @@ impl DownloadManager {
             crate::webhook::WebhookTask {
                 id: task_id.clone(),
                 file_name: file_name.clone(),
-                url: url.clone(),
+                url,
                 save_dir: save_dir.clone(),
                 total_bytes: hint_file_size,
                 status: initial_status,
@@ -6984,49 +7351,54 @@ impl DownloadManager {
         self.emit_task_event(created_event);
 
         // fail-closed：resolver_item 非空但未命中插件（或 plugins feature 关，
-        // has_resolver 恒空）→ 任务直接置 error，绝不发起对 source_url 的下载
+        // has_resolver 恒空）→ 任务已以 error 落库，绝不发起对 source_url 的下载
         // （那会把网页 HTML/分享页当直链保存）。
         if !resolver_item.is_empty() && !has_resolver {
-            let msg = "解析插件不可用".to_string();
             self.sink.emit(EngineEvent::TaskProgress {
-                task_id: task_id.clone(),
+                task_id,
                 status: 4,
                 downloaded_bytes: 0,
                 total_bytes: 0,
                 speed: 0,
-                file_name: file_name.clone(),
-                save_dir: save_dir.clone(),
-                url: db_url.clone(),
-                error_message: msg,
+                file_name,
+                save_dir,
+                url: db_url,
+                error_message: RESOLVER_UNAVAILABLE_MESSAGE.to_string(),
                 upload_speed_bps: 0,
                 uploaded_bytes: 0,
                 seeding_status: 0,
                 seeding_message: String::new(),
                 seeding_time_secs: 0,
             });
-            return Some(created_id);
+            return;
         }
         if start_paused {
             // 稍后下载：不启动、不排队。后台 probe 让 UI 尽快拿到文件名/
             // 大小；带 resolver（探测原始页面 URL 无意义）或 BT（无 HTTP
             // 元数据可探）任务跳过，语义与排队/直启分支一致。
             if !has_resolver && !is_bt && hint_file_size != 0 {
-                self.fill_provisional_name(&task_id, &db_url, &file_name)
-                    .await;
+                // 占位名已随创建行落库，这里只通知宿主刷新显示。
+                if let Some((name, _)) = provisional_name {
+                    self.sink.emit(EngineEvent::TaskMetaProbed {
+                        task_id,
+                        file_name: name,
+                        total_bytes: 0,
+                    });
+                }
             } else if !has_resolver && !is_bt {
-                let probe_spec = downloader::RequestSpec::from_captured(
-                    method.as_deref(),
-                    cookies.clone(),
-                    referrer.clone(),
-                    extra_headers.clone(),
-                    body.clone(),
-                );
                 let (probe_client, probe_proxy, _) = self.task_http_context(
                     &db_url,
                     &proxy_url,
                     &user_agent,
                     &queue_id,
                     ignore_tls_errors,
+                );
+                let probe_spec = downloader::RequestSpec::from_captured(
+                    method.as_deref(),
+                    cookies,
+                    referrer,
+                    extra_headers,
+                    body,
                 );
                 self.spawn_meta_probe(
                     task_id,
@@ -7037,7 +7409,7 @@ impl DownloadManager {
                     probe_proxy,
                 );
             }
-            return Some(created_id);
+            return;
         }
 
         let queued = QueuedTask {
@@ -7045,7 +7417,7 @@ impl DownloadManager {
             url: db_url,
             save_dir,
             file_name,
-            segments: seg,
+            segments,
             is_resume: false,
             cookies,
             referrer,
@@ -7067,7 +7439,6 @@ impl DownloadManager {
             resolver_item,
         };
         self.enqueue_persisted_task(queued, has_resolver).await;
-        Some(created_id)
     }
 
     /// 排队分发：有容量（或 BT 恒直启）立即启动，否则入 `pending_queue` 并广播
@@ -7304,16 +7675,7 @@ impl DownloadManager {
         if self.proxy_config.mode != ProxyMode::System {
             return self.client.clone();
         }
-        let fingerprint = format!(
-            "{}|{}|{}|{}|{}|{}|{}",
-            resolved.mode.as_str(),
-            resolved.proxy_type.as_str(),
-            resolved.host,
-            resolved.port,
-            resolved.username,
-            resolved.password,
-            resolved.no_proxy_list
-        );
+        let fingerprint = proxy_fingerprint(resolved);
         let mut slot = self
             .system_client
             .lock()
@@ -7392,7 +7754,7 @@ impl DownloadManager {
         } else {
             self.proxy_config.resolve()
         };
-        match downloader::build_client_with_tls_policy(&proxy, resolved_ua, ignore_tls_errors) {
+        match self.dedicated_client(&proxy, resolved_ua, ignore_tls_errors) {
             Ok(client) => (client, proxy, auto_outcome),
             Err(e) => {
                 log_info!("[manager] failed to build per-task client: {}", e);
@@ -7401,6 +7763,37 @@ impl DownloadManager {
                 (self.client.clone(), self.proxy_config.resolve(), ("", None))
             }
         }
+    }
+
+    /// 取（或构建并缓存）专属 client，键 = (代理指纹, 生效 UA, ignore_tls)。
+    /// 构建一次约 70ms：批量导入的任务几乎共享同一组策略，必须复用。
+    /// 缓存有界（超 [`TASK_CLIENT_CACHE_CAP`] 整体清空），与 `global_client` 的
+    /// `system_client` 同风格。
+    fn dedicated_client(
+        &self,
+        proxy: &ProxyConfig,
+        user_agent: &str,
+        ignore_tls_errors: bool,
+    ) -> Result<Client, downloader::DownloadError> {
+        let key = (
+            proxy_fingerprint(proxy),
+            user_agent.to_owned(),
+            ignore_tls_errors,
+        );
+        let mut cache = self
+            .task_clients
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(client) = cache.get(&key) {
+            return Ok(client.clone());
+        }
+        let client =
+            downloader::build_client_with_tls_policy(proxy, user_agent, ignore_tls_errors)?;
+        if cache.len() >= TASK_CLIENT_CACHE_CAP {
+            cache.clear();
+        }
+        cache.insert(key, client.clone());
+        Ok(client)
     }
 
     /// hint 任务（不得发探测请求）的占位名：名字为空时按 URL（含预签名 URL 的
@@ -7453,7 +7846,13 @@ impl DownloadManager {
         let probe_sink = self.sink.clone();
         #[cfg(feature = "plugins")]
         let probe_pm = self.plugin_manager.clone();
+        let probe_gate = Arc::clone(&self.probe_gate);
         tokio::spawn(async move {
+            // 并发闸门：许可在整个探测期间持有，批量导入的探测按 8 路排队。
+            let Ok(_permit) = probe_gate.acquire_owned().await else {
+                tracing::debug!("meta probe gate closed before probe started");
+                return;
+            };
             let probed = crate::meta_prober::probe_task_meta(
                 &probe_url,
                 &current_name,
@@ -9921,19 +10320,16 @@ impl DownloadManager {
         if task_ids.is_empty() {
             return;
         }
-        let id_set: HashSet<&str> = task_ids.iter().map(|s| s.as_str()).collect();
         log_info!(
             "[manager] delete_tasks_batch: {} tasks, delete_files={}",
             task_ids.len(),
             delete_files
         );
 
-        // 1. Remove from pending queue in one pass.
+        let id_set: HashSet<&str> = task_ids.iter().map(String::as_str).collect();
         self.pending_queue
             .retain(|q| !id_set.contains(q.task_id.as_str()));
-        // 队列变更后立即广播剩余排队任务的最新位置(与 pause_task 一致),否则要等到
-        // 后续 drain_queue 才广播,中间历经 handle 取消+文件清理(最长 15s)期间 UI
-        // 会显示过时的队列位置。broadcast_queue_positions 是只读广播,无副作用。
+        // 队列变更后立即广播剩余排队任务的位置，不等清理结束后的 drain_queue。
         self.broadcast_queue_positions();
 
         // 2. Cancel all active downloads + collect (task_id, JoinHandle) pairs.
@@ -10282,6 +10678,15 @@ impl DownloadManager {
                     Ok(())
                 }));
             }
+            let job = DeleteCleanup {
+                task_id: task_id.clone(),
+                handle,
+                files,
+                bt_session: self.bt_session.clone(),
+                app_data_dir: Arc::clone(&app_data_dir),
+                file_permits: Arc::clone(&file_permits),
+            };
+            workers.push((task_id, tokio::spawn(run_delete_cleanup(job))));
         }
 
         // 所有清理结果均成功后才提交批量删除；超时或 panic 不能冒充删除完成。
@@ -10331,9 +10736,19 @@ impl DownloadManager {
                         "wait for task cleanup workers",
                         &error,
                     );
-                    self.drain_queue().await;
-                    self.sync_queue_occupancy();
-                    return;
+                    failed += 1;
+                }
+                Err(error) => {
+                    if error.is_cancelled() {
+                        tracing::debug!("task cleanup worker cancelled");
+                    } else {
+                        crate::logger::report_error(
+                            "download-manager",
+                            "join task cleanup worker",
+                            &error,
+                        );
+                    }
+                    failed += 1;
                 }
             }
         }
@@ -10347,11 +10762,12 @@ impl DownloadManager {
                 {
                     crate::logger::report_error(
                         "download-manager",
-                        "delete batch task artifacts",
+                        "delete batch task records",
                         &error,
                     );
                     self.drain_queue().await;
-                    return;
+                    self.sync_queue_occupancy();
+                    return Err(error);
                 }
             }
         }
@@ -10384,7 +10800,6 @@ impl DownloadManager {
                 .is_err()
             {
                 tracing::debug!("download-manager deletion receiver closed");
-                break;
             }
         }
 
@@ -14591,36 +15006,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_task_metadata_failure_rolls_back_unstarted_task() {
+    async fn create_persist_failure_rolls_back_whole_batch_and_publishes_nothing() {
         let (dir, db, injector) = sqlite_fault_fixture("create_failure").await;
-        sqlx::query("CREATE TRIGGER reject_context BEFORE UPDATE OF cookies ON tasks BEGIN SELECT RAISE(FAIL, 'context write rejected'); END")
+        sqlx::query("CREATE TRIGGER reject_context BEFORE INSERT ON tasks WHEN NEW.cookies = 'session=secret' BEGIN SELECT RAISE(FAIL, 'context write rejected'); END")
             .execute(&injector).await.expect("install context failure");
         let sink = Arc::new(RecordingSink::new());
         let mut manager = sched_manager_with_sink(&db, 1, sink.clone());
+        let spec = |name: &str, cookies: &str| NewTaskSpec {
+            url: format!("http://127.0.0.1:1/{name}"),
+            save_dir: dir.to_string_lossy().into_owned(),
+            file_name: name.to_string(),
+            cookies: cookies.to_string(),
+            start_paused: true,
+            ..Default::default()
+        };
         let created = manager
-            .create_task(NewTaskSpec {
-                url: "http://127.0.0.1:1/file.bin".to_string(),
-                save_dir: dir.to_string_lossy().into_owned(),
-                file_name: "file.bin".to_string(),
-                cookies: "session=secret".to_string(),
-                start_paused: true,
-                ..Default::default()
-            })
+            .create_task(spec("file.bin", "session=secret"))
             .await;
         assert!(
             created.is_none(),
-            "failed request context must not create a usable task"
+            "failed persistence must not create a task"
         );
+        let batch = manager
+            .create_tasks_batch(
+                "failing-batch",
+                vec![spec("ok.bin", ""), spec("bad.bin", "session=secret")],
+            )
+            .await;
+        assert!(batch.is_err(), "one failing row fails the whole batch");
         let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks")
             .fetch_one(&injector)
             .await
             .expect("count tasks");
-        assert_eq!(rows, 0, "partially configured task must be rolled back");
+        assert_eq!(rows, 0, "the batch transaction must roll back every row");
+        let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_create_batches")
+            .fetch_one(&injector)
+            .await
+            .expect("count batch records");
+        assert_eq!(records, 0, "a failed batch must stay retryable");
         assert!(manager.pending_queue.is_empty());
         assert!(manager.active_tasks.is_empty());
         assert!(!sink.events().iter().any(|event| matches!(
             event,
-            EngineEvent::TaskProgress { .. } | EngineEvent::TaskQueueChanged { .. }
+            EngineEvent::TaskChanged(_)
+                | EngineEvent::TasksChanged(_)
+                | EngineEvent::TaskProgress { .. }
+                | EngineEvent::TaskQueueChanged { .. }
         )));
         drop(manager);
         injector.close().await;

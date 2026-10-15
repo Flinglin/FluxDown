@@ -180,6 +180,8 @@ pub enum DaemonEvent {
     SnapshotReplaced(DaemonSnapshot),
     Engine(WsServerMsg),
     TaskChanged(TaskDto),
+    /// 一批任务事实（批量建任务）：语义等同按序逐条应用 [`DaemonEvent::TaskChanged`]。
+    TasksChanged(Vec<TaskDto>),
     TaskDeleted {
         task_id: String,
     },
@@ -369,14 +371,11 @@ pub fn apply_daemon_event(snapshot: &mut DaemonSnapshot, event: &DaemonEvent) {
         DaemonEvent::TaskActivityAdded(_) | DaemonEvent::TaskNotice(_) => {}
         DaemonEvent::SnapshotReplaced(replacement) => snapshot.clone_from(replacement),
         DaemonEvent::Engine(message) => apply_engine_message(snapshot, message),
-        DaemonEvent::TaskChanged(task) => {
-            if let Some(existing) = snapshot.task_mut(&task.task_id) {
-                existing.clone_from(task);
-            } else {
-                snapshot.push_task(task.clone());
-            }
-            if !matches!(task.status, 1 | 5) {
-                clear_active_runtime(snapshot, &task.task_id);
+        DaemonEvent::TaskChanged(task) => apply_task_changed(snapshot, task),
+        DaemonEvent::TasksChanged(tasks) => {
+            snapshot.tasks.reserve(tasks.len());
+            for task in tasks {
+                apply_task_changed(snapshot, task);
             }
         }
         DaemonEvent::TaskDeleted { task_id } => {
@@ -412,6 +411,17 @@ pub fn apply_daemon_event(snapshot: &mut DaemonSnapshot, event: &DaemonEvent) {
                 .pending_selections
                 .retain(|item| item.request_id != *request_id);
         }
+    }
+}
+
+fn apply_task_changed(snapshot: &mut DaemonSnapshot, task: &TaskDto) {
+    if let Some(existing) = snapshot.task_mut(&task.task_id) {
+        existing.clone_from(task);
+    } else {
+        snapshot.push_task(task.clone());
+    }
+    if !matches!(task.status, 1 | 5) {
+        clear_active_runtime(snapshot, &task.task_id);
     }
 }
 

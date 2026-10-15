@@ -291,6 +291,10 @@ impl RuntimeAccounting {
         let tick = now.duration_since(self.origin).as_millis() / TRAFFIC_BUCKET.as_millis();
         let slot = (tick % TRAFFIC_BUCKETS as u128) as usize;
         let bucket = &mut self.buckets[slot];
+        if bucket.tick > tick {
+            // Older than the ring (cannot happen within the spread cap).
+            return;
+        }
         if bucket.tick != tick {
             *bucket = TrafficBucket {
                 tick,
@@ -302,7 +306,7 @@ impl RuntimeAccounting {
         bucket.uploaded = bucket.uploaded.saturating_add(uploaded);
     }
 
-    fn baseline(&mut self, task: &TaskDto) {
+    fn baseline(&mut self, task: &TaskDto, now: Instant) {
         let previous_status = if let Some(sample) = self.tasks.get_mut(&task.task_id) {
             let previous = sample.status;
             sample.status = task.status;
@@ -371,7 +375,12 @@ impl RuntimeAccounting {
         match event {
             DaemonEvent::SnapshotReplaced(snapshot) => self.reconcile(&snapshot.tasks),
             DaemonEvent::Engine(WsServerMsg::TasksSnapshot { tasks }) => self.reconcile(tasks),
-            DaemonEvent::TaskChanged(task) => self.baseline(task),
+            DaemonEvent::TaskChanged(task) => self.baseline(task, now),
+            DaemonEvent::TasksChanged(tasks) => {
+                for task in tasks {
+                    self.baseline(task, now);
+                }
+            }
             DaemonEvent::TaskDeleted { task_id } => self.remove(task_id),
             DaemonEvent::Engine(WsServerMsg::TaskProgress {
                 task_id,
@@ -1051,7 +1060,7 @@ mod tests {
         }
         assert_eq!(
             state.snapshot.runtime_stats.total_download_bps,
-            20 * 128 * 1024
+            20 * 128 * 1024 * 10
         );
         assert_eq!(state.snapshot.runtime_stats.active_tasks, 0);
         assert_eq!(state.snapshot.runtime_stats.pending_tasks, 0);
@@ -1293,6 +1302,8 @@ mod tests {
         );
     }
 
+    /// A task reporting a lump every 500 ms (the engine's per-task cadence)
+    /// must read as a flat rate, not a sawtooth, and fall to zero afterwards.
     #[test]
     fn sustained_transfer_retains_only_the_bounded_measurement_window() {
         let start = std::time::Instant::now();
@@ -1355,9 +1366,11 @@ mod tests {
         };
         let mut state = super::lock_or_recover(&hub.state);
         let now = state.accounting.origin;
+        let at = |millis| now + std::time::Duration::from_millis(millis);
 
+        // Bytes in the still-open, not yet reported window publish nothing.
         hub.publish_with_stats_locked_at(&mut state, progress(20, 100), now);
-        assert_eq!(drain(), [None, Some(10)]);
+        assert_eq!(drain(), [None]);
         // Duplicate progress does not count its bytes twice, regardless of EMA.
         hub.publish_with_stats_locked_at(&mut state, progress(20, 250), now);
         assert_eq!(drain(), [None]);
@@ -1370,7 +1383,7 @@ mod tests {
             DaemonEvent::TaskDeleted {
                 task_id: "unknown".into(),
             },
-            now + std::time::Duration::from_secs(1),
+            at(5_000),
         );
         assert_eq!(drain(), [None, Some(0)]);
         Ok(())

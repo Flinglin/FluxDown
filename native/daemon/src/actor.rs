@@ -6,13 +6,16 @@ use std::time::Duration;
 use base64::Engine as _;
 use fluxdown_engine::Engine;
 use fluxdown_engine::download_manager::{
-    BT_DISABLED_MESSAGE, CreateGroupSpec, FileExistsBehavior, NewTaskSpec, TaskDone,
+    BT_DISABLED_MESSAGE, BatchItemOutcome, CreateGroupSpec, CreateRejection, FileExistsBehavior,
+    NewTaskSpec, TaskDone,
 };
 #[cfg(feature = "plugins")]
 use fluxdown_engine::download_manager::{ResolveOutcome, ResolvePreviewOutcome};
 use fluxdown_engine::rss::RssValidateOutcome;
 use fluxdown_engine::rss::model::RssSourceInfo;
-use fluxdown_protocol::CreateTaskRequest;
+use fluxdown_protocol::{
+    ApplicationErrorCode, CreateTaskItem, CreateTaskOutcome, CreateTaskRequest, RpcErrorData,
+};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -31,6 +34,14 @@ pub enum ActorOperation {
         /// 参照文件名（浏览器捕获的原始名），见 `DaemonCreateTaskParams::name_hint`。
         name_hint: String,
         unattended: bool,
+    },
+    /// 批量建任务（`daemon.task.createMany`）：保存目录与队列只解析一次，
+    /// 整块一个事务落库，按 `batch_id` 幂等。
+    CreateTasks {
+        batch_id: String,
+        /// 整块共享的选项（`url` / `fileName` / `checksum` 已由服务层校验为空）。
+        common: Box<CreateTaskRequest>,
+        items: Vec<CreateTaskItem>,
     },
     PauseTask {
         task_id: String,
@@ -218,6 +229,8 @@ pub enum ActorOperation {
 pub enum ActorResult {
     Unit,
     Created(String),
+    /// 与 `CreateTasks` 的 `items` 逐条同序的结果。
+    CreatedMany(Vec<CreateTaskOutcome>),
     Boolean(bool),
     ProxyLatency(i64),
     Config(fluxdown_protocol::DaemonConfigSnapshot),
@@ -749,18 +762,7 @@ async fn execute_operation(
             {
                 return Err(ActorError::InvalidArgument(BT_DISABLED_MESSAGE.to_owned()));
             }
-            let mut save_dir = request.save_dir;
-            if save_dir.trim().is_empty() {
-                save_dir = engine
-                    .db
-                    .get_config("default_save_dir")
-                    .await
-                    .map_err(|error| ActorError::Operation(format!("{error:#}")))?
-                    .unwrap_or_default();
-            }
-            if save_dir.trim().is_empty() {
-                save_dir = fluxdown_engine::user_dirs::download_dir_or_cwd();
-            }
+            let save_dir = resolve_save_dir(&engine.db, request.save_dir).await?;
             let queue_id = resolve_queue_id(&engine.db, request.queue_id).await?;
             let task_id = engine
                 .manager
@@ -795,6 +797,46 @@ async fn execute_operation(
                 .await
                 .ok_or_else(|| ActorError::Operation("failed to persist task".to_owned()))?;
             return Ok(ActorResult::Created(task_id));
+        }
+        ActorOperation::CreateTasks {
+            batch_id,
+            common,
+            items,
+        } => {
+            let common = *common;
+            let save_dir = resolve_save_dir(&engine.db, common.save_dir).await?;
+            let queue_id = resolve_queue_id(&engine.db, common.queue_id).await?;
+            let extra_headers = common.headers.unwrap_or_default();
+            let specs = items
+                .into_iter()
+                .map(|item| NewTaskSpec {
+                    url: item.url,
+                    save_dir: save_dir.clone(),
+                    file_name: item.file_name,
+                    segments: common.segments,
+                    cookies: common.cookies.clone(),
+                    referrer: common.referrer.clone(),
+                    proxy_url: common.proxy_url.clone(),
+                    user_agent: common.user_agent.clone(),
+                    queue_id: queue_id.clone(),
+                    checksum: item.checksum,
+                    ignore_tls_errors: common.ignore_tls_errors,
+                    extra_headers: extra_headers.clone(),
+                    start_paused: common.start_paused,
+                    http_user: common.http_user.clone(),
+                    http_password: common.http_password.clone(),
+                    save_site_auth: common.save_site_auth,
+                    ..Default::default()
+                })
+                .collect();
+            let outcomes = engine
+                .manager
+                .create_tasks_batch(&batch_id, specs)
+                .await
+                .map_err(|error| ActorError::Operation(format!("{error:#}")))?;
+            return Ok(ActorResult::CreatedMany(
+                outcomes.into_iter().map(create_task_outcome).collect(),
+            ));
         }
         ActorOperation::PauseTask { task_id } => engine.manager.pause_task(&task_id).await,
         ActorOperation::ResumeTask { task_id } => {
@@ -1650,6 +1692,54 @@ async fn resolve_queue_id(
     Ok(if exists { preferred } else { requested })
 }
 
+/// 请求未指定保存目录时依次套用设置项 `default_save_dir` 与系统下载目录。
+async fn resolve_save_dir(
+    db: &fluxdown_engine::db::Db,
+    requested: String,
+) -> Result<String, ActorError> {
+    if !requested.trim().is_empty() {
+        return Ok(requested);
+    }
+    let configured = db
+        .get_config("default_save_dir")
+        .await
+        .map_err(|error| ActorError::Operation(format!("{error:#}")))?
+        .unwrap_or_default();
+    if configured.trim().is_empty() {
+        Ok(fluxdown_engine::user_dirs::download_dir_or_cwd())
+    } else {
+        Ok(configured)
+    }
+}
+
+/// 引擎单项建任务结果 → wire 结果。逐项拒绝都是参数问题（`InvalidArgument`），
+/// `field` 指向出问题的条目字段；`RpcErrorData` 不带文案，细节只进日志。
+fn create_task_outcome(outcome: BatchItemOutcome) -> CreateTaskOutcome {
+    match outcome {
+        BatchItemOutcome::Created(task_id) => CreateTaskOutcome {
+            task_id: Some(task_id),
+            error: None,
+        },
+        BatchItemOutcome::Rejected(rejection) => {
+            let field = match rejection {
+                CreateRejection::BtDisabled | CreateRejection::InvalidThunderLink(_) => "url",
+                CreateRejection::InvalidChecksum(_) => "checksum",
+                CreateRejection::InvalidHeaders(_) => "headers",
+            };
+            CreateTaskOutcome {
+                task_id: None,
+                error: Some(RpcErrorData {
+                    code: ApplicationErrorCode::InvalidArgument,
+                    retryable: false,
+                    field: Some(field.to_owned()),
+                    revision: None,
+                    reason: None,
+                }),
+            }
+        }
+    }
+}
+
 async fn apply_live_config<'a>(
     engine: &mut Engine,
     all: &HashMap<String, String>,
@@ -2233,6 +2323,112 @@ mod tests {
         drop(engine);
         if let Err(error) = tokio::fs::remove_dir_all(dir).await {
             eprintln!("actor bt disabled test directory removal failed: {error}");
+        }
+    }
+
+    /// `daemon.task.createMany`：保存目录 / 队列只解析一次，逐项拒绝映射为带字段的
+    /// `InvalidArgument`，其余项照常创建；同 `batchId` 重放返回首次结果且不再建任务。
+    #[tokio::test]
+    async fn create_many_maps_item_rejections_and_replays_idempotently() {
+        let dir = std::env::temp_dir().join(format!(
+            "fluxdown_daemon_create_many_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .expect("create createMany test dir");
+        let dir_text = dir.to_string_lossy().into_owned();
+        let mut engine = fluxdown_engine::Engine::new(
+            fluxdown_engine::EngineConfig {
+                max_concurrent: 1,
+                speed_limit_bps: 0,
+                upload_limit_bps: 0,
+                default_save_dir: dir_text.clone(),
+                app_data_dir: dir_text.clone(),
+                bt_config: fluxdown_engine::bt_downloader::BtConfig::default(),
+                proxy_config: fluxdown_engine::proxy_config::ProxyConfig::default(),
+                user_agent: String::new(),
+                data_dir_override: Some(dir.clone()),
+                database_url: None,
+            },
+            std::sync::Arc::new(fluxdown_engine::NoopSink),
+            std::sync::Arc::new(fluxdown_engine::NoopSelection),
+        )
+        .await
+        .expect("construct engine");
+        let events =
+            crate::event_hub::DaemonEventHub::new(fluxdown_protocol::DaemonSnapshot::default(), 32);
+        let item = |url: &str, checksum: &str| fluxdown_protocol::CreateTaskItem {
+            url: url.to_owned(),
+            file_name: String::new(),
+            checksum: checksum.to_owned(),
+        };
+        let operation = || ActorOperation::CreateTasks {
+            batch_id: "batch-1".to_owned(),
+            common: Box::new(
+                serde_json::from_value(serde_json::json!({
+                    "url": "",
+                    "startPaused": true,
+                    "saveDir": dir_text,
+                }))
+                .expect("common request"),
+            ),
+            items: vec![
+                item("http://127.0.0.1:1/a.bin", ""),
+                item("thunder://not-base64!!", ""),
+                item("http://127.0.0.1:1/b.bin", "md5=zz"),
+                item("http://127.0.0.1:1/c.bin", ""),
+            ],
+        };
+        async fn run(
+            engine: &mut fluxdown_engine::Engine,
+            events: &crate::event_hub::DaemonEventHub,
+            operation: ActorOperation,
+        ) -> Vec<fluxdown_protocol::CreateTaskOutcome> {
+            match execute_operation(operation, engine, events).await {
+                Ok(super::ActorResult::CreatedMany(results)) => results,
+                Ok(_) => panic!("unexpected actor result"),
+                Err(error) => panic!("createMany failed: {error}"),
+            }
+        }
+
+        let first = run(&mut engine, &events, operation()).await;
+        assert_eq!(first.len(), 4);
+        assert!(first[0].task_id.is_some() && first[0].error.is_none());
+        assert!(first[3].task_id.is_some() && first[3].error.is_none());
+        for (index, field) in [(1, "url"), (2, "checksum")] {
+            let error = first[index].error.as_ref().expect("rejection error");
+            assert!(first[index].task_id.is_none());
+            assert_eq!(
+                error.code,
+                fluxdown_protocol::ApplicationErrorCode::InvalidArgument
+            );
+            assert!(!error.retryable);
+            assert_eq!(error.field.as_deref(), Some(field));
+        }
+        let stored = engine.db.load_all_tasks().await.expect("load tasks");
+        assert_eq!(stored.len(), 2);
+        assert!(
+            stored
+                .iter()
+                .all(|task| task.save_dir == dir_text && task.status == 2)
+        );
+
+        let replay = run(&mut engine, &events, operation()).await;
+        assert_eq!(
+            replay, first,
+            "the replay returns the first results verbatim"
+        );
+        assert_eq!(
+            engine.db.load_all_tasks().await.expect("load tasks").len(),
+            2,
+            "the replay creates nothing"
+        );
+
+        drop(engine);
+        if let Err(error) = tokio::fs::remove_dir_all(dir).await {
+            eprintln!("createMany test directory removal failed: {error}");
         }
     }
 
