@@ -2052,21 +2052,60 @@ jobs:
         run: |
           gh release view "$TAG" --json isDraft,isPrerelease,name,url,body > "$RUNNER_TEMP/release.json"
           python3 - "$RUNNER_TEMP/release.json" <<'EOF'
-          import html, json, os, sys, urllib.request
+          import html, json, os, re, sys, urllib.request
           r = json.load(open(sys.argv[1]))
           if r["isDraft"]:
               print("Release is still a draft; skipping announcement")
               sys.exit(0)
           e = os.environ
-          body = (r.get("body") or "").strip()
-          if len(body) > 3000:  # Telegram 单条消息上限 4096 字符
-              body = body[:3000].rstrip() + "\n…"
+          body = r.get("body") or ""
+          # 只取中文更新日志：<!-- fluxdown:lang:zh --> 到下一个语言标记；
+          # 没有标记时去掉下载说明块（release:begin..end）与其余 HTML 注释。
+          m = re.search(r"<!-- fluxdown:lang:zh -->(.*?)(?=<!-- fluxdown:lang:|\Z)", body, re.S)
+          if m:
+              body = m.group(1)
+          else:
+              body = re.sub(r"<!-- fluxdown:release:begin.*?<!-- fluxdown:release:end -->", "", body, flags=re.S)
+              body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+
+          def inline(s):  # Markdown 行内 → Telegram HTML
+              parts = re.split(r"(`[^`]+`)", s)
+              out = []
+              for p in parts:
+                  if len(p) > 1 and p.startswith("`") and p.endswith("`"):
+                      out.append(f"<code>{html.escape(p[1:-1])}</code>")
+                  else:
+                      out.append(re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", html.escape(p)))
+              return "".join(out)
+
+          lines, size, truncated = [], 0, False
+          for raw in body.strip().splitlines():
+              line = raw.rstrip()
+              if re.match(r"^## \d", line):  # 版本号标题与公告标题重复
+                  continue
+              h = re.match(r"^#{1,6}\s+(.*)", line)
+              li = re.match(r"^\s*[-*]\s+(.*)", line)
+              if h:
+                  out = f"\n<b>{inline(h.group(1))}</b>"
+              elif li:
+                  out = f"• {inline(li.group(1))}"
+              else:
+                  out = inline(line)
+              # 按整行截断，避免切断 HTML 标签；Telegram 单条消息上限 4096 字符
+              if size + len(out) > 3500:
+                  truncated = True
+                  break
+              lines.append(out)
+              size += len(out) + 1
+          notes = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+          if truncated:
+              notes += "\n…"
           title = "🧪 FluxDown 预览版" if r["isPrerelease"] else "🚀 FluxDown 新版本"
           name = r.get("name") or ""
           text = f"<b>{title} {html.escape(e['TAG'])}</b>\n"
           if name and name != e["TAG"]:
               text += f"{html.escape(name)}\n"
-          text += f"\n{html.escape(body)}\n\n" if body else "\n"
+          text += f"\n{notes}\n\n" if notes else "\n"
           text += f'<a href="{html.escape(r["url"])}">查看 Release / 下载</a>'
           payload = {
               "chat_id": e["TG_CHAT"],
