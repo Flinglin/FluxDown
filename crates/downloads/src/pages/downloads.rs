@@ -23,7 +23,7 @@ use crate::{
         },
         title_bar::{DownloadTitleBar, left_edge_probe},
     },
-    controller::{DownloadsCommand, DownloadsController, DownloadsPort},
+    controller::{DownloadsCommand, DownloadsController, DownloadsPort, ResumeTargets},
     deletion::{
         DELETE_CHUNK_SIZE, DeletionProgress, DeletionReport, DeletionRequest, run_deletion,
     },
@@ -199,6 +199,9 @@ pub struct DownloadView {
     /// 进行中的大批量删除（超过一块的才有进度条与取消入口）。
     deletions: Vec<DeleteJob>,
     next_delete_id: u64,
+    /// 宿主的导入闸门被「全部暂停」或结果不确定的提交挂起：只有「全部开始」能解除，
+    /// 所以挂起期间该按钮必须可点，即使没有可恢复的任务。
+    import_suspended: bool,
     /// 下载页所在窗口：删除结束的异步通知经它推送。
     window: AnyWindowHandle,
 }
@@ -325,6 +328,7 @@ impl DownloadView {
             next_import_id: 0,
             deletions: Vec::new(),
             next_delete_id: 0,
+            import_suspended: false,
             window: window.window_handle(),
         }
     }
@@ -337,6 +341,36 @@ impl DownloadView {
     /// 注入宿主入口（新建下载 / 任务窗口 / 队列管理…）。
     pub fn set_host_actions(&mut self, host: DownloadHostActions) {
         self.host = host;
+    }
+
+    /// 宿主同步导入闸门挂起状态（见 `import_suspended`）。
+    pub fn set_import_suspended(&mut self, suspended: bool, cx: &mut Context<Self>) {
+        if self.import_suspended != suspended {
+            self.import_suspended = suspended;
+            cx.notify();
+        }
+    }
+
+    /// 状态栏「全部暂停」不可用的原因（`None` = 可点）：没有等待 / 下载中的本地任务，
+    /// 且本页没有进行中的导入（全部暂停同时挂起导入闸门）。
+    pub(crate) fn pause_all_blocker(&self) -> Option<SharedString> {
+        let available = self.controller.has_pausable_tasks() || !self.imports.is_empty();
+        (!available).then(|| self.strings.pause_all_unavailable.clone())
+    }
+
+    /// 状态栏「全部开始」不可用的原因（`None` = 可点）。导入闸门挂起时恒可点；
+    /// 暂停任务全在已停止队列时单独说明——全部开始不会动它们，需先启动队列。
+    pub(crate) fn resume_all_blocker(&self) -> Option<SharedString> {
+        if self.import_suspended {
+            return None;
+        }
+        match self.controller.resume_targets() {
+            ResumeTargets::Some => None,
+            ResumeTargets::OnlyInStoppedQueues => {
+                Some(self.strings.resume_all_queue_stopped.clone())
+            }
+            ResumeTargets::None => Some(self.strings.resume_all_unavailable.clone()),
+        }
     }
 
     /// 创建挂到 shell 统一顶栏的下载页插槽（搜索、视图选项、新建）。

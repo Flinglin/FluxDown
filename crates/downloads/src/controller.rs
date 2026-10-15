@@ -302,6 +302,17 @@ pub trait DownloadsPort: Send + Sync {
     fn execute(&self, command: DownloadsCommand) -> PortFuture<DownloadsResult>;
 }
 
+/// 「全部开始」能恢复哪些暂停任务（见 [`DownloadsController::resume_targets`]）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResumeTargets {
+    /// 有运行中队列里的暂停任务。
+    Some,
+    /// 暂停任务全在已停止的队列里：全部开始不会动它们，需先启动队列。
+    OnlyInStoppedQueues,
+    /// 没有暂停任务。
+    None,
+}
+
 /// 任务组聚合（由任务行 + `snapshot.daemon.groups` 计算）。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct GroupSummary {
@@ -551,6 +562,39 @@ impl DownloadsController {
     #[must_use]
     pub(crate) fn runtime_stats(&self) -> &DaemonRuntimeStatsDto {
         &self.runtime_stats
+    }
+
+    /// 状态栏「全部暂停」是否有作用对象：与 daemon `PauseAll` 同判定（等待 / 下载中 /
+    /// 准备中，即 status 0 / 1 / 5 的本地任务）。
+    #[must_use]
+    pub(crate) fn has_pausable_tasks(&self) -> bool {
+        self.local
+            .iter()
+            .any(|task| matches!(task.status, 0 | 1 | 5))
+    }
+
+    /// 状态栏「全部开始」的作用对象：与引擎 `eligible_resume_task_ids` 同判定——
+    /// 已暂停（status 2）且所在队列运行中；队列不在快照里（孤儿）视作运行中。
+    /// 停止队列内的暂停任务由「启动队列」恢复，不计入，但单独报告以便界面说明原因。
+    #[must_use]
+    pub(crate) fn resume_targets(&self) -> ResumeTargets {
+        let mut held = false;
+        for task in self.local.iter().filter(|task| task.status == 2) {
+            let running = self
+                .queues
+                .iter()
+                .find(|queue| queue.queue_id == task.queue_id)
+                .is_none_or(|queue| queue.is_running);
+            if running {
+                return ResumeTargets::Some;
+            }
+            held = true;
+        }
+        if held {
+            ResumeTargets::OnlyInStoppedQueues
+        } else {
+            ResumeTargets::None
+        }
     }
 
     /// daemon 公开配置（字符串编码）。
@@ -1081,7 +1125,7 @@ mod tests {
 
     use super::{
         AgentEvent, DaemonEvent, DownloadsCommand, DownloadsController, DownloadsPort,
-        DownloadsResult, PortFuture, ServiceEvent, WsServerMsg,
+        DownloadsResult, PortFuture, ResumeTargets, ServiceEvent, WsServerMsg,
     };
 
     struct NullPort;
@@ -1198,6 +1242,47 @@ mod tests {
             Some(0)
         );
         assert!(!batched.apply_daemon_event(&DaemonEvent::TasksChanged(Vec::new())));
+    }
+
+    #[test]
+    fn bulk_pause_and_resume_availability_follows_daemon_targets() {
+        let mut controller = DownloadsController::new(Arc::new(NullPort));
+        assert!(!controller.has_pausable_tasks());
+        assert_eq!(controller.resume_targets(), ResumeTargets::None);
+        let with_status = |id: &str, status: i32, queue: &str| {
+            let mut dto = task(id);
+            dto.status = status;
+            queue.clone_into(&mut dto.queue_id);
+            dto
+        };
+        let snapshot = |tasks| DaemonEvent::Engine(WsServerMsg::TasksSnapshot { tasks });
+        controller.queues = vec![
+            serde_json::from_value(json!({
+                "queueId":"stopped","name":"s","speedLimitKbps":0,"maxConcurrent":0,
+                "defaultSaveDir":"","position":1,"defaultSegments":0,"defaultUserAgent":"",
+                "isRunning":false
+            }))
+            .expect("queue"),
+        ];
+        // 完成 / 失败不是任何一侧的对象；停止队列里的暂停任务只由「启动队列」恢复。
+        controller.apply_daemon_event(&snapshot(vec![
+            with_status("done", 3, "main"),
+            with_status("failed", 4, "main"),
+            with_status("held", 2, "stopped"),
+        ]));
+        assert!(!controller.has_pausable_tasks());
+        assert_eq!(
+            controller.resume_targets(),
+            ResumeTargets::OnlyInStoppedQueues
+        );
+        // 准备中（5）可暂停；快照里没有的队列（孤儿）视作运行中，可恢复。
+        controller.apply_daemon_event(&snapshot(vec![
+            with_status("held", 2, "stopped"),
+            with_status("preparing", 5, "main"),
+            with_status("orphan", 2, "gone"),
+        ]));
+        assert!(controller.has_pausable_tasks());
+        assert_eq!(controller.resume_targets(), ResumeTargets::Some);
     }
 
     #[test]

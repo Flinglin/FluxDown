@@ -28,12 +28,19 @@ pub(crate) struct SubmissionGate {
 }
 
 #[derive(Clone, Copy, Default)]
-struct SubmissionState {
+pub(crate) struct SubmissionState {
     ready: bool,
     paused: bool,
     control_pending: bool,
     revision: u64,
     pause_generation: u64,
+}
+
+impl SubmissionState {
+    /// 导入被「全部暂停」或结果不确定的提交挂起，直到「全部开始」成功才解除。
+    pub(crate) fn suspended(self) -> bool {
+        self.paused
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -74,6 +81,11 @@ impl SubmissionGate {
 
     pub(crate) fn set_ready(&self, ready: bool) {
         self.state.send_modify(|state| state.ready = ready);
+    }
+
+    /// 订阅闸门状态（主窗口据此让「全部开始」在导入挂起时保持可点）。
+    pub(crate) fn subscribe(&self) -> tokio::sync::watch::Receiver<SubmissionState> {
+        self.state.subscribe()
     }
 
     fn begin_control(&self, pause: bool) -> ControlRevision {
