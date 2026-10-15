@@ -372,6 +372,10 @@ pub(crate) struct TaskMenuFacts {
     pub(crate) boosted: bool,
     /// `url` 是否为 BT 哨兵值 `torrent-file://…`（不可重新下载）。
     pub(crate) is_torrent_sentinel: bool,
+    /// BT 任务（`magnet:` 链接或 `torrent-file://` 哨兵）：不支持更换链接 / 修改线程数。
+    pub(crate) is_bt: bool,
+    /// `url` 是 http(s) / ftp 链接（引擎 `change_task_url` 仅接受这些源）。
+    pub(crate) url_replaceable: bool,
     /// 失败态且错误消息带插件重试前缀。
     pub(crate) is_plugin_retry_error: bool,
     /// 已完成但产物已不在下载目录（文件跟踪扫描结果）。
@@ -380,6 +384,59 @@ pub(crate) struct TaskMenuFacts {
 
 /// 引擎/daemon 插件系统失败任务的错误消息前缀。
 pub(crate) const PLUGIN_ERROR_PREFIX: &str = "[插件]";
+
+/// `url` 以任一 scheme 前缀开头（ASCII 大小写不敏感，不分配）。
+pub(crate) fn url_has_prefix(url: &str, prefixes: &[&str]) -> bool {
+    prefixes.iter().any(|prefix| {
+        url.get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+    })
+}
+
+/// BT 任务源：`magnet:` 链接或 `torrent-file://` 本地种子哨兵。
+fn is_bt_url(url: &str) -> bool {
+    url_has_prefix(url, &["magnet:", "torrent-file://"])
+}
+
+/// 引擎 `change_task_url` 接受的源：http(s) / ftp。
+fn is_replaceable_url(url: &str) -> bool {
+    url_has_prefix(url, &["http://", "https://", "ftp://"])
+}
+
+impl TaskMenuFacts {
+    /// 「更换链接」可用：本地任务，状态为暂停 / 失败 / 等待（引擎拒绝下载中与已完成），
+    /// 且源为 http(s) / ftp。
+    pub(crate) fn can_change_url(&self) -> bool {
+        self.is_local
+            && self.url_replaceable
+            && matches!(
+                self.state,
+                TaskState::Paused | TaskState::Failed | TaskState::Pending
+            )
+    }
+
+    /// 「修改线程数」可用：本地非 BT、未完成的任务（下载中也可，引擎静默暂停后恢复）。
+    pub(crate) fn can_change_segments(&self) -> bool {
+        self.is_local && !self.is_bt && self.state != TaskState::Completed
+    }
+}
+
+/// 由任务行计算菜单事实：右键菜单、应用菜单与详情面板按钮共用同一事实源。
+pub(crate) fn task_menu_facts_for(store: &TaskStore, key: &RowKey) -> Option<TaskMenuFacts> {
+    let row = store.get(key)?;
+    Some(TaskMenuFacts {
+        is_local: key.is_local(),
+        controllable: row.remote_status != Some(RemoteTaskStatus::Unknown),
+        state: row.state,
+        boosted: row.boosted,
+        is_torrent_sentinel: row.url.starts_with("torrent-file://"),
+        is_bt: is_bt_url(&row.url),
+        url_replaceable: is_replaceable_url(&row.url),
+        is_plugin_retry_error: row.state == TaskState::Failed
+            && row.error_message.starts_with(PLUGIN_ERROR_PREFIX),
+        file_missing: row.is_file_missing(),
+    })
+}
 
 /// 任务右键菜单条目；数组顺序即渲染顺序。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -392,6 +449,10 @@ pub(crate) enum MenuEntry {
     OpenFile,
     OpenFolder,
     Rename,
+    /// 更换下载链接（单选；条件见 [`TaskMenuFacts::can_change_url`]）。
+    ChangeUrl,
+    /// 修改线程数（单选；条件见 [`TaskMenuFacts::can_change_segments`]）。
+    ChangeSegments,
     Redownload,
     CopyUrl,
     MoveToQueue,
@@ -450,6 +511,14 @@ pub(crate) fn context_menu_items(selection: &[TaskMenuFacts]) -> Vec<MenuEntry> 
         && only.is_local
     {
         items.push(MenuEntry::Rename);
+    }
+    if let [only] = selection {
+        if only.can_change_url() {
+            items.push(MenuEntry::ChangeUrl);
+        }
+        if only.can_change_segments() {
+            items.push(MenuEntry::ChangeSegments);
+        }
     }
     if selection.iter().all(|task| {
         task.is_local
@@ -2205,18 +2274,8 @@ impl DownloadTableDelegate {
         Some((selected, facts))
     }
 
-    fn task_menu_facts(&self, key: &RowKey) -> Option<TaskMenuFacts> {
-        let row = self.store.get(key)?;
-        Some(TaskMenuFacts {
-            is_local: key.is_local(),
-            controllable: row.remote_status != Some(RemoteTaskStatus::Unknown),
-            state: row.state,
-            boosted: row.boosted,
-            is_torrent_sentinel: row.url.starts_with("torrent-file://"),
-            is_plugin_retry_error: row.state == TaskState::Failed
-                && row.error_message.starts_with(PLUGIN_ERROR_PREFIX),
-            file_missing: row.is_file_missing(),
-        })
+    pub(crate) fn task_menu_facts(&self, key: &RowKey) -> Option<TaskMenuFacts> {
+        task_menu_facts_for(&self.store, key)
     }
 
     /// 任务行右键菜单：按 [`task_menu_entries`] 的纯函数结果逐项渲染。
@@ -2297,6 +2356,16 @@ impl DownloadTableDelegate {
                 FluxIcon::Pen,
                 Box::new(crate::actions::RenameSelected),
             ),
+            MenuEntry::ChangeUrl => menu.menu_with_icon(
+                self.strings.change_url.clone(),
+                FluxIcon::Globe,
+                Box::new(crate::actions::ChangeSelectedUrl),
+            ),
+            MenuEntry::ChangeSegments => menu.menu_with_icon(
+                self.strings.edit_threads.clone(),
+                FluxIcon::Layers,
+                Box::new(crate::actions::ChangeSelectedSegments),
+            ),
             MenuEntry::Redownload => menu.menu_with_icon(
                 self.strings.redownload_task.clone(),
                 FluxIcon::RotateCw,
@@ -2340,7 +2409,8 @@ impl DownloadTableDelegate {
     /// 「移动到队列」：固定版 gpui-component 的 `PopupMenu::submenu` 需要
     /// `Context<PopupMenu>`，而 `TableDelegate::context_menu` 只提供
     /// `Context<TableState<Self>>`（两者是不同实体的上下文，无法互转），因此
-    /// 这里无法构造真正的嵌套子菜单，改为「小节标题 + 缩进平铺项」。
+    /// 这里无法构造真正的嵌套子菜单，改为「带图标的不可点击标题 + 缩进队列项」：
+    /// 标题与其余菜单项同列对齐，队列项不带图标，文字落在标题文字列下形成缩进。
     fn append_move_to_queue(&self, menu: PopupMenu) -> PopupMenu {
         let Some(host) = self.host.clone() else {
             return menu;
@@ -2348,25 +2418,27 @@ impl DownloadTableDelegate {
         if self.queue_names.is_empty() {
             return menu;
         }
-        let mut menu = menu.label(self.strings.move_to_queue.clone());
+        let mut menu = menu.item(
+            PopupMenuItem::new(self.strings.move_to_queue.clone())
+                .icon(FluxIcon::Rows3)
+                .disabled(true),
+        );
         for (queue_id, name) in &self.queue_names {
             let host = host.clone();
             let queue_id = queue_id.clone();
             menu = menu.item(
-                PopupMenuItem::new(SharedString::from(format!(
-                    "    {}",
-                    self.strings.queue_name(&queue_id, name)
-                )))
-                .on_click(move |_, _, cx| {
-                    let queue_id = queue_id.clone();
+                PopupMenuItem::new(self.strings.queue_name(&queue_id, name)).on_click(
+                    move |_, _, cx| {
+                        let queue_id = queue_id.clone();
 
-                    let Ok(()) =
-                        host.update(cx, |view, cx| view.move_selected_to_queue(queue_id, cx))
-                    else {
-                        // 视图已释放，结束这次回调而不再更新状态。
-                        return;
-                    };
-                }),
+                        let Ok(()) =
+                            host.update(cx, |view, cx| view.move_selected_to_queue(queue_id, cx))
+                        else {
+                            // 视图已释放，结束这次回调而不再更新状态。
+                            return;
+                        };
+                    },
+                ),
             );
         }
         menu
@@ -4609,7 +4681,8 @@ mod tests {
 #[cfg(test)]
 mod context_menu_tests {
     use super::{
-        MenuEntry, PLUGIN_ERROR_PREFIX, TaskMenuFacts, context_menu_items, task_menu_entries,
+        MenuEntry, PLUGIN_ERROR_PREFIX, TaskMenuFacts, context_menu_items, is_bt_url,
+        is_replaceable_url, task_menu_entries,
     };
     use crate::model::TaskState;
 
@@ -4620,6 +4693,8 @@ mod context_menu_tests {
             state,
             boosted: false,
             is_torrent_sentinel: false,
+            is_bt: false,
+            url_replaceable: true,
             is_plugin_retry_error: false,
             file_missing: false,
         }
@@ -4756,6 +4831,105 @@ mod context_menu_tests {
 
         let remote = task(false, TaskState::Completed);
         assert!(!context_menu_items(&[remote]).contains(&MenuEntry::Redownload));
+    }
+
+    #[test]
+    fn change_url_needs_single_local_inactive_unfinished_http_ftp_task() {
+        for state in [TaskState::Paused, TaskState::Failed, TaskState::Pending] {
+            assert!(
+                context_menu_items(&[task(true, state)]).contains(&MenuEntry::ChangeUrl),
+                "{state:?}"
+            );
+        }
+        // 下载中（引擎 task-active）与已完成（task-completed）不可换链。
+        for state in [TaskState::Downloading, TaskState::Completed] {
+            assert!(
+                !context_menu_items(&[task(true, state)]).contains(&MenuEntry::ChangeUrl),
+                "{state:?}"
+            );
+        }
+        // 非 http(s)/ftp 源（BT / ed2k 等）、远程任务、多选均不显示。
+        let mut unsupported = task(true, TaskState::Paused);
+        unsupported.url_replaceable = false;
+        assert!(!context_menu_items(&[unsupported]).contains(&MenuEntry::ChangeUrl));
+        assert!(
+            !context_menu_items(&[task(false, TaskState::Paused)]).contains(&MenuEntry::ChangeUrl)
+        );
+        let pair = [task(true, TaskState::Paused), task(true, TaskState::Paused)];
+        assert!(!context_menu_items(&pair).contains(&MenuEntry::ChangeUrl));
+    }
+
+    #[test]
+    fn change_segments_needs_single_local_unfinished_non_bt_task() {
+        // 下载中也允许：引擎静默暂停 → 改 → 恢复。
+        for state in [
+            TaskState::Downloading,
+            TaskState::Paused,
+            TaskState::Failed,
+            TaskState::Pending,
+        ] {
+            assert!(
+                context_menu_items(&[task(true, state)]).contains(&MenuEntry::ChangeSegments),
+                "{state:?}"
+            );
+        }
+        assert!(
+            !context_menu_items(&[task(true, TaskState::Completed)])
+                .contains(&MenuEntry::ChangeSegments)
+        );
+        let mut bt = task(true, TaskState::Paused);
+        bt.is_bt = true;
+        assert!(!context_menu_items(&[bt]).contains(&MenuEntry::ChangeSegments));
+        assert!(
+            !context_menu_items(&[task(false, TaskState::Paused)])
+                .contains(&MenuEntry::ChangeSegments)
+        );
+        let pair = [task(true, TaskState::Paused), task(true, TaskState::Failed)];
+        assert!(!context_menu_items(&pair).contains(&MenuEntry::ChangeSegments));
+    }
+
+    #[test]
+    fn failed_local_task_menu_places_edit_entries_between_rename_and_redownload() {
+        assert_eq!(
+            context_menu_items(&[task(true, TaskState::Failed)]),
+            vec![
+                MenuEntry::Resume,
+                MenuEntry::Boost,
+                MenuEntry::OpenFolder,
+                MenuEntry::Rename,
+                MenuEntry::ChangeUrl,
+                MenuEntry::ChangeSegments,
+                MenuEntry::Redownload,
+                MenuEntry::CopyUrl,
+                MenuEntry::MoveToQueue,
+                MenuEntry::Separator,
+                MenuEntry::Delete,
+                MenuEntry::DeleteWithFiles,
+                MenuEntry::ShowDetail,
+            ]
+        );
+    }
+
+    #[test]
+    fn url_classification_matches_engine_supported_protocols() {
+        for url in ["http://a/b", "https://a/b", "HTTPS://a/b", "ftp://a/b"] {
+            assert!(is_replaceable_url(url), "{url}");
+            assert!(!is_bt_url(url), "{url}");
+        }
+        for url in ["magnet:?xt=urn:btih:abc", "torrent-file://local"] {
+            assert!(is_bt_url(url), "{url}");
+            assert!(!is_replaceable_url(url), "{url}");
+        }
+        for url in [
+            "ed2k://|file|a|1|h|/",
+            "sftp://a/b",
+            "ftps://a/b",
+            "",
+            "htt",
+        ] {
+            assert!(!is_replaceable_url(url), "{url}");
+            assert!(!is_bt_url(url), "{url}");
+        }
     }
 
     #[test]

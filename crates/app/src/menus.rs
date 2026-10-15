@@ -119,6 +119,8 @@ pub fn build_menus(translator: &Translator) -> Vec<Menu> {
         MenuItem::action(t(translator, "openFolder"), dl::RevealSelected),
         MenuItem::action(t(translator, "copyUrl"), dl::CopySelectedUrl),
         MenuItem::action(t(translator, "renameTask"), dl::RenameSelected),
+        MenuItem::action(t(translator, "webChangeUrl"), dl::ChangeSelectedUrl),
+        MenuItem::action(t(translator, "editThreads"), dl::ChangeSelectedSegments),
         MenuItem::action(t(translator, "redownloadTask"), dl::RedownloadSelected),
         MenuItem::action(t(translator, "boostDownload"), dl::ToggleBoostSelected),
         MenuItem::action(t(translator, "menuOpenInWindow"), dl::OpenSelectedInWindow),

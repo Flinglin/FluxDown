@@ -101,6 +101,18 @@ pub enum DownloadsCommand {
         task_id: String,
         file_name: String,
     },
+    /// 更换下载源地址（`daemon.task.changeUrl`）：仅非活跃、未完成、非 BT 任务；
+    /// 失败为引擎稳定错误码（`invalid-url` / `task-active` / `protocol-mismatch` …）。
+    ChangeUrl {
+        task_id: String,
+        url: String,
+    },
+    /// 修改线程数（`daemon.task.setSegments`）：`<= 0` = 自动，已下进度保留；
+    /// 下载中任务由引擎静默暂停 → 改配置 → 恢复。
+    SetSegments {
+        task_id: String,
+        segments: i32,
+    },
     Delete {
         task_id: String,
         delete_files: bool,

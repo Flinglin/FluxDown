@@ -17,6 +17,8 @@ pub const DAEMON_TASK_RESUME: &str = "daemon.task.resume";
 pub const DAEMON_TASK_RENAME: &str = "daemon.task.rename";
 /// 更换任务下载源地址（`{taskId, url}`，语义同旧 `PUT /api/v1/tasks/{id}/url`）。
 pub const DAEMON_TASK_CHANGE_URL: &str = "daemon.task.changeUrl";
+/// 修改任务线程数（`SetTaskSegmentsParams`），已下进度保留；完成或不存在的任务返回 `not-found`。
+pub const DAEMON_TASK_SET_SEGMENTS: &str = "daemon.task.setSegments";
 pub const DAEMON_TASK_DELETE: &str = "daemon.task.delete";
 pub const DAEMON_TASK_PAUSE_ALL: &str = "daemon.task.pauseAll";
 pub const DAEMON_TASK_RESUME_ALL: &str = "daemon.task.resumeAll";
@@ -301,6 +303,7 @@ pub const ALL_METHODS: &[&str] = &[
     DAEMON_TASK_RESUME,
     DAEMON_TASK_RENAME,
     DAEMON_TASK_CHANGE_URL,
+    DAEMON_TASK_SET_SEGMENTS,
     DAEMON_TASK_DELETE,
     DAEMON_TASK_PAUSE_ALL,
     DAEMON_TASK_RESUME_ALL,

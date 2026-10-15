@@ -22,6 +22,8 @@ object HostMethod {
     const val daemonTaskRename = "daemon.task.rename"
     /** 更换任务下载源地址（`{taskId, url}`，语义同旧 `PUT /api/v1/tasks/{id}/url`）。 */
     const val daemonTaskChangeUrl = "daemon.task.changeUrl"
+    /** 修改任务线程数（`SetTaskSegmentsParams`），已下进度保留；完成或不存在的任务返回 `not-found`。 */
+    const val daemonTaskSetSegments = "daemon.task.setSegments"
     const val daemonTaskDelete = "daemon.task.delete"
     const val daemonTaskPauseAll = "daemon.task.pauseAll"
     const val daemonTaskResumeAll = "daemon.task.resumeAll"

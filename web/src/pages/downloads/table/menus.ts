@@ -7,6 +7,8 @@ import {
   CircleCheck,
   Copy,
   Download,
+  Layers,
+  Link2,
   FolderOpen,
   Pause,
   PanelRight,
@@ -46,9 +48,10 @@ import {
   toggleBoost,
 } from '../model/actions'
 import { remoteCan } from '../model/batchPlan'
+import { canChangeSegments, canChangeUrl } from '../model/taskEdit'
 import type { DownloadTaskView } from '../model/task'
 import type { GroupSummary } from '../state'
-import { openGroupDetail, openRename } from '../dialogs'
+import { openChangeSegments, openChangeUrl, openGroupDetail, openRename } from '../dialogs'
 
 type Translate = (key: string, params?: Record<string, string | number>) => string
 
@@ -133,6 +136,18 @@ export function buildTaskMenu({ t, views, queues, queueName, showDetail, selecti
   }
   if (only && only.source === 'local') {
     entries.push({ type: 'item', key: 'rename', label: t('renameTask'), icon: Pen, onSelect: () => openRename(only.taskId) })
+  }
+  if (only && canChangeUrl(only)) {
+    entries.push({ type: 'item', key: 'change-url', label: t('webChangeUrl'), icon: Link2, onSelect: () => openChangeUrl(only.taskId) })
+  }
+  if (only && canChangeSegments(only)) {
+    entries.push({
+      type: 'item',
+      key: 'change-segments',
+      label: t('editThreads'),
+      icon: Layers,
+      onSelect: () => openChangeSegments(only.taskId),
+    })
   }
   if (views.every(canRedownload)) {
     entries.push({

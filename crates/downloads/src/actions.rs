@@ -26,6 +26,10 @@ actions!(
         ShowSelectedDetail,
         CopySelectedUrl,
         RenameSelected,
+        /// 更换选中任务的下载链接（右键「更换链接」）。
+        ChangeSelectedUrl,
+        /// 修改选中任务的线程数（右键「修改线程数」）。
+        ChangeSelectedSegments,
         RedownloadSelected,
         ToggleBoostSelected,
         FocusSearch,

@@ -22,6 +22,8 @@ public enum HostMethod {
     public static let daemonTaskRename = "daemon.task.rename"
     /// 更换任务下载源地址（`{taskId, url}`，语义同旧 `PUT /api/v1/tasks/{id}/url`）。
     public static let daemonTaskChangeUrl = "daemon.task.changeUrl"
+    /// 修改任务线程数（`SetTaskSegmentsParams`），已下进度保留；完成或不存在的任务返回 `not-found`。
+    public static let daemonTaskSetSegments = "daemon.task.setSegments"
     public static let daemonTaskDelete = "daemon.task.delete"
     public static let daemonTaskPauseAll = "daemon.task.pauseAll"
     public static let daemonTaskResumeAll = "daemon.task.resumeAll"

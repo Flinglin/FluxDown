@@ -57,6 +57,10 @@ pub enum ActorOperation {
         task_id: String,
         url: String,
     },
+    SetTaskSegments {
+        task_id: String,
+        segments: i32,
+    },
     DeleteTask {
         task_id: String,
         delete_files: bool,
@@ -866,6 +870,18 @@ async fn execute_operation(
             .change_task_url(&task_id, &url)
             .await
             .map_err(ActorError::Operation)?,
+        ActorOperation::SetTaskSegments { task_id, segments } => {
+            let updated = engine
+                .manager
+                .set_task_segments(&task_id, segments)
+                .await
+                .map_err(|error| ActorError::Operation(format!("{error:#}")))?;
+            if !updated {
+                return Err(ActorError::NotFound);
+            }
+            // 非活跃任务引擎只改库不推事件：补一次快照让客户端看到新线程数。
+            engine.manager.send_tasks_snapshot().await;
+        }
         ActorOperation::DeleteTask {
             task_id,
             delete_files,
@@ -2340,6 +2356,93 @@ mod tests {
         drop(engine);
         if let Err(error) = tokio::fs::remove_dir_all(dir).await {
             eprintln!("actor bt disabled test directory removal failed: {error}");
+        }
+    }
+
+    /// `daemon.task.setSegments`：暂停任务改线程数后落库且状态不变；不存在 / 已完成任务
+    /// 映射为 `NotFound`，不改库。
+    #[tokio::test]
+    async fn set_task_segments_updates_paused_task_and_rejects_missing_or_completed() {
+        let dir = std::env::temp_dir().join(format!(
+            "fluxdown_daemon_set_segments_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .expect("create set segments test dir");
+        let dir_text = dir.to_string_lossy().into_owned();
+        let mut engine = fluxdown_engine::Engine::new(
+            fluxdown_engine::EngineConfig {
+                max_concurrent: 1,
+                speed_limit_bps: 0,
+                upload_limit_bps: 0,
+                default_save_dir: dir_text.clone(),
+                app_data_dir: dir_text.clone(),
+                bt_config: fluxdown_engine::bt_downloader::BtConfig::default(),
+                proxy_config: fluxdown_engine::proxy_config::ProxyConfig::default(),
+                user_agent: String::new(),
+                data_dir_override: Some(dir.clone()),
+                database_url: None,
+            },
+            std::sync::Arc::new(fluxdown_engine::NoopSink),
+            std::sync::Arc::new(fluxdown_engine::NoopSelection),
+        )
+        .await
+        .expect("construct engine");
+        let events =
+            crate::event_hub::DaemonEventHub::new(fluxdown_protocol::DaemonSnapshot::default(), 32);
+        let set = |task_id: &str, segments: i32| ActorOperation::SetTaskSegments {
+            task_id: task_id.to_owned(),
+            segments,
+        };
+        for (id, status) in [("paused", 2), ("done", 3)] {
+            engine
+                .db
+                .insert_task(
+                    id,
+                    "https://example.invalid/a.bin",
+                    "a.bin",
+                    &dir_text,
+                    8,
+                    0,
+                    "",
+                    "",
+                    "",
+                    status,
+                )
+                .await
+                .expect("insert task");
+        }
+
+        execute_operation(set("paused", 1), &mut engine, &events)
+            .await
+            .expect("paused task accepts new segments");
+        let paused = engine
+            .db
+            .load_task_by_id("paused")
+            .await
+            .expect("load paused")
+            .expect("paused exists");
+        assert_eq!((paused.segments, paused.status), (1, 2));
+
+        for id in ["missing", "done"] {
+            assert!(matches!(
+                execute_operation(set(id, 4), &mut engine, &events).await,
+                Err(ActorError::NotFound)
+            ));
+        }
+        let done = engine
+            .db
+            .load_task_by_id("done")
+            .await
+            .expect("load done")
+            .expect("done exists");
+        assert_eq!(done.segments, 8, "completed task keeps its segments");
+
+        drop(engine);
+        if let Err(error) = tokio::fs::remove_dir_all(dir).await {
+            eprintln!("actor set segments test directory removal failed: {error}");
         }
     }
 

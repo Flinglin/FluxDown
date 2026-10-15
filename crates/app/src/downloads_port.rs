@@ -275,6 +275,14 @@ impl AgentDownloadsPort {
                     method::DAEMON_TASK_RENAME,
                     json!({ "taskId": task_id, "fileName": file_name }),
                 ),
+                DownloadsCommand::ChangeUrl { task_id, url } => (
+                    method::DAEMON_TASK_CHANGE_URL,
+                    serialize(fluxdown_protocol::ChangeTaskUrlParams { task_id, url })?,
+                ),
+                DownloadsCommand::SetSegments { task_id, segments } => (
+                    method::DAEMON_TASK_SET_SEGMENTS,
+                    serialize(fluxdown_protocol::SetTaskSegmentsParams { task_id, segments })?,
+                ),
                 DownloadsCommand::Delete {
                     task_id,
                     delete_files,

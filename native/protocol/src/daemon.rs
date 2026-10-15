@@ -820,6 +820,18 @@ pub struct ChangeTaskUrlParams {
     pub url: String,
 }
 
+/// `daemon.task.setSegments` 参数：修改未完成任务的线程（分段）数，已下进度保留。
+///
+/// `segments <= 0` = 自动；上限 [`crate::MAX_TASK_SEGMENTS`]。下载中任务由引擎
+/// 静默暂停 → 改配置 → 恢复，其余状态下次开始时生效。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct SetTaskSegmentsParams {
+    pub task_id: String,
+    pub segments: i32,
+}
+
 /// 设置插件启用状态请求体。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

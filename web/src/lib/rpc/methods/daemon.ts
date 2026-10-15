@@ -73,6 +73,7 @@ import type {
   TaskDeleteManyParams,
   TaskDeleteParams,
   TaskChangeUrlParams,
+  TaskSetSegmentsParams,
   TaskDto,
   TaskIdParams,
   TaskIdsParams,
@@ -101,6 +102,9 @@ const task = {
   rename: (params: TaskRenameParams) => call<OkResult>(METHOD.DAEMON_TASK_RENAME, params),
   changeUrl: (params: TaskChangeUrlParams) =>
     call<OkResult>(METHOD.DAEMON_TASK_CHANGE_URL, params),
+  /** 修改线程数：已下进度保留；下载中任务由引擎静默暂停 → 改配置 → 恢复。 */
+  setSegments: (params: TaskSetSegmentsParams) =>
+    call<OkResult>(METHOD.DAEMON_TASK_SET_SEGMENTS, params),
   delete: (params: TaskDeleteParams) => call<OkResult>(METHOD.DAEMON_TASK_DELETE, params),
   pauseAll: () => call<OkResult>(METHOD.DAEMON_TASK_PAUSE_ALL),
   resumeAll: () => call<OkResult>(METHOD.DAEMON_TASK_RESUME_ALL),

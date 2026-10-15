@@ -85,6 +85,19 @@ pub(crate) struct DownloadStrings {
     pub(crate) rename_task: SharedString,
     pub(crate) rename_task_title: SharedString,
     pub(crate) rename_task_placeholder: SharedString,
+    /// 右键「更换链接」及其对话框。
+    pub(crate) change_url: SharedString,
+    pub(crate) change_url_title: SharedString,
+    pub(crate) change_url_label: SharedString,
+    pub(crate) change_url_placeholder: SharedString,
+    /// 右键「修改线程数」及其对话框（含「已下进度保留」说明与成功提示）。
+    pub(crate) edit_threads: SharedString,
+    pub(crate) edit_threads_title: SharedString,
+    pub(crate) edit_threads_hint: SharedString,
+    pub(crate) edit_threads_label: SharedString,
+    pub(crate) edit_threads_zero_hint: SharedString,
+    pub(crate) edit_threads_invalid: SharedString,
+    pub(crate) threads_changed: SharedString,
     pub(crate) redownload_task: SharedString,
     pub(crate) copy_url: SharedString,
     /// 复制下载地址后的成功提示。
@@ -217,6 +230,17 @@ impl DownloadStrings {
             rename_task: shared(translator.text("renameTask")),
             rename_task_title: shared(translator.text("renameTaskTitle")),
             rename_task_placeholder: shared(translator.text("renameTaskPlaceholder")),
+            change_url: shared(translator.text("webChangeUrl")),
+            change_url_title: shared(translator.text("webChangeUrlTitle")),
+            change_url_label: shared(translator.text("webChangeUrlLabel")),
+            change_url_placeholder: shared(translator.text("webChangeUrlPlaceholder")),
+            edit_threads: shared(translator.text("editThreads")),
+            edit_threads_title: shared(translator.text("editThreadsTitle")),
+            edit_threads_hint: shared(translator.text("editThreadsResetHint")),
+            edit_threads_label: shared(translator.text("configuredThreads")),
+            edit_threads_zero_hint: shared(translator.text("queueDefaultSegmentsHint")),
+            edit_threads_invalid: shared(translator.text("editThreadsInvalid")),
+            threads_changed: shared(translator.text("threadsChanged")),
             redownload_task: shared(translator.text("redownloadTask")),
             copy_url: shared(translator.text("copyUrl")),
             url_copied: shared(translator.text("urlCopied")),
@@ -776,6 +800,31 @@ pub(crate) fn error_text(
         | ApplicationErrorCode::Internal => "localServiceActionFailed",
     });
     translator.text(key).to_owned()
+}
+
+/// 更换链接失败文案：竞态等 RPC 失败走通用文案；`not-found`（任务已不存在）用专用文案。
+/// 输入类错误由对话框预校验拦截，不会到这里。
+pub(crate) fn change_url_error_text(
+    translator: &Translator,
+    error: &fluxdown_protocol::RpcErrorData,
+) -> String {
+    if error.code == fluxdown_protocol::ApplicationErrorCode::NotFound {
+        translator.text("webChangeUrlErrNotFound").to_owned()
+    } else {
+        error_text(translator, error)
+    }
+}
+
+/// 修改线程数失败文案：daemon 对「已完成 / 不存在」的任务返回 `not-found`。
+pub(crate) fn set_segments_error_text(
+    translator: &Translator,
+    error: &fluxdown_protocol::RpcErrorData,
+) -> String {
+    if error.code == fluxdown_protocol::ApplicationErrorCode::NotFound {
+        translator.text("threadsChangeRejected").to_owned()
+    } else {
+        error_text(translator, error)
+    }
 }
 
 /// 千分位分组（`1234567` → `1,234,567`），进度与计数提示共用。

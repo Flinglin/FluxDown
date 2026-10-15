@@ -232,6 +232,23 @@ impl DaemonService {
                 })
                 .await
             }
+            method::DAEMON_TASK_SET_SEGMENTS => {
+                let params = parse_params::<fluxdown_protocol::SetTaskSegmentsParams>(params)?;
+                if params.segments > fluxdown_protocol::MAX_TASK_SEGMENTS {
+                    return Err(invalid_argument(
+                        "segments",
+                        &format!(
+                            "segments must be at most {}",
+                            fluxdown_protocol::MAX_TASK_SEGMENTS
+                        ),
+                    ));
+                }
+                self.execute_unit(ActorOperation::SetTaskSegments {
+                    task_id: params.task_id,
+                    segments: params.segments.max(0),
+                })
+                .await
+            }
             method::DAEMON_TASK_DELETE => {
                 let params = parse_params::<DeleteParams>(params)?;
                 self.execute_unit(ActorOperation::DeleteTask {
