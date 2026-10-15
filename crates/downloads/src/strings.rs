@@ -372,6 +372,15 @@ impl DownloadStrings {
         }
     }
 
+    /// 队列显示名：内置队列本地化，自定义队列用用户命名。
+    pub(crate) fn queue_name(&self, queue_id: &str, name: &str) -> SharedString {
+        match queue_id {
+            fluxdown_protocol::MAIN_QUEUE_ID => self.main_queue.clone(),
+            fluxdown_protocol::LATER_QUEUE_ID => self.later_queue.clone(),
+            _ => SharedString::from(name.to_owned()),
+        }
+    }
+
     /// 无 host 任务的站点标签：BT 用「BT · Magnet」，其余 `—`。
     pub(crate) fn site_unknown(&self, task: &crate::model::DownloadTaskView) -> SharedString {
         if task.protocol == crate::model::TaskProtocol::Bt {
@@ -396,15 +405,6 @@ impl DownloadStrings {
         seconds: u64,
         attempt: u32,
         max: u32,
-    /// 队列显示名：内置队列本地化，自定义队列用用户命名。
-    pub(crate) fn queue_name(&self, queue_id: &str, name: &str) -> SharedString {
-        match queue_id {
-            fluxdown_protocol::MAIN_QUEUE_ID => self.main_queue.clone(),
-            fluxdown_protocol::LATER_QUEUE_ID => self.later_queue.clone(),
-            _ => SharedString::from(name.to_owned()),
-        }
-    }
-
     ) -> SharedString {
         SharedString::from(
             self.import_retrying

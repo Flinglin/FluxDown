@@ -377,9 +377,6 @@ impl ShellState {
         }
     }
 
-    /// 拉起已在 [`UiLaunches`] 登记的桌面进程；进程退出（或没能启动）时释放登记并唤醒控制循环
-    /// 重新判定。
-    fn launch_tracked(&self, args: &[&str]) -> Result<(), crate::platform::PlatformError> {
     /// 新版本提醒：托盘驻留且没有 UI 连接时拉起界面（`--capture` 只开提醒窗口，不开主窗口），
     /// 界面在运行时由它自己按同一判定开窗。非驻留时没有 UI 就没有后台，不拉起。
     fn reconcile_update_prompt(&self, now: Instant) {
@@ -410,6 +407,9 @@ impl ShellState {
         }
     }
 
+    /// 拉起已在 [`UiLaunches`] 登记的桌面进程；进程退出（或没能启动）时释放登记并唤醒控制循环
+    /// 重新判定。
+    fn launch_tracked(&self, args: &[&str]) -> Result<(), crate::platform::PlatformError> {
         let launches = Arc::clone(&self.launches);
         let changed = Arc::clone(&self.changed);
         let launched = crate::platform::launch_desktop_observed(args, move || {
@@ -544,10 +544,10 @@ pub async fn run_controller(
         if !lifecycle.quit_requested() {
             state.reconcile_prompt(Instant::now());
             state.reconcile_task_windows(Instant::now());
+            state.reconcile_update_prompt(Instant::now());
         }
         #[cfg(feature = "desktop")]
         tray.update(&events);
-            state.reconcile_update_prompt(Instant::now());
     }
     state.launches().clear_tasks();
 }
@@ -704,6 +704,14 @@ fn snapshot_is_idle(snapshot: &AgentSnapshot) -> bool {
         && snapshot.power.armed_delay_secs.is_none()
 }
 
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 /// 是否有必须由界面承载的待确认交互：外部捕获恒需要；引擎选择只在托盘驻留、由 agent 代为订阅
 /// 时才需要拉起界面（非驻留且无 UI 时 agent 不订阅，daemon 直接走默认值）。
 fn needs_prompt_ui(snapshot: &AgentSnapshot, tray_visible: bool) -> bool {
@@ -724,14 +732,6 @@ mod tests {
                 .iter()
                 .map(|(key, value)| ((*key).to_owned(), value.clone()))
                 .collect::<BTreeMap<_, _>>(),
-fn unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
         }
     }
 
