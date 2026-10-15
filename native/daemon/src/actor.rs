@@ -466,8 +466,12 @@ async fn run_actor(
                 commit_maintenance(event, &mut engine).await;
             }
             Some(ids) = receivers.missing_cleanup.recv() => {
-                engine.manager.delete_tasks_batch(&ids, false).await;
-                engine.manager.send_tasks_snapshot().await;
+                // 删除事实由 delete_tasks_batch 自己发布（TasksDeleted），无需再推全量快照。
+                if let Err(error) = batch_delete_result(
+                    engine.manager.delete_tasks_batch(&ids, false).await,
+                ) {
+                    tracing::warn!(%error, "removing tasks whose files vanished failed");
+                }
             }
             _ = file_scan.tick() => {
                 // 完全空闲且 idle_file_scan 关闭时跳过，避免周期性唤醒 NAS 硬盘。
@@ -896,10 +900,8 @@ async fn execute_operation(
             delete_files,
         } => {
             let ids = existing_task_ids(&engine.db, task_ids).await?;
-            if !ids.is_empty() {
-                engine.manager.delete_tasks_batch(&ids, delete_files).await;
-                engine.manager.send_tasks_snapshot().await;
-            }
+            // 删除事实由 delete_tasks_batch 经 TasksDeleted 发布：大批量删除不再逐块推全量快照。
+            batch_delete_result(engine.manager.delete_tasks_batch(&ids, delete_files).await)?;
         }
         ActorOperation::ResumeAll => {
             engine.manager.resume_all_eligible().await;
@@ -1063,10 +1065,7 @@ async fn execute_operation(
         ActorOperation::DeleteGroup {
             group_id,
             delete_files,
-        } => {
-            engine.manager.delete_group(&group_id, delete_files).await;
-            engine.manager.send_tasks_snapshot().await;
-        }
+        } => batch_delete_result(engine.manager.delete_group(&group_id, delete_files).await)?,
         #[cfg(feature = "plugins")]
         ActorOperation::ResolvePreview { .. } => unreachable!("handled off actor"),
         ActorOperation::RssListSources => {
@@ -1929,6 +1928,24 @@ fn publish_webhook_history(engine: &Engine, events: &crate::event_hub::DaemonEve
         .collect();
     if !history.is_empty() {
         events.publish(fluxdown_protocol::DaemonEvent::WebhooksChanged(history));
+    }
+}
+
+/// 批量删除结果 → 操作结果：预读 / 提交失败，或有任务因文件清理失败而保留（其余已删除）
+/// 时报错，调用方据此向用户提示。
+fn batch_delete_result(
+    result: Result<
+        fluxdown_engine::download_manager::BatchDeleteOutcome,
+        fluxdown_engine::db::DbError,
+    >,
+) -> Result<(), ActorError> {
+    match result {
+        Ok(outcome) if outcome.failed == 0 => Ok(()),
+        Ok(outcome) => Err(ActorError::Operation(format!(
+            "{} task(s) kept because their files could not be removed ({} deleted)",
+            outcome.failed, outcome.deleted
+        ))),
+        Err(error) => Err(ActorError::Operation(format!("{error:#}"))),
     }
 }
 

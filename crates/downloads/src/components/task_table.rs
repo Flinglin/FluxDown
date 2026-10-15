@@ -33,6 +33,7 @@ use crate::{
         conflict_badge::conflict_badge, file_icon::task_file_icon, task_drag::DraggedTasks,
     },
     controller::DownloadsCommand,
+    deletion::{MIN_BATCH_DELETE, split_local_deletes},
     model::{
         CategoryIndex, DownloadFilter, DownloadTaskView, RowId, RowKey, SidebarSelection,
         TaskProtocol, TaskSource, TaskState, TaskStore,
@@ -72,6 +73,8 @@ const PROGRESS_LABEL_WIDTH: f32 = 32.;
 const PROGRESS_GAP: f32 = 8.;
 /// 暂停态进度条：`statusPaused` 的 40%。
 const PAUSED_BAR_ALPHA: f32 = 0.4;
+/// 正在删除（已提交、尚未从列表消失）的行的不透明度。
+const PENDING_DELETE_OPACITY: f32 = 0.4;
 /// 行悬停操作按钮边长。
 const ROW_ACTION_SIZE: f32 = 24.;
 /// 舒适密度下文件图标相对 `icon.lg`（16）的倍数：24px，与双行文字块（约 34px）协调。
@@ -540,6 +543,8 @@ pub(crate) struct DownloadTableDelegate {
     /// 显式多选模式：仅 Cmd/Ctrl+点击或全选进入，普通单击 / 清空选择退出；
     /// 行首复选框只在该模式且有选中项时显示（与 Web `multiSelect` 对齐）。
     multi_select: bool,
+    /// 已提交删除、尚未从列表消失的本地任务 id：行渲染时变淡，且不可再被选中 / 批量操作。
+    pending_delete: HashSet<String>,
     filter: TableFilter,
     query: String,
     prefs: ViewPrefs,
@@ -596,6 +601,7 @@ impl DownloadTableDelegate {
             selected_tasks: HashSet::new(),
             selection_anchor: None,
             multi_select: false,
+            pending_delete: HashSet::new(),
             filter: TableFilter::Download(DownloadFilter::ALL),
             query: String::new(),
             prefs: ViewPrefs::default(),
@@ -892,9 +898,11 @@ impl DownloadTableDelegate {
         // 折叠分组内的任务仍属于当前视图，不因折叠而取消选中。
         let mut selected = std::mem::take(&mut self.selected_tasks);
         selected.retain(|key| {
-            self.store
-                .get(key)
-                .is_some_and(|task| self.matches_filter(&task) && self.matches_query(&task))
+            !self.is_pending_delete(key)
+                && self
+                    .store
+                    .get(key)
+                    .is_some_and(|task| self.matches_filter(&task) && self.matches_query(&task))
         });
         self.selected_tasks = selected;
         self.selection_anchor = self
@@ -1263,8 +1271,13 @@ impl DownloadTableDelegate {
     }
 
     pub(crate) fn select_all_tasks(&mut self) {
+        let keys: Vec<RowKey> = self
+            .visible_task_keys()
+            .into_iter()
+            .filter(|key| !self.is_pending_delete(key))
+            .collect();
         self.selected_tasks.clear();
-        self.selected_tasks.extend(self.visible_task_keys());
+        self.selected_tasks.extend(keys);
         self.selection_anchor = None;
         self.multi_select = true;
     }
@@ -1281,6 +1294,10 @@ impl DownloadTableDelegate {
     }
 
     pub(crate) fn select_task(&mut self, key: RowKey, modifiers: Modifiers) {
+        // 正在删除的任务不参与选择。
+        if self.is_pending_delete(&key) {
+            return;
+        }
         if modifiers.shift
             && let Some(anchor) = self.selection_anchor.clone()
         {
@@ -1294,8 +1311,12 @@ impl DownloadTableDelegate {
                     (task_index, anchor_index)
                 };
                 self.selected_tasks.clear();
-                self.selected_tasks
-                    .extend(keys[start..=end].iter().cloned());
+                let range: Vec<RowKey> = keys[start..=end]
+                    .iter()
+                    .filter(|item| !self.is_pending_delete(item))
+                    .cloned()
+                    .collect();
+                self.selected_tasks.extend(range);
                 self.selection_anchor = Some(key);
                 return;
             }
@@ -1330,12 +1351,39 @@ impl DownloadTableDelegate {
     }
 
     pub(crate) fn select_task_for_context_menu(&mut self, key: RowKey) {
+        if self.is_pending_delete(&key) {
+            // 正在删除的行没有可用操作：清空选区，菜单为空而不会作用于旧选区。
+            self.clear_selection();
+            return;
+        }
         if !self.selected_tasks.contains(&key) {
             self.selected_tasks.clear();
             self.selected_tasks.insert(key.clone());
             self.multi_select = false;
         }
         self.selection_anchor = Some(key);
+    }
+
+    /// 是否为已提交删除、尚未消失的本地任务。
+    pub(crate) fn is_pending_delete(&self, key: &RowKey) -> bool {
+        matches!(key, RowKey::Local(id) if self.pending_delete.contains(id))
+    }
+
+    /// 开始一批删除：清空选区，并登记尚未在途的任务（行随即变淡）；返回本次新登记的 id。
+    /// 已在另一批删除中的任务不会被重复提交。
+    pub(crate) fn begin_delete(&mut self, task_ids: Vec<String>) -> Vec<String> {
+        self.clear_selection();
+        task_ids
+            .into_iter()
+            .filter(|id| self.pending_delete.insert(id.clone()))
+            .collect()
+    }
+
+    /// 一批删除结束（成功 / 失败 / 取消）：释放登记，仍在列表里的行恢复正常。
+    pub(crate) fn finish_delete(&mut self, task_ids: &[String]) {
+        for id in task_ids {
+            self.pending_delete.remove(id);
+        }
     }
 
     pub(crate) fn selected_keys(&self) -> Vec<RowKey> {
@@ -1597,6 +1645,9 @@ impl DownloadTableDelegate {
             .on_click(cx.listener(move |table, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 let delegate = table.delegate_mut();
+                if delegate.is_pending_delete(&key) {
+                    return;
+                }
                 if !delegate.selected_tasks.remove(&key) {
                     delegate.selected_tasks.insert(key.clone());
                 }
@@ -1880,6 +1931,9 @@ impl DownloadTableDelegate {
     /// 舒适与紧凑密度一致。底色与行悬停一致（选中时叠加选中色），除「详情」外点击不
     /// 改变选中。
     fn render_row_actions(&self, task: &DownloadTaskView, cx: &App) -> Option<AnyElement> {
+        if self.is_pending_delete(&task.key) {
+            return None;
+        }
         let host = self.host.as_ref()?;
         let is_local = task.key.is_local();
         let with_detail = !self.prefs.detail_open;
@@ -2560,22 +2614,25 @@ impl TableDelegate for DownloadTableDelegate {
             return div().id(("download-task-row", row_ix)).h(row_height);
         };
         let selected = self.selected_tasks.contains(&key);
+        let pending = self.is_pending_delete(&key);
         let (accent, radius) = (
             theme.tokens().colors.accent,
             theme.components().task_row_radius,
         );
         // 已完成且文件仍在下载目录的行可按住拖到系统文件管理器 / 桌面。
-        let dragged = drag_visual.map(|(kind, name_fold, name)| DraggedTasks {
-            anchor: key.clone(),
-            kind,
-            name_fold,
-            name,
-            table: cx.weak_entity(),
-            host: self.host.clone(),
-        });
+        let dragged = drag_visual
+            .filter(|_| !pending)
+            .map(|(kind, name_fold, name)| DraggedTasks {
+                anchor: key.clone(),
+                kind,
+                name_fold,
+                name,
+                table: cx.weak_entity(),
+                host: self.host.clone(),
+            });
         // 双击：已完成打开文件，其余打开详情。独立于选择监听注册（普通闭包，不占用表格
         // 实体），这样 DownloadView 处理时可以自由读写表格状态。
-        let activate = self.host.clone().map(|host| {
+        let activate = self.host.clone().filter(|_| !pending).map(|host| {
             let key = key.clone();
             move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
                 let modifiers = event.modifiers();
@@ -2596,6 +2653,7 @@ impl TableDelegate for DownloadTableDelegate {
             .h(row_height)
             .group(ROW_GROUP)
             .relative()
+            .when(pending, |this| this.opacity(PENDING_DELETE_OPACITY))
             // 覆盖 DataTable 自带的满宽悬浮底色，两种状态共用内缩背景。
             .child(div().absolute().inset_0().bg(theme.tokens().colors.surface))
             .child(
@@ -3249,7 +3307,8 @@ impl DownloadView {
         self.execute_commands(commands, cx);
     }
 
-    /// 执行一批命令。同类多任务的暂停 / 继续 / 删除先合并成批量 RPC
+    /// 执行一批命令。本地多任务删除先拆出走分块删除（见 [`crate::deletion`]）；同类多任务
+    /// 的暂停 / 继续 / 远程删除先合并成批量 RPC
     /// （见 [`coalesce_commands`]），其余命令按 [`MAX_IN_FLIGHT`] 限制并发；幂等命令被
     /// agent 以可重试的 `Unavailable` 拒绝时退避重试。任一失败在页面横幅提示（按错误
     /// `reason` 给出原因，同一批里先失败的错误一直保留，后完成的成功不会冲掉它）。
@@ -3260,6 +3319,11 @@ impl DownloadView {
         commands: Vec<DownloadsCommand>,
         cx: &mut Context<Self>,
     ) {
+        // 本地多任务删除走分块 + 进度 + 取消的专用路径；单任务删除与远程删除保持原路径。
+        let (deletions, commands) = split_local_deletes(commands, MIN_BATCH_DELETE);
+        for request in deletions {
+            self.start_deletion(request, cx);
+        }
         let interactive_start = match commands.as_slice() {
             [DownloadsCommand::Resume { task_id }] => Some((task_id.clone(), false)),
             [DownloadsCommand::Redownload(request, task_id)] if !request.start_paused => {
@@ -3457,6 +3521,46 @@ mod tests {
         assert_eq!(
             delegate.selected_tasks,
             HashSet::from([RowKey::Local("t2".into())])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pending_delete_rows_leave_the_selection_and_cannot_be_selected() -> Result<(), I18nError> {
+        let mut delegate = delegate(&[2, 2, 2, 2])?;
+        delegate.refresh_view();
+        delegate.select_all_tasks();
+        assert_eq!(delegate.selected_tasks.len(), 4);
+
+        // 开始删除清空选区；已在途的任务不会被重复登记。
+        let fresh = delegate.begin_delete(vec!["t0".into(), "t1".into()]);
+        assert_eq!(fresh, ["t0", "t1"]);
+        assert!(delegate.selected_tasks.is_empty());
+        assert!(delegate.begin_delete(vec!["t1".into()]).is_empty());
+        assert!(delegate.is_pending_delete(&RowKey::Local("t0".into())));
+        assert!(!delegate.is_pending_delete(&RowKey::Remote("t0".into())));
+
+        // 全选 / 点选 / 范围选 / 右键都跳过正在删除的行。
+        delegate.select_all_tasks();
+        assert_eq!(
+            delegate.selected_tasks,
+            HashSet::from([RowKey::Local("t2".into()), RowKey::Local("t3".into())])
+        );
+        delegate.select_task(RowKey::Local("t2".into()), Modifiers::default());
+        delegate.select_task(RowKey::Local("t1".into()), Modifiers::default());
+        assert_eq!(
+            delegate.selected_tasks,
+            HashSet::from([RowKey::Local("t2".into())])
+        );
+        delegate.select_task_for_context_menu(RowKey::Local("t0".into()));
+        assert!(delegate.selected_tasks.is_empty());
+
+        // 结束后恢复可选。
+        delegate.finish_delete(&["t0".to_owned(), "t1".to_owned()]);
+        delegate.select_task(RowKey::Local("t0".into()), Modifiers::default());
+        assert_eq!(
+            delegate.selected_tasks,
+            HashSet::from([RowKey::Local("t0".into())])
         );
         Ok(())
     }

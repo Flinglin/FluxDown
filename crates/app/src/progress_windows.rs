@@ -383,6 +383,20 @@ fn on_event(event: &ServiceEvent, cx: &mut App) {
             }
             sync_keep_alive(cx);
         }
+        AgentEvent::Daemon(DaemonEvent::TasksDeleted { task_ids }) => {
+            let state = cx.global_mut::<ProgressWindows>();
+            for task_id in task_ids {
+                state.statuses.remove(task_id);
+                state.tracker.forget(task_id);
+                if let Some(restart) = state.restarting.get_mut(task_id) {
+                    restart.deleted();
+                    if !restart.replaces_task {
+                        state.restarting.remove(task_id);
+                    }
+                }
+            }
+            sync_keep_alive(cx);
+        }
         AgentEvent::DaemonSnapshotReplaced(_)
         | AgentEvent::Daemon(
             DaemonEvent::SnapshotReplaced(_)

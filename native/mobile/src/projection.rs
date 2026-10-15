@@ -274,6 +274,17 @@ impl Projection {
             DaemonEvent::TaskDeleted { task_id } => Some(event_signal(HostEventDto::TaskDeleted {
                 task_id: task_id.clone(),
             })),
+            // 与逐条 `TaskDeleted` 等价：投影已整批移除，宿主端按任务归约。
+            DaemonEvent::TasksDeleted { task_ids } => {
+                return task_ids
+                    .iter()
+                    .map(|task_id| {
+                        event_signal(HostEventDto::TaskDeleted {
+                            task_id: task_id.clone(),
+                        })
+                    })
+                    .collect();
+            }
             DaemonEvent::QueuesChanged(queues) => Some(queues_signal(queues)),
             DaemonEvent::GroupsChanged(groups) => Some(groups_signal(groups)),
             DaemonEvent::ConfigChanged(config) => Some(event_signal(HostEventDto::ConfigChanged {
@@ -775,6 +786,58 @@ mod tests {
             }]
         ));
         assert!(task_dtos(&projection)[0].file_missing);
+    }
+
+    #[test]
+    fn tasks_changed_applies_the_batch_and_expands_to_per_task_events() {
+        let mut projection = projection(1, vec![task("a", 1)]);
+        let outcome = projection.accept(daemon_frame(
+            2,
+            DaemonEvent::TasksChanged(vec![task("a", 3), task("b", 0)]),
+        ));
+        let ids: Vec<String> = events(outcome)
+            .into_iter()
+            .map(|event| match event {
+                HostEventDto::TaskChanged { task } => task.task_id,
+                other => panic!("expected TaskChanged, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(ids, ["a", "b"]);
+        let tasks = task_dtos(&projection);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(
+            tasks
+                .iter()
+                .find(|task| task.task_id == "a")
+                .map(|task| task.status),
+            Some(3)
+        );
+        assert_eq!(projection.sequence(), 2);
+    }
+
+    #[test]
+    fn tasks_deleted_removes_the_batch_and_expands_to_per_task_events_in_order() {
+        let mut projection = projection(1, vec![task("a", 1), task("b", 1), task("c", 1)]);
+        let outcome = projection.accept(daemon_frame(
+            2,
+            DaemonEvent::TasksDeleted {
+                task_ids: vec!["c".to_owned(), "a".to_owned()],
+            },
+        ));
+        let ids: Vec<String> = events(outcome)
+            .into_iter()
+            .map(|event| match event {
+                HostEventDto::TaskDeleted { task_id } => task_id,
+                other => panic!("expected TaskDeleted, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(ids, ["c", "a"]);
+        let remaining: Vec<String> = task_dtos(&projection)
+            .into_iter()
+            .map(|task| task.task_id)
+            .collect();
+        assert_eq!(remaining, ["b"]);
+        assert_eq!(projection.sequence(), 2);
     }
 
     #[test]

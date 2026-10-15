@@ -24,6 +24,9 @@ use crate::{
         title_bar::{DownloadTitleBar, left_edge_probe},
     },
     controller::{DownloadsCommand, DownloadsController, DownloadsPort},
+    deletion::{
+        DELETE_CHUNK_SIZE, DeletionProgress, DeletionReport, DeletionRequest, run_deletion,
+    },
     model::{
         DownloadFilter, DownloadStatusFilter, RowKey, SidebarSection, SidebarSelection,
         StatusFolderMotion, TaskState,
@@ -115,6 +118,33 @@ pub struct DownloadHostActions {
     pub on_user_started: Option<UserStartHook>,
 }
 
+/// 一个进行中的大批量导入：进度只在分块边界更新，取消不回滚已创建的任务。
+struct ImportJob {
+    id: u64,
+    progress: SubmissionProgress,
+    cancel: CancelToken,
+    cancelling: bool,
+}
+
+/// 一个进行中的大批量删除：进度只在分块边界更新，取消不回滚已删除的任务。
+struct DeleteJob {
+    id: u64,
+    progress: DeletionProgress,
+    cancel: CancelToken,
+    cancelling: bool,
+}
+
+/// 进度条行的内容（导入 / 删除共用 [`DownloadView::render_progress_strip`]）。
+struct ProgressStrip {
+    job_id: u64,
+    progress_id: &'static str,
+    cancel_id: &'static str,
+    label: SharedString,
+    done: usize,
+    total: usize,
+    cancelling: bool,
+}
+
 /// 下载能力的顶层页面。
 pub struct DownloadView {
     pub(crate) controller: DownloadsController,
@@ -163,6 +193,14 @@ pub struct DownloadView {
     refresh_gate: RefreshGate,
     /// 上次刷新时存储的行布局计数；与当前不同说明行 ID 可能已指向别的任务。
     refreshed_structure: u64,
+    /// 进行中的大批量导入（每个有独立进度条与取消入口）。
+    imports: Vec<ImportJob>,
+    next_import_id: u64,
+    /// 进行中的大批量删除（超过一块的才有进度条与取消入口）。
+    deletions: Vec<DeleteJob>,
+    next_delete_id: u64,
+    /// 下载页所在窗口：删除结束的异步通知经它推送。
+    window: AnyWindowHandle,
 }
 
 impl DownloadView {
@@ -283,6 +321,11 @@ impl DownloadView {
             file_rescan: RescanThrottle::default(),
             refresh_gate: RefreshGate::default(),
             refreshed_structure: u64::MAX,
+            imports: Vec::new(),
+            next_import_id: 0,
+            deletions: Vec::new(),
+            next_delete_id: 0,
+            window: window.window_handle(),
         }
     }
 
@@ -414,6 +457,273 @@ impl DownloadView {
             })
             .unwrap_or(fallback)
         })
+    }
+
+    fn update_import(&mut self, id: u64, progress: SubmissionProgress, cx: &mut Context<Self>) {
+        if let Some(import) = self.imports.iter_mut().find(|import| import.id == id) {
+            import.progress = progress;
+            cx.notify();
+        }
+    }
+
+    /// 取消一个进行中的导入：已创建的任务保留，在途分块给短暂收尾时间后放弃。
+    fn cancel_import(&mut self, id: u64, cx: &mut Context<Self>) {
+        if let Some(import) = self.imports.iter_mut().find(|import| import.id == id) {
+            import.cancelling = true;
+            import.cancel.cancel();
+            cx.notify();
+        }
+    }
+
+    /// 进行中导入的进度条：进度文案（重试等待时换成重试提示）+ 取消按钮，每个导入一条。
+    fn render_import_strips(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        self.imports
+            .iter()
+            .map(|import| {
+                let progress = import.progress;
+                let label = if import.cancelling {
+                    self.strings.import_cancelling.clone()
+                } else if let Some(retry) = progress.retry {
+                    self.strings.format_import_retrying(
+                        retry.delay.as_secs(),
+                        retry.attempt,
+                        retry.max,
+                    )
+                } else {
+                    self.strings
+                        .format_import_progress(progress.done, progress.total)
+                };
+                self.render_progress_strip(
+                    ProgressStrip {
+                        job_id: import.id,
+                        progress_id: "import-progress",
+                        cancel_id: "import-cancel",
+                        label,
+                        done: progress.done,
+                        total: progress.total,
+                        cancelling: import.cancelling,
+                    },
+                    Self::cancel_import,
+                    cx,
+                )
+            })
+            .collect()
+    }
+
+    /// 本地多任务删除：按块下发（见 [`crate::deletion`]），行立即变淡并移出选区；超过一块时
+    /// 显示进度条与取消入口。结束时按 [`DeletionReport::notice`] 反馈：成功 / 取消用窗口通知，
+    /// 有失败写入页面错误条（与其余命令的失败提示一致）。
+    ///
+    /// 通知需要窗口：下载页创建时记下所在窗口句柄，异步结束后经句柄推送，这样所有删除入口
+    /// （菜单 / 快捷键 / 选择条 / 清除已完成）都不必为此改成传 `Window`。
+    pub(crate) fn start_deletion(&mut self, request: DeletionRequest, cx: &mut Context<Self>) {
+        // 本地服务已断开：不提交（与 `DownloadsController::execute` 在断连时的拒绝一致）。
+        if self.controller.is_stale() {
+            self.last_error = Some(self.strings.disconnected.clone());
+            cx.notify();
+            return;
+        }
+        let DeletionRequest {
+            task_ids,
+            delete_files,
+        } = request;
+        // 已在另一批删除中的任务不重复提交。
+        let task_ids = self.table_state.update(cx, |table, cx| {
+            let fresh = table.delegate_mut().begin_delete(task_ids);
+            cx.notify();
+            fresh
+        });
+        let total = task_ids.len();
+        if total == 0 {
+            return;
+        }
+        let id = self.next_delete_id;
+        self.next_delete_id += 1;
+        let cancel = CancelToken::default();
+        // 超过一块才显示进度条（小批量只有行变淡 + 结束提示）。
+        let with_strip = total > DELETE_CHUNK_SIZE;
+        if with_strip {
+            self.deletions.push(DeleteJob {
+                id,
+                progress: DeletionProgress { total, done: 0 },
+                cancel: cancel.clone(),
+                cancelling: false,
+            });
+        }
+        cx.notify();
+        let port = Arc::clone(&self.port);
+        let timer = cx.background_executor().clone();
+        let window = self.window;
+        cx.spawn(async move |this, cx| {
+            let progress_view = this.clone();
+            let mut progress_cx = cx.clone();
+            let report = run_deletion(
+                &task_ids,
+                delete_files,
+                &move |command| port.execute(command),
+                &move |delay| timer.timer(delay),
+                &cancel,
+                &mut |progress: &DeletionProgress| {
+                    if !with_strip {
+                        return;
+                    }
+                    let progress = *progress;
+                    // 每块一次更新；页面已释放则不再有可更新的界面。
+                    let Ok(()) = progress_view.update(&mut progress_cx, |this, cx| {
+                        this.update_delete(id, progress, cx);
+                    }) else {
+                        return;
+                    };
+                },
+            )
+            .await;
+            let Ok(notification) = this.update(cx, |this, cx| {
+                this.finish_deletion(id, &task_ids, &report, cx)
+            }) else {
+                // 下载页已释放，没有可更新的界面，也不再推送通知。
+                return;
+            };
+            if let Some(notification) = notification
+                && let Err(error) = window.update(cx, |_, window, cx| {
+                    window.push_notification(notification, cx)
+                })
+            {
+                eprintln!("main window closed before the deletion notice: {error:#}");
+            }
+        })
+        .detach();
+    }
+
+    fn update_delete(&mut self, id: u64, progress: DeletionProgress, cx: &mut Context<Self>) {
+        if let Some(job) = self.deletions.iter_mut().find(|job| job.id == id) {
+            job.progress = progress;
+            cx.notify();
+        }
+    }
+
+    /// 取消一个进行中的删除：已删除的任务不回滚，在途分块给短暂收尾时间后放弃。
+    fn cancel_delete(&mut self, id: u64, cx: &mut Context<Self>) {
+        if let Some(job) = self.deletions.iter_mut().find(|job| job.id == id) {
+            job.cancelling = true;
+            job.cancel.cancel();
+            cx.notify();
+        }
+    }
+
+    /// 一批删除结束：释放变淡的行、撤下进度条，并给出结果。成功 / 取消返回待推送的窗口通知，
+    /// 有失败则写入错误条。
+    fn finish_deletion(
+        &mut self,
+        id: u64,
+        task_ids: &[String],
+        report: &DeletionReport,
+        cx: &mut Context<Self>,
+    ) -> Option<Notification> {
+        self.deletions.retain(|job| job.id != id);
+        self.table_state.update(cx, |table, cx| {
+            table.delegate_mut().finish_delete(task_ids);
+            cx.notify();
+        });
+        let notice = {
+            let store = self.controller.store();
+            let tally = report.tally(|task_id| store.find_local(task_id).is_none());
+            report.notice(tally, &self.strings, self.translator.read(cx))
+        };
+        cx.notify();
+        if !notice.ok {
+            self.last_error = Some(SharedString::from(notice.message));
+            return None;
+        }
+        self.last_error = None;
+        // 单任务删除沿用既有的静默路径；多任务才弹成功 / 取消提示。
+        (task_ids.len() > 1).then(|| {
+            if report.cancelled() {
+                Notification::info(notice.message)
+            } else {
+                Notification::success(notice.message)
+            }
+        })
+    }
+
+    /// 进行中删除的进度条（与导入共用样式）：进度文案 + 取消按钮，每批一条。
+    fn render_delete_strips(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        self.deletions
+            .iter()
+            .map(|job| {
+                let label = if job.cancelling {
+                    self.strings.import_cancelling.clone()
+                } else {
+                    self.strings
+                        .format_delete_progress(job.progress.done, job.progress.total)
+                };
+                self.render_progress_strip(
+                    ProgressStrip {
+                        job_id: job.id,
+                        progress_id: "delete-progress",
+                        cancel_id: "delete-cancel",
+                        label,
+                        done: job.progress.done,
+                        total: job.progress.total,
+                        cancelling: job.cancelling,
+                    },
+                    Self::cancel_delete,
+                    cx,
+                )
+            })
+            .collect()
+    }
+
+    /// 进度条行：文案 + 进度条 + 取消按钮（导入与删除共用）。
+    fn render_progress_strip(
+        &self,
+        strip: ProgressStrip,
+        on_cancel: fn(&mut Self, u64, &mut Context<Self>),
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = fluxdown_ui_theme::active_theme(cx);
+        let tokens = theme.tokens();
+        let spacing = tokens.spacing;
+        let text_size = tokens.typography.xs.size;
+        let line_height = tokens.typography.xs.line_height;
+        let muted = tokens.colors.muted_foreground;
+        let primary = tokens.colors.primary;
+        let percent = if strip.total == 0 {
+            0.
+        } else {
+            (strip.done as f32 / strip.total as f32 * 100.).clamp(0., 100.)
+        };
+        let id = strip.job_id;
+        h_flex()
+            .w_full()
+            .flex_none()
+            .items_center()
+            .gap(spacing.md)
+            .pl(spacing.md)
+            .pr(spacing.xs)
+            .py(spacing.xs)
+            .text_size(text_size)
+            .line_height(line_height)
+            .text_color(muted)
+            .child(div().flex_none().child(strip.label))
+            .child(
+                div().flex_1().min_w_0().child(
+                    Progress::new((strip.progress_id, id as usize))
+                        .w_full()
+                        .color(primary)
+                        .value(percent),
+                ),
+            )
+            .child(
+                Button::new((strip.cancel_id, id as usize))
+                    .ghost()
+                    .control(cx)
+                    .label(self.strings.cancel.clone())
+                    .disabled(strip.cancelling)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        on_cancel(this, id, cx);
+                    })),
+            )
+            .into_any_element()
     }
 
     /// 角标点击入口：交给宿主打开 / 置前「文件已存在」窗口。

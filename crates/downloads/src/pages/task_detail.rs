@@ -426,6 +426,10 @@ impl TaskDetailView {
                     self.close(cx);
                     return;
                 }
+                DaemonEvent::TasksDeleted { task_ids } if task_ids.contains(&self.task_id) => {
+                    self.close(cx);
+                    return;
+                }
                 DaemonEvent::TaskActivityAdded(entry) => {
                     if self.activity.add(entry.clone()) {
                         cx.notify();

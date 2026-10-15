@@ -372,6 +372,59 @@ impl DownloadStrings {
         }
     }
 
+    /// 导入进度：`正在添加 {done} / {total}`。
+    pub(crate) fn format_import_progress(&self, done: usize, total: usize) -> SharedString {
+        SharedString::from(
+            self.import_progress
+                .replace("{done}", &group_digits(done))
+                .replace("{total}", &group_digits(total)),
+        )
+    }
+
+    /// 导入重试等待：`连接中断，{seconds} 秒后重试（{attempt}/{max}）`。
+    pub(crate) fn format_import_retrying(
+        &self,
+        seconds: u64,
+        attempt: u32,
+        max: u32,
+    ) -> SharedString {
+        SharedString::from(
+            self.import_retrying
+                .replace("{seconds}", &seconds.to_string())
+                .replace("{attempt}", &attempt.to_string())
+                .replace("{max}", &max.to_string()),
+        )
+    }
+
+    /// 删除进度：`正在删除 {done} / {total}`。
+    pub(crate) fn format_delete_progress(&self, done: usize, total: usize) -> SharedString {
+        SharedString::from(
+            self.delete_progress
+                .replace("{done}", &group_digits(done))
+                .replace("{total}", &group_digits(total)),
+        )
+    }
+
+    /// 删除完成提示：`已删除 {n} 个任务`（与移动端共用 `mobileToastDeletedN`）。
+    pub(crate) fn format_deleted_count(&self, count: usize) -> String {
+        self.deleted_count.replace("{n}", &group_digits(count))
+    }
+
+    /// 已取消删除：`已取消删除：已删除 {done} / 共 {total}`。
+    pub(crate) fn format_delete_cancelled(&self, done: usize, total: usize) -> String {
+        self.delete_cancelled
+            .replace("{done}", &group_digits(done))
+            .replace("{total}", &group_digits(total))
+    }
+
+    /// 部分删除：`已删除 {done} / 共 {total}，{failed} 个失败`。
+    pub(crate) fn format_delete_partial(&self, done: usize, total: usize, failed: usize) -> String {
+        self.delete_partial
+            .replace("{done}", &group_digits(done))
+            .replace("{total}", &group_digits(total))
+            .replace("{failed}", &group_digits(failed))
+    }
+
     /// 完整本地时间 `YYYY-MM-DD HH:MM:SS`（Unix 秒）：列表「创建时间」列与任务详情共用。
     pub(crate) fn format_datetime(timestamp_secs: i64) -> SharedString {
         use chrono::{Local, TimeZone};

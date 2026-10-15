@@ -43,6 +43,31 @@ pub enum ConfigPatchError {
     InvalidStoredRevision(String),
 }
 
+/// [`Db::load_deletion_facts`] 的结果：批量删除决定逐任务删哪些文件所需的全部库内事实。
+#[derive(Debug, Default)]
+pub struct DeletionFacts {
+    /// 任务 → 「文件已存在」决定原值（'' / rename / overwrite / skip）；缺失 = 任务不存在。
+    pub exists_decisions: HashMap<String, String>,
+    /// 带独立音轨（`audio_url` 非空）的任务。
+    pub has_audio_url: HashSet<String>,
+    /// 任务 → 已登记的衍生产物文件名。
+    pub artifacts: HashMap<String, Vec<String>>,
+    /// `(save_dir, file_name)` → 把该名字登记为自己 `file_name` 的全部任务 id。
+    pub file_owners: HashMap<(String, String), Vec<String>>,
+}
+
+/// 一条 `DELETE FROM config WHERE key IN (...)` 覆盖的任务数（每任务 3 个键，
+/// 参数个数保持在 SQLite 999 上限内）。
+const CONFIG_KEY_TASKS_PER_STATEMENT: usize = 300;
+
+/// `$1,$2,…,$n` 占位符列表（两后端共用的编号占位符）。
+fn numbered_placeholders(n: usize) -> String {
+    (1..=n)
+        .map(|i| format!("${i}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// 数据库后端类型，由连接 URL 的 scheme 决定。
 ///
 /// 仅在**无法统一 SQL 文本**的少数分支处使用（DDL 方言差异、
@@ -2403,6 +2428,74 @@ impl Db {
                 .fetch_all(&self.pool)
                 .await?;
         Ok(rows)
+    }
+
+    /// 批量删除前一次读出整批任务的删除上下文，替代逐任务查询
+    /// （`get_exists_decision` / `load_audio_url` / `load_task_artifacts` /
+    /// `list_task_ids_by_file`）。
+    ///
+    /// `save_dirs` 是批内任务涉及的保存目录：`file_owners` 只覆盖这些目录下登记的产物名，
+    /// 足以回答「某目录下某名字还归不归批外任务」。
+    pub async fn load_deletion_facts(
+        &self,
+        ids: &[String],
+        save_dirs: &[String],
+    ) -> Result<DeletionFacts, DbError> {
+        const CHUNK: usize = 500;
+        let mut facts = DeletionFacts::default();
+        for chunk in ids.chunks(CHUNK) {
+            let placeholders = numbered_placeholders(chunk.len());
+            let sql = format!(
+                "SELECT id, exists_decision, audio_url FROM tasks WHERE id IN ({placeholders})"
+            );
+            let mut query = sqlx::query(AssertSqlSafe(sql));
+            for id in chunk {
+                query = query.bind(id.as_str());
+            }
+            for row in query.fetch_all(&self.pool).await? {
+                let id: String = row.try_get("id")?;
+                let audio_url: String = row.try_get("audio_url")?;
+                if !audio_url.is_empty() {
+                    facts.has_audio_url.insert(id.clone());
+                }
+                facts
+                    .exists_decisions
+                    .insert(id, row.try_get("exists_decision")?);
+            }
+
+            let sql = format!(
+                "SELECT task_id, file_name FROM task_artifacts WHERE task_id IN ({placeholders})"
+            );
+            let mut query = sqlx::query(AssertSqlSafe(sql));
+            for id in chunk {
+                query = query.bind(id.as_str());
+            }
+            for row in query.fetch_all(&self.pool).await? {
+                facts
+                    .artifacts
+                    .entry(row.try_get("task_id")?)
+                    .or_default()
+                    .push(row.try_get("file_name")?);
+            }
+        }
+        for chunk in save_dirs.chunks(CHUNK) {
+            let placeholders = numbered_placeholders(chunk.len());
+            let sql = format!(
+                "SELECT id, save_dir, file_name FROM tasks WHERE save_dir IN ({placeholders})"
+            );
+            let mut query = sqlx::query(AssertSqlSafe(sql));
+            for dir in chunk {
+                query = query.bind(dir.as_str());
+            }
+            for row in query.fetch_all(&self.pool).await? {
+                facts
+                    .file_owners
+                    .entry((row.try_get("save_dir")?, row.try_get("file_name")?))
+                    .or_default()
+                    .push(row.try_get("id")?);
+            }
+        }
+        Ok(facts)
     }
 
     /// Persist the user's BT file selection so it survives app restart.

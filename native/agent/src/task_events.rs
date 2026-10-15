@@ -162,6 +162,10 @@ impl Tracker {
             DaemonEvent::TaskDeleted { task_id } => {
                 self.task_deleted(task_id).into_iter().collect()
             }
+            DaemonEvent::TasksDeleted { task_ids } => task_ids
+                .iter()
+                .filter_map(|task_id| self.task_deleted(task_id))
+                .collect(),
             DaemonEvent::SnapshotReplaced(snapshot) => self.replace(&snapshot.tasks),
             _ => Vec::new(),
         }
@@ -461,6 +465,20 @@ mod tests {
                     task_id: "unknown".into()
                 })
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn tasks_deleted_applies_task_deleted_per_id() {
+        let mut tracker = Tracker::default();
+        tracker.apply(&progress("run", 1, 1));
+        tracker.apply(&progress("done", 1, 1));
+        tracker.apply(&progress("done", 3, 0));
+        assert_eq!(
+            kinds(&tracker.apply(&DaemonEvent::TasksDeleted {
+                task_ids: vec!["run".into(), "done".into(), "unknown".into()]
+            })),
+            [("run".to_owned(), TaskEventKind::Stop)]
         );
     }
 

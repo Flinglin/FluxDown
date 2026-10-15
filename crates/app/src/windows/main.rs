@@ -135,8 +135,7 @@ fn open_with(cx: &mut App, focus: bool) -> Option<WindowHandle<Root>> {
                 ),
             }
         }
-        let shell =
-            cx.new(|cx| ShellView::new(translator.clone(), routes, actions, cx));
+        let shell = cx.new(|cx| ShellView::new(translator.clone(), routes, actions, cx));
         shell.update(cx, |shell, cx| {
             let preferences = Desktop::preferences(cx).clone();
             activity::apply_visibility(shell, &preferences, cx);

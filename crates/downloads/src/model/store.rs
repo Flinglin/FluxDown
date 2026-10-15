@@ -186,6 +186,14 @@ impl TaskStore {
 
     /// `swap_remove` 并修正被换入行的索引。
     pub(crate) fn swap_remove_local(&self, ix: usize) {
+        if self.swap_remove_local_quiet(ix) {
+            self.bump_structure();
+        }
+    }
+
+    /// 同 [`Self::swap_remove_local`] 但不记结构变化：批量删除后由调用方
+    /// [`Self::commit_removals`] 一次登记。返回是否真的移除了一行。
+    pub(crate) fn swap_remove_local_quiet(&self, ix: usize) -> bool {
         let mut rows = self.local.borrow_mut();
         if ix >= rows.len() {
             return false;

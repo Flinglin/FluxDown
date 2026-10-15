@@ -481,6 +481,11 @@ impl RuntimeAccounting {
                 }
             }
             DaemonEvent::TaskDeleted { task_id } => self.remove(task_id),
+            DaemonEvent::TasksDeleted { task_ids } => {
+                for task_id in task_ids {
+                    self.remove(task_id);
+                }
+            }
             DaemonEvent::Engine(WsServerMsg::TaskProgress {
                 task_id,
                 status,
@@ -627,6 +632,20 @@ impl fluxdown_engine::events::EventSink for DaemonEngineEventSink {
                 self.0.publish_with_runtime_stats(DaemonEvent::TaskChanged(
                     fluxdown_engine_protocol::task_info_to_dto(*task),
                 ));
+                return;
+            }
+            EngineEvent::TasksChanged(tasks) => {
+                self.0.publish_with_runtime_stats(DaemonEvent::TasksChanged(
+                    tasks
+                        .into_iter()
+                        .map(fluxdown_engine_protocol::task_info_to_dto)
+                        .collect(),
+                ));
+                return;
+            }
+            EngineEvent::TasksDeleted(task_ids) => {
+                self.0
+                    .publish_with_runtime_stats(DaemonEvent::TasksDeleted { task_ids });
                 return;
             }
             EngineEvent::TaskRuntimeChanged(runtime) => {
@@ -1078,6 +1097,138 @@ mod tests {
             panic!("daemon snapshot expected");
         };
         assert_eq!(snapshot.runtime_stats.retry_pending_tasks, 0);
+    }
+
+    fn engine_task(id: &str, status: i32) -> fluxdown_engine::model::TaskInfo {
+        fluxdown_engine::model::TaskInfo {
+            task_id: id.to_owned(),
+            url: format!("https://example.com/{id}"),
+            file_name: format!("{id}.bin"),
+            save_dir: "/tmp".to_owned(),
+            status,
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            error_message: String::new(),
+            created_at: "1".to_owned(),
+            proxy_url: String::new(),
+            queue_id: String::new(),
+            checksum: String::new(),
+            ignore_tls_errors: false,
+            file_missing: false,
+            completed_at: String::new(),
+            segments: 0,
+            queue_order: 1,
+            uploaded_bytes: 0,
+            uploaded_at_completion: 0,
+            seeding_status: 0,
+            seeding_message: String::new(),
+            seeding_time_secs: 0,
+            seed_ratio_limit_milli: -2,
+            seed_post_ratio_limit_milli: -2,
+            seed_time_limit_minutes: -2,
+            seed_inactive_time_limit_minutes: -2,
+            seed_upload_limit_bps: 0,
+            referrer: String::new(),
+            group_id: String::new(),
+            rss_source_id: String::new(),
+            origin_url: String::new(),
+            auto_route: String::new(),
+            source_bytes: Default::default(),
+        }
+    }
+
+    /// 批量创建事实只发一帧 `TasksChanged`，投影与运行统计按任务逐个入账。
+    #[test]
+    fn tasks_changed_is_one_frame_and_accounts_every_task() {
+        let hub = DaemonEventHub::new(DaemonSnapshot::default(), 16);
+        let (mut subscriber, _) = hub.subscribe_and_snapshot();
+        let sink = DaemonEngineEventSink(hub.clone());
+        sink.emit(EngineEvent::TasksChanged(vec![
+            engine_task("a", 0),
+            engine_task("b", 0),
+            engine_task("c", 2),
+        ]));
+        let frame = subscriber.try_recv().expect("one batch frame");
+        let fluxdown_protocol::ServiceEvent::Daemon(DaemonEvent::TasksChanged(tasks)) = frame.event
+        else {
+            panic!("the batch must travel as a single TasksChanged event");
+        };
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.task_id.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+        let stats_frame = subscriber
+            .try_recv()
+            .expect("runtime stats follow the batch");
+        let fluxdown_protocol::ServiceEvent::Daemon(DaemonEvent::RuntimeStatsChanged(stats)) =
+            stats_frame.event
+        else {
+            panic!("pending count changed, so runtime stats must follow");
+        };
+        assert_eq!(stats.pending_tasks, 2);
+        assert!(subscriber.try_recv().is_err(), "no per-task frames");
+        let SnapshotBody::Daemon(snapshot) = hub.snapshot().body else {
+            panic!("daemon snapshot expected");
+        };
+        assert_eq!(snapshot.tasks.len(), 3);
+
+        // 状态迁移按任务账本结算：pending → downloading 只移动对应计数。
+        sink.emit(EngineEvent::TasksChanged(vec![engine_task("a", 1)]));
+        let SnapshotBody::Daemon(snapshot) = hub.snapshot().body else {
+            panic!("daemon snapshot expected");
+        };
+        assert_eq!(
+            (
+                snapshot.runtime_stats.active_tasks,
+                snapshot.runtime_stats.pending_tasks
+            ),
+            (1, 1)
+        );
+    }
+
+    /// 批量删除事实只发一帧 `TasksDeleted`：投影整批移除，运行统计按被删任务结算。
+    #[test]
+    fn tasks_deleted_is_one_frame_and_releases_accounting() {
+        let hub = DaemonEventHub::new(DaemonSnapshot::default(), 16);
+        let sink = DaemonEngineEventSink(hub.clone());
+        sink.emit(EngineEvent::TasksChanged(vec![
+            engine_task("a", 1),
+            engine_task("b", 0),
+            engine_task("c", 0),
+        ]));
+        let (mut subscriber, _) = hub.subscribe_and_snapshot();
+        sink.emit(EngineEvent::TasksDeleted(vec![
+            "a".to_owned(),
+            "b".to_owned(),
+        ]));
+        let frame = subscriber.try_recv().expect("one batch frame");
+        let fluxdown_protocol::ServiceEvent::Daemon(DaemonEvent::TasksDeleted { task_ids }) =
+            frame.event
+        else {
+            panic!("the batch must travel as a single TasksDeleted event");
+        };
+        assert_eq!(task_ids, ["a", "b"]);
+        let SnapshotBody::Daemon(snapshot) = hub.snapshot().body else {
+            panic!("daemon snapshot expected");
+        };
+        assert_eq!(
+            snapshot
+                .tasks
+                .iter()
+                .map(|task| task.task_id.as_str())
+                .collect::<Vec<_>>(),
+            ["c"]
+        );
+        assert_eq!(
+            (
+                snapshot.runtime_stats.active_tasks,
+                snapshot.runtime_stats.pending_tasks
+            ),
+            (0, 1)
+        );
     }
 
     #[test]

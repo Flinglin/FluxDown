@@ -162,6 +162,13 @@ impl RssController {
             AgentEvent::Daemon(DaemonEvent::TaskDeleted { task_id }) => {
                 self.tasks.remove(task_id).is_some()
             }
+            AgentEvent::Daemon(DaemonEvent::TasksDeleted { task_ids }) => {
+                let mut changed = false;
+                for task_id in task_ids {
+                    changed |= self.tasks.remove(task_id).is_some();
+                }
+                changed
+            }
             AgentEvent::Daemon(DaemonEvent::Engine(WsServerMsg::TasksSnapshot { tasks })) => {
                 self.tasks = tasks
                     .iter()
