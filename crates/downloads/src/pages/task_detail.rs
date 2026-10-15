@@ -321,19 +321,21 @@ impl TaskDetailView {
         if queue_id.is_empty() {
             return None;
         }
-        match &self.controller {
-            Some(controller) => controller.queue_name(queue_id).map(str::to_owned),
+        let name = match &self.controller {
+            Some(controller) => controller.queue_name(queue_id),
             None => self
                 .queue_names
                 .iter()
                 .find(|(id, _)| id == queue_id)
-                .map(|(_, name)| name.clone()),
+                .map(|(_, name)| name.as_str()),
         }
     }
 
     fn is_bt(&self) -> bool {
         self.store
             .get(&RowKey::Local(self.task_id.clone()))
+        .unwrap_or(queue_id);
+        Some(self.strings.queue_name(queue_id, name).to_string())
             .is_some_and(|row| row.protocol == TaskProtocol::Bt)
     }
 

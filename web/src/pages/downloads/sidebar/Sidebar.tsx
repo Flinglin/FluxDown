@@ -280,7 +280,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           onSelect: () => {
             void confirmDialog({
               title: t('deleteQueueAction'),
-              description: t('queueDeleteConfirmDesc', { name: queue.name || queue.queueId }),
+              description: t('queueDeleteConfirmDesc', { name: queueLabel(queue) || queue.queueId }),
               intent: 'destructive',
               okLabel: t('delete'),
             }).then((ok) => {

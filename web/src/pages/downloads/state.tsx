@@ -39,6 +39,7 @@ import { isDynamicSortKey } from './model/rowOrder'
 import { buildLocalView, buildRemoteView, isLocalKey, sourceSite, STATE_RANK } from './model/task'
 import type { DownloadTaskView, RowKey } from './model/task'
 import { useStableRowOrder } from './model/useStableRowOrder'
+import { queueLabelById } from './dialogs/utils'
 import { compareViews, dateBucketOf, DATE_BUCKET_ORDER, matchesQuery, parseViewPrefs, VIEW_PREFS_KEY } from './model/viewPrefs'
 import type { ViewPrefs } from './model/viewPrefs'
 
@@ -362,8 +363,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   const views = useMemo(() => [...localViews, ...remoteViews], [localViews, remoteViews])
   const byKey = useMemo(() => new Map(views.map((view) => [view.key, view])), [views])
 
-  const queueNames = useMemo(() => new Map(queues.map((queue) => [queue.queueId, queue.name])), [queues])
-  const queueName = useCallback((queueId: string) => queueNames.get(queueId) ?? queueId, [queueNames])
+  const queueName = useCallback((queueId: string) => queueLabelById(t, queues, queueId), [t, queues])
   const groupNames = useMemo(() => new Map(groups.map((group) => [group.groupId, group.name])), [groups])
 
   const groupSummaries = useMemo<GroupSummary[]>(() => {
@@ -474,7 +474,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
           const index = queues.findIndex((queue) => queue.queueId === view.queueId)
           return {
             key: `queue:${view.queueId}`,
-            label: queues[index]?.name ?? view.queueId,
+            label: queueLabelById(t, queues, view.queueId),
             order: index >= 0 ? index : Number.MAX_SAFE_INTEGER - 1,
           }
         }

@@ -628,14 +628,19 @@ impl DownloadView {
         let delete_label = self.strings.delete_queue_action.clone();
         let delete_ok_label = self.strings.delete.clone();
         let cancel_label = self.strings.cancel.clone();
-        let description = SharedString::from(self.strings.queue_delete_confirm_desc.replace(
-            "{name}",
+        let queue_label = self.strings.queue_name(
+            &queue.queue_id,
             if queue.name.is_empty() {
                 &queue.queue_id
             } else {
                 &queue.name
             },
-        ));
+        );
+        let description = SharedString::from(
+            self.strings
+                .queue_delete_confirm_desc
+                .replace("{name}", &queue_label),
+        );
         let open_queue_manager = self.host.open_queue_manager.clone();
         let queue_id = queue.queue_id.clone();
         let is_running = queue.is_running;

@@ -1128,7 +1128,7 @@ impl DownloadTableDelegate {
                     .find(|(_, (id, _))| *id == task.queue_id)
                     .map_or_else(
                         || (SharedString::from(task.queue_id.clone()), i64::MAX - 1),
-                        |(ix, (_, name))| (SharedString::from(name.clone()), ix as i64),
+                        |(ix, (id, name))| (strings.queue_name(id, name), ix as i64),
                     );
                 GroupBucket {
                     key: format!("queue:{}", task.queue_id),
@@ -2353,18 +2353,20 @@ impl DownloadTableDelegate {
             let host = host.clone();
             let queue_id = queue_id.clone();
             menu = menu.item(
-                PopupMenuItem::new(SharedString::from(format!("    {name}"))).on_click(
-                    move |_, _, cx| {
-                        let queue_id = queue_id.clone();
+                PopupMenuItem::new(SharedString::from(format!(
+                    "    {}",
+                    self.strings.queue_name(&queue_id, name)
+                )))
+                .on_click(move |_, _, cx| {
+                    let queue_id = queue_id.clone();
 
-                        let Ok(()) =
-                            host.update(cx, |view, cx| view.move_selected_to_queue(queue_id, cx))
-                        else {
-                            // 视图已释放，结束这次回调而不再更新状态。
-                            return;
-                        };
-                    },
-                ),
+                    let Ok(()) =
+                        host.update(cx, |view, cx| view.move_selected_to_queue(queue_id, cx))
+                    else {
+                        // 视图已释放，结束这次回调而不再更新状态。
+                        return;
+                    };
+                }),
             );
         }
         menu
@@ -2853,7 +2855,10 @@ impl TableDelegate for DownloadTableDelegate {
                     self.queue_names
                         .iter()
                         .find(|(id, _)| *id == task.queue_id)
-                        .map_or_else(|| task.queue_id.clone(), |(_, name)| name.clone())
+                        .map_or_else(
+                            || task.queue_id.clone(),
+                            |(id, name)| self.strings.queue_name(id, name).to_string(),
+                        )
                 };
                 meta_cell(name, muted, false, cx)
             }
