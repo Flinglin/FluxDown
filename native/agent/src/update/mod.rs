@@ -1023,8 +1023,13 @@ impl UpdateService {
                     continue;
                 }
             };
-            let declined =
+            // 下载中取消过、或在提醒窗口「跳过此版本」的版本不再自动下载。
+            let cancelled =
                 self.lock().declined_auto.as_deref() == Some(status.latest_version.as_str());
+            let skipped = self
+                .pref(fluxdown_protocol::update_prompt::SKIPPED_VERSION_KEY)
+                .is_some_and(|value| value.as_str() == Some(status.latest_version.as_str()));
+            let declined = cancelled || skipped;
             if status.phase == UpdatePhase::Available
                 && status.has_update
                 && status.manual_reason.is_none()

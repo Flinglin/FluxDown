@@ -1306,6 +1306,7 @@
   "downloadingUpdate": "正在下载更新...",
   "segmentsDownloading": "{active}/{total} 线程并发下载",
   "checking": "检查中...",
+  "updateRemindLater": "稍后提示",
   "checkUpdate": "检查更新",
   "downloadUpdate": "下载更新 ({size})",
   "recheck": "重新检查",

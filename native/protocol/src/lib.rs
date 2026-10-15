@@ -16,6 +16,7 @@ pub mod rpc;
 pub mod settings;
 pub mod shell_open;
 pub mod task_activity;
+pub mod update_prompt;
 pub use task_activity::{
     TaskActivityDto, TaskActivityPage, TaskActivityQuery, TaskRuntimeDto, TaskSegmentDto,
     TaskSourceBytesDto,

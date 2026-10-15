@@ -1306,6 +1306,7 @@
   "downloadingUpdate": "Downloading update...",
   "segmentsDownloading": "{active}/{total} segments",
   "checking": "Checking...",
+  "updateRemindLater": "Remind Me Later",
   "checkUpdate": "Check for Updates",
   "downloadUpdate": "Download ({size})",
   "recheck": "Recheck",

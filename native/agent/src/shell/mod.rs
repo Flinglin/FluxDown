@@ -380,6 +380,36 @@ impl ShellState {
     /// 拉起已在 [`UiLaunches`] 登记的桌面进程；进程退出（或没能启动）时释放登记并唤醒控制循环
     /// 重新判定。
     fn launch_tracked(&self, args: &[&str]) -> Result<(), crate::platform::PlatformError> {
+    /// 新版本提醒：托盘驻留且没有 UI 连接时拉起界面（`--capture` 只开提醒窗口，不开主窗口），
+    /// 界面在运行时由它自己按同一判定开窗。非驻留时没有 UI 就没有后台，不拉起。
+    fn reconcile_update_prompt(&self, now: Instant) {
+        let due_version = self.events.inspect(|snapshot| {
+            fluxdown_protocol::update_prompt::is_due(
+                &snapshot.update,
+                &snapshot.preferences.values,
+                unix_ms(),
+            )
+            .then(|| snapshot.update.latest_version.clone())
+        });
+        {
+            let mut launches = self.launches();
+            let Some(version) = due_version else {
+                launches.update_settled();
+                return;
+            };
+            if self.ui_clients() > 0
+                || !self.tray_visible.load(Ordering::Acquire)
+                || !launches.update_due(now, &version)
+            {
+                return;
+            }
+            launches.begin_update(now, &version);
+        }
+        if let Err(error) = self.launch_tracked(&["--capture"]) {
+            tracing::warn!(error = %error, "could not launch desktop for update prompt");
+        }
+    }
+
         let launches = Arc::clone(&self.launches);
         let changed = Arc::clone(&self.changed);
         let launched = crate::platform::launch_desktop_observed(args, move || {
@@ -517,6 +547,7 @@ pub async fn run_controller(
         }
         #[cfg(feature = "desktop")]
         tray.update(&events);
+            state.reconcile_update_prompt(Instant::now());
     }
     state.launches().clear_tasks();
 }
@@ -693,6 +724,14 @@ mod tests {
                 .iter()
                 .map(|(key, value)| ((*key).to_owned(), value.clone()))
                 .collect::<BTreeMap<_, _>>(),
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
         }
     }
 
