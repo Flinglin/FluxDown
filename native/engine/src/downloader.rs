@@ -3213,6 +3213,27 @@ async fn run_download_inner(
     // Keep ownership through mode changes, stale-data cleanup, verification and final rename.
     let _temp_file_guard = TempFileGuard::acquire(&temp_path, &p.task_id).await?;
 
+    // 换源结算（见 `Db::settle_source_change`）：`change_task_url` 后首次续传按零容差
+    // 比对新链接大小与旧总大小。不一致 = 换成了另一个文件——旧前缀若沿用会与新文件
+    // 尾部静默拼接（CDN 漂移容差恰好覆盖「新版本只大几百 KB」），故清空分段并删掉
+    // 旧临时文件，从头下载新文件。大小一致（如 CDN 签名过期换新链接）照常续传。
+    let source_replaced = p.is_resume
+        && p.db
+            .settle_source_change(&p.task_id, info.total_bytes)
+            .await?;
+    if source_replaced {
+        log_info!(
+            "[download] task {} 换源后大小与原文件不一致（新={}），丢弃已下进度从头下载",
+            p.task_id,
+            info.total_bytes
+        );
+        match tokio::fs::remove_file(&temp_path).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+
     // For resume tasks we must NOT blindly overwrite total_bytes with the
     // freshly-probed value.  CDN servers frequently return a slightly different
     // Content-Length on each request (transfer-encoding overhead, dynamic header
@@ -3320,7 +3341,11 @@ async fn run_download_inner(
     // Immediately notify the host: status=1 with resolved file name & total size.
     // For resume tasks, send persisted downloaded bytes as baseline so speed
     // smoothing doesn't treat resumed bytes as a fresh in-interval delta.
-    let initial_downloaded = resume_downloaded;
+    let initial_downloaded = if source_replaced {
+        0
+    } else {
+        resume_downloaded
+    };
     if p.progress_tx
         .send(ProgressUpdate {
             task_id: p.task_id.clone(),

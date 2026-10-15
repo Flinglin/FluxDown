@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     name_inferred INTEGER NOT NULL DEFAULT 0,
     resp_name TEXT NOT NULL DEFAULT '',
     resp_mime TEXT NOT NULL DEFAULT '',
+    source_changed INTEGER NOT NULL DEFAULT 0,
     queue_order INTEGER NOT NULL DEFAULT 0,
     uploaded_bytes BIGINT NOT NULL DEFAULT 0,
     uploaded_at_completion BIGINT NOT NULL DEFAULT 0,
@@ -337,6 +338,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     name_inferred INTEGER NOT NULL DEFAULT 0,
     resp_name TEXT NOT NULL DEFAULT '',
     resp_mime TEXT NOT NULL DEFAULT '',
+    source_changed INTEGER NOT NULL DEFAULT 0,
     queue_order INTEGER NOT NULL DEFAULT 0,
     uploaded_bytes BIGINT NOT NULL DEFAULT 0,
     uploaded_at_completion BIGINT NOT NULL DEFAULT 0,
@@ -1253,6 +1255,10 @@ impl Db {
         self.add_column_if_missing("tasks", "src_proxy_bytes", "BIGINT NOT NULL DEFAULT 0")
             .await?;
         self.add_column_if_missing("tasks", "src_nic_bytes", "BIGINT NOT NULL DEFAULT 0")
+            .await?;
+        // 换源标记：`change_task_url` 置 1，下次续传探测后由 `settle_source_change`
+        // 按零容差比对新旧大小（不一致即清空进度）并清回 0。
+        self.add_column_if_missing("tasks", "source_changed", "INTEGER NOT NULL DEFAULT 0")
             .await?;
         Ok(())
     }
@@ -4978,15 +4984,80 @@ impl Db {
         Ok(())
     }
 
-    /// 更新任务的下载源地址（换链接续传等场景）；不触碰分段/进度行，
-    /// `task_segments` 按 `task_id` 索引，与 `url` 无关。
+    /// 更换任务下载源地址（`change_task_url` 专用）并标记 `source_changed`；不触碰
+    /// 分段/进度行（`task_segments` 按 `task_id` 索引，与 `url` 无关）。续传时由
+    /// [`Self::settle_source_change`] 决定已下进度能否沿用。
     pub async fn update_task_url(&self, task_id: &str, url: &str) -> Result<(), DbError> {
-        sqlx::query("UPDATE tasks SET url = $1 WHERE id = $2")
+        sqlx::query("UPDATE tasks SET url = $1, source_changed = 1 WHERE id = $2")
             .bind(url)
             .bind(task_id)
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// 任务是否带未结算的换源标记（见 [`Self::settle_source_change`]）；任务不存在为 `false`。
+    pub async fn task_source_changed(&self, task_id: &str) -> Result<bool, DbError> {
+        let flag: Option<i32> =
+            sqlx::query_scalar("SELECT source_changed FROM tasks WHERE id = $1")
+                .bind(task_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(flag.is_some_and(|flag| flag != 0))
+    }
+
+    /// 换源后的首次续传探测结算（单事务读-判-写）。仅当任务带 `source_changed` 时生效：
+    /// - 新旧总大小都已知且**不完全相等**（零容差，不套用 CDN 漂移容差）→ 视为已换成
+    ///   另一个文件：删除分段行、已下字节与来源计数清零、`total_bytes` 改为新值，返回
+    ///   `true`（调用方须删除旧临时文件后从头下载）；
+    /// - 其余（大小一致或任一方未知，无证据判定换了文件）→ 沿用进度，返回 `false`。
+    ///
+    /// 两种情形都清除标记：此后的续传恢复常规容差。
+    pub async fn settle_source_change(
+        &self,
+        task_id: &str,
+        probed_total_bytes: i64,
+    ) -> Result<bool, DbError> {
+        let mut tx = self.begin_write().await?;
+        let row = sqlx::query("SELECT source_changed, total_bytes FROM tasks WHERE id = $1")
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let Some(row) = row else {
+            tx.commit().await?;
+            return Ok(false);
+        };
+        let flagged: i32 = row.try_get("source_changed")?;
+        if flagged == 0 {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        let stored_total: i64 = row.try_get("total_bytes")?;
+        let replaced =
+            stored_total > 0 && probed_total_bytes > 0 && stored_total != probed_total_bytes;
+        if replaced {
+            sqlx::query("DELETE FROM task_segments WHERE task_id = $1")
+                .bind(task_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "UPDATE tasks SET downloaded_bytes = 0, total_bytes = $1,
+                     src_cdn_bytes = 0, src_proxy_bytes = 0, src_nic_bytes = 0,
+                     source_changed = 0
+                 WHERE id = $2",
+            )
+            .bind(probed_total_bytes)
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query("UPDATE tasks SET source_changed = 0 WHERE id = $1")
+                .bind(task_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(replaced)
     }
 
     /// 写入 `ProxyMode::Auto` 的任务级最终链路标签（wire 值见
@@ -5263,6 +5334,67 @@ mod tests {
         )
         .await
         .expect("insert task");
+    }
+
+    /// 换源结算：仅换源后首次生效；大小（零容差）不一致即清空进度并改用新大小，
+    /// 一致则沿用进度；结算后标记清除，未换源任务不受影响。
+    #[tokio::test]
+    async fn settle_source_change_resets_only_after_url_change_with_size_mismatch() {
+        let (db, dir) = open_test_db().await;
+        for id in ["swapped", "same", "untouched"] {
+            insert_task(&db, id).await;
+            db.update_task_total_bytes(id, 1_000_000)
+                .await
+                .expect("total");
+            db.insert_segments(id, &[(0, 0, 499_999), (1, 500_000, 999_999)])
+                .await
+                .expect("segments");
+        }
+        db.update_task_url("swapped", "http://example.com/other.bin")
+            .await
+            .expect("swap url");
+        db.update_task_url("same", "http://cdn.example.com/file.bin?sig=new")
+            .await
+            .expect("refresh url");
+
+        // 新文件只大 1 KB：在 CDN 漂移容差内，换源后仍必须判为另一个文件。
+        assert!(
+            db.settle_source_change("swapped", 1_001_024)
+                .await
+                .expect("settle")
+        );
+        assert!(db.load_segments("swapped").await.expect("segs").is_empty());
+        let swapped = db
+            .load_task_by_id("swapped")
+            .await
+            .expect("load")
+            .expect("exists");
+        assert_eq!(
+            (swapped.total_bytes, swapped.downloaded_bytes),
+            (1_001_024, 0)
+        );
+        // 标记已清除：后续续传回到常规容差路径。
+        assert!(
+            !db.settle_source_change("swapped", 2_000_000)
+                .await
+                .expect("settle")
+        );
+
+        assert!(
+            !db.settle_source_change("same", 1_000_000)
+                .await
+                .expect("settle")
+        );
+        assert_eq!(db.load_segments("same").await.expect("segs").len(), 2);
+
+        assert!(
+            !db.settle_source_change("untouched", 2_000_000)
+                .await
+                .expect("settle")
+        );
+        assert_eq!(db.load_segments("untouched").await.expect("segs").len(), 2);
+
+        close_test_db(&db, dir).await;
     }
     fn activity(
         task_id: &str,

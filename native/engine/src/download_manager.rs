@@ -9855,7 +9855,25 @@ impl DownloadManager {
             // 未知大小仅沿用未验证 hint 任务的免 probe 语义；FTP/HLS/DASH/ED2K
             // 使用各自下载器，不把 HTTP hint 契约扩散到协议专用路径。
             let is_plain_http = !use_ftp && !use_hls && !use_dash && !use_ed2k;
-            let resume_hint = if is_plain_http && task.total_bytes > 0 {
+            // 换源后首次续传必须真实探测新链接：库里的大小属于旧链接，沿用它作 hint
+            // 会跳过探测，`settle_source_change` 拿旧值与旧值比较而永远判「未换文件」，
+            // 新文件更小时分段越过 EOF 持续 416。读标记失败按已换源处理（多一次探测，
+            // 绝不拼接）。
+            let source_changed = is_plain_http
+                && match self.db.task_source_changed(&tid).await {
+                    Ok(flag) => flag,
+                    Err(e) => {
+                        log_info!(
+                            "[manager] task {} 读取换源标记失败，按已换源处理: {}",
+                            tid,
+                            e
+                        );
+                        true
+                    }
+                };
+            let resume_hint = if source_changed {
+                0
+            } else if is_plain_http && task.total_bytes > 0 {
                 task.total_bytes
             } else if is_plain_http && !range_verified {
                 -1
@@ -11942,7 +11960,10 @@ impl DownloadManager {
     ///   ETag/Last-Modified 基线——新源几乎必然给出不同 validator，不清会在
     ///   续传首个 206 上触发 `VersionChanged` 清盘重下，与「换链续传」目的
     ///   相悖（内容一致性此后由 Content-Range 总大小与可选 checksum 兜底）；
-    ///   不主动切换任务状态、不触碰分段/进度行——续传或重试由调用方另行触发。
+    ///   同时置 `source_changed`：下次续传探测后零容差比对新旧大小，不一致（换成了
+    ///   另一个文件，含只差几百 KB 的新版本）即清空进度从头下载，见
+    ///   `Db::settle_source_change`；大小完全一致时沿用进度（内容是否相同无从判定）。
+    ///   不主动切换任务状态——续传或重试由调用方另行触发。
     pub async fn change_task_url(&mut self, task_id: &str, new_url: &str) -> Result<(), String> {
         let new_url = new_url.trim();
         if new_url.is_empty() {
