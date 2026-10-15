@@ -33,7 +33,7 @@
 - `rss_items`(复合 PK source_id+guid, title, link, enclosure_url/length/type（声明的下载目标 MIME）, `resolver_item`（插件二段解析标识，空 = 普通直链）, pub_date, fetched_at, status 0..5, task_id 回链, episode_key, reason 原因码；`fetch_failures` / `retry_after` 持久化种子抓取失败退避；`ON DELETE CASCADE` 于 rss_sources)
 - `task_create_batches`(batch_id PK, results JSON, created_at BIGINT)：`daemon.task.createMany` 的幂等记录，与该块任务行**同一事务**写入；同键重放直接返回首次逐条结果；7 天前的记录在后续批量写入事务内顺带清理（无定时任务，符合空闲静默）。
 
-**内置队列**: `main`（主）/`later`（稍后下载），播种于 `Engine::new`，不可删/改名；存量 `queue_id=''` 迁入 `main`。删除命名队列后，任务归属、排队位置与持久排序都要同步：`TaskQueueChanged` 只带归属，`QueuePositionsChanged` 只带待排位置，`TasksSnapshot` 才是 `queue_order` 归零后的权威来源。
+**内置队列**: `main`（主）/`later`（稍后下载），播种于 `Engine::new`，不可删/改名；存量 `queue_id=''` 迁入 `main`。**主队列恒运行**（`model::is_always_running_queue`）：引擎 `stop_queue` / `set_queue_schedule` 对它不生效，daemon `daemon.queue.stop` 与带实际定时的 `daemon.queue.schedule` 返回 InvalidArgument（`field=queueId`；「关闭且无时刻」放行为空操作，兼容旧客户端保存流程）；`Db::seed_builtin_queues` 每次启动把旧版本留下的停止 / 定时主队列收敛为运行中、无定时（只在不符时写一行，暂停任务保持暂停）。各客户端对运行中的主队列不显示「停止」、不显示定时（只给 `mainQueueAlwaysRunningHint`）。删除命名队列后，任务归属、排队位置与持久排序都要同步：`TaskQueueChanged` 只带归属，`QueuePositionsChanged` 只带待排位置，`TasksSnapshot` 才是 `queue_order` 归零后的权威来源。
 
 **任务活动与实时采样**：`task_activity.rs` 拥有源端活动代理，`db.rs` 的活动表/保留标记在 SQLite 与 PostgreSQL 同步维护。状态边沿、完整错误、实际重试、分段拆分及 CDN 语义事件先持久化再广播；高频进度不逐帧入库。ID 在同一数据库内跨重启单调，任务删除级联清理；保留约束及分页上限以 `db.rs` 常量为准，清理过的历史有逐任务截断标记。所有宿主的 `progress_reporter` 必须使用 `Engine::activity_sink`，否则绕过统一记录；关闭时冲刷有超时并报告真实失败。`transfer_activity.rs` 的 RAII 计数只覆盖真实传输生命周期，采样携带源端单调序号；分段几何、活跃传输、配置上限与 BT peers 是不同事实，不能相互推算。
 

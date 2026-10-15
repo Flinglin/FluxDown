@@ -329,6 +329,7 @@ impl DaemonService {
             method::DAEMON_QUEUE_STOP => self.queue_id_operation(params, QueueAction::Stop).await,
             method::DAEMON_QUEUE_SCHEDULE => {
                 let params = parse_params::<QueueScheduleParams>(params)?;
+                validate_queue_schedule(&params)?;
                 self.execute_unit(ActorOperation::SetQueueSchedule {
                     queue_id: params.queue_id,
                     enabled: params.enabled,
@@ -1264,6 +1265,9 @@ impl DaemonService {
         action: QueueAction,
     ) -> Result<Value, RpcErrorObject> {
         let params = parse_params::<IdParams>(params)?;
+        if matches!(action, QueueAction::Stop) {
+            validate_queue_stop(&params.id)?;
+        }
         let operation = match action {
             QueueAction::Delete => ActorOperation::DeleteQueue {
                 queue_id: params.id,
@@ -2066,6 +2070,27 @@ fn invalid_argument(field: &str, message: &str) -> RpcErrorObject {
     )
 }
 
+const ALWAYS_RUNNING_QUEUE: &str = "the main queue always runs and cannot be stopped or scheduled";
+
+/// 主队列恒运行（`is_always_running_queue`）：停止请求显式拒绝，不让客户端以为已生效。
+fn validate_queue_stop(queue_id: &str) -> Result<(), RpcErrorObject> {
+    if fluxdown_engine::model::is_always_running_queue(queue_id) {
+        return Err(invalid_argument("queueId", ALWAYS_RUNNING_QUEUE));
+    }
+    Ok(())
+}
+
+/// 主队列不可定时；只放行「关闭且无时刻」这一等价于现状的空操作，
+/// 兼容仍对每个队列都提交一次定时的旧客户端保存流程。
+fn validate_queue_schedule(params: &QueueScheduleParams) -> Result<(), RpcErrorObject> {
+    let sets_schedule =
+        params.enabled || !params.start_time.is_empty() || !params.stop_time.is_empty();
+    if sets_schedule && fluxdown_engine::model::is_always_running_queue(&params.queue_id) {
+        return Err(invalid_argument("queueId", ALWAYS_RUNNING_QUEUE));
+    }
+    Ok(())
+}
+
 /// 插件包 / 插件目录校验失败：记录完整原因，客户端按细分原因展示。
 #[cfg(feature = "plugins")]
 fn plugin_package_error(
@@ -2174,7 +2199,51 @@ mod tests {
     use fluxdown_protocol::{ApplicationErrorCode, DaemonCreateTasksParams, RpcErrorData};
     use serde_json::{Value, json};
 
-    use super::{DaemonService, match_site_auth, validate_create_tasks};
+    use super::{
+        DaemonService, QueueScheduleParams, match_site_auth, validate_create_tasks,
+        validate_queue_schedule, validate_queue_stop,
+    };
+
+    fn schedule(queue_id: &str, enabled: bool, start: &str, stop: &str) -> QueueScheduleParams {
+        QueueScheduleParams {
+            queue_id: queue_id.to_owned(),
+            enabled,
+            start_time: start.to_owned(),
+            stop_time: stop.to_owned(),
+            days: 127,
+        }
+    }
+
+    /// 主队列恒运行：停止与任何实际定时都按 `queueId` 参数错误拒绝；只放行等价于
+    /// 现状的「关闭且无时刻」（旧客户端保存每个队列都会提交一次定时）。其他队列不受限。
+    #[test]
+    fn main_queue_rejects_stop_and_schedule_requests() {
+        let rejected_field = |result: Result<(), super::RpcErrorObject>| {
+            let data = result
+                .expect_err("must be rejected")
+                .data
+                .expect("application error data");
+            assert_eq!(data.code, ApplicationErrorCode::InvalidArgument);
+            data.field
+        };
+        assert_eq!(
+            rejected_field(validate_queue_stop("main")).as_deref(),
+            Some("queueId")
+        );
+        for params in [
+            schedule("main", true, "08:00", ""),
+            schedule("main", false, "", "23:00"),
+            schedule("main", true, "", ""),
+        ] {
+            assert_eq!(
+                rejected_field(validate_queue_schedule(&params)).as_deref(),
+                Some("queueId")
+            );
+        }
+        assert!(validate_queue_schedule(&schedule("main", false, "", "")).is_ok());
+        assert!(validate_queue_stop("later").is_ok());
+        assert!(validate_queue_schedule(&schedule("later", true, "08:00", "23:00")).is_ok());
+    }
 
     fn create_many(edit: impl FnOnce(&mut Value)) -> DaemonCreateTasksParams {
         let mut value = json!({

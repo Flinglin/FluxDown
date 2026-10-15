@@ -25,7 +25,8 @@ use crate::ftp_downloader;
 use crate::hls_downloader;
 use crate::logger::log_info;
 use crate::model::{
-    MAIN_QUEUE_ID, QueueInfo, QueuePosition, SegmentDetail, TaskInfo, is_builtin_queue,
+    MAIN_QUEUE_ID, QueueInfo, QueuePosition, SegmentDetail, TaskInfo, is_always_running_queue,
+    is_builtin_queue,
 };
 use crate::naming;
 use crate::proxy_config::{ProxyConfig, ProxyMode};
@@ -12113,10 +12114,14 @@ impl DownloadManager {
 
     /// 停止队列：置停止态并暂停其中所有排队中与活跃的任务。任务保持
     /// paused，等待下次「启动队列」按序恢复；其他队列不受影响（释放的
-    /// 并发槽位立即让给它们）。
+    /// 并发槽位立即让给它们）。恒运行队列（主队列）拒绝停止。
     pub async fn stop_queue(&mut self, queue_id: String) {
         if !self.queues.contains_key(&queue_id) {
             log_info!("[manager] stop_queue: unknown queue '{}'", queue_id);
+            return;
+        }
+        if is_always_running_queue(&queue_id) {
+            log_info!("[manager] stop_queue: '{}' always runs; ignored", queue_id);
             return;
         }
         if let Err(e) = self.db.set_queue_running(&queue_id, false).await {
@@ -12152,7 +12157,7 @@ impl DownloadManager {
     /// 更新队列的每日定时计划并广播。`start`/`stop` 为 `HH:MM`（空 = 该
     /// 边沿不定时，两者彼此独立：只停不启/只启不停均合法）；`days` 为
     /// 星期位掩码（bit0=周一 … bit6=周日），0 视作每天。非法时间格式
-    /// 忽略本次更新。
+    /// 忽略本次更新；恒运行队列（主队列）不可定时，同样忽略。
     pub async fn set_queue_schedule(
         &mut self,
         queue_id: String,
@@ -12161,6 +12166,13 @@ impl DownloadManager {
         stop: String,
         days: i32,
     ) {
+        if is_always_running_queue(&queue_id) {
+            log_info!(
+                "[manager] set_queue_schedule: '{}' always runs and cannot be scheduled",
+                queue_id
+            );
+            return;
+        }
         if (!start.is_empty() && parse_hhmm(&start).is_none())
             || (!stop.is_empty() && parse_hhmm(&stop).is_none())
         {
@@ -15788,6 +15800,46 @@ mod tests {
         mgr.move_task_to_queue("p1".into(), "free".into()).await;
         assert!(mgr.pending_queue.is_empty());
         assert!(mgr.active_tasks.contains_key("p1"));
+        cancel_all_active(&mgr);
+    }
+
+    /// 主队列恒运行：停止与定时（含定时 tick）都不能让它停下或暂停其中的活跃任务；
+    /// 其他队列照常可停。
+    #[tokio::test]
+    async fn main_queue_rejects_stop_and_schedule() {
+        let db = Db::connect("sqlite::memory:")
+            .await
+            .expect("connect mem db");
+        db.seed_builtin_queues().await.expect("seed");
+        let mut mgr = sched_manager(&db, 8);
+        mgr.load_queues().await;
+        occupy_slot(&mut mgr, "running", 1, MAIN_QUEUE_ID, false);
+
+        mgr.stop_queue(MAIN_QUEUE_ID.into()).await;
+        mgr.set_queue_schedule(
+            MAIN_QUEUE_ID.into(),
+            true,
+            String::new(),
+            "00:00".into(),
+            0x7f,
+        )
+        .await;
+        mgr.tick_queue_schedules().await;
+
+        let main = &mgr.queues[MAIN_QUEUE_ID];
+        assert!(main.is_running && !main.schedule_enabled && main.schedule_stop.is_empty());
+        assert!(mgr.active_tasks.contains_key("running"));
+        let stored = db.load_all_queues().await.expect("load");
+        let stored = stored
+            .iter()
+            .find(|queue| queue.queue_id == MAIN_QUEUE_ID)
+            .expect("main row");
+        assert!(stored.is_running && !stored.schedule_enabled);
+
+        mgr.stop_queue(crate::model::LATER_QUEUE_ID.into()).await;
+        mgr.start_queue(crate::model::LATER_QUEUE_ID.into()).await;
+        mgr.stop_queue(crate::model::LATER_QUEUE_ID.into()).await;
+        assert!(!mgr.queues[crate::model::LATER_QUEUE_ID].is_running);
         cancel_all_active(&mgr);
     }
 

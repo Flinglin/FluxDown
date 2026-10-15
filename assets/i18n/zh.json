@@ -112,6 +112,7 @@
   "queueScheduleStartLabel": "启动时间",
   "queueScheduleStopLabel": "停止时间",
   "queueScheduleTimeHint": "HH:MM，留空不定时",
+  "mainQueueAlwaysRunningHint": "主队列始终运行，不能停止或定时。需要定时下载请使用「稍后下载」或自定义队列。",
   "queueScheduleTimeInvalid": "时间格式应为 HH:MM",
   "queueScheduleTimeUnset": "不定时",
   "queueScheduleTimePickHint": "选择「不定时」则该时刻不自动启停",

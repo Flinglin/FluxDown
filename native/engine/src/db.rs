@@ -4000,13 +4000,34 @@ impl Db {
     }
 
     /// 播种内置队列（幂等、进程间安全）：
-    /// - `main` 主队列（运行中，无限制）——未指定队列的任务的归属；
+    /// - `main` 主队列（恒运行，无限制）——未指定队列的任务的归属；
     /// - `later` 稍后下载（默认停止）——「稍后下载」的默认落点。
     ///
     /// 同时把存量 `queue_id = ''` 任务迁入主队列，并在 `default_queue_id`
     /// 配置缺失时设为主队列。以 config 键 `builtin_queues_seeded` 的原子
     /// `INSERT … DO NOTHING` 作跨进程互斥：抢不到该行写入的进程直接跳过。
+    ///
+    /// 每次调用（每次启动）还会把主队列收敛到「运行中、无定时」
+    /// （[`crate::model::is_always_running_queue`]），迁移旧版本允许的停止 / 定时状态。
     pub async fn seed_builtin_queues(&self) -> Result<(), DbError> {
+        self.seed_builtin_queue_rows().await?;
+        self.normalize_main_queue().await
+    }
+
+    /// 主队列恒运行且无定时：只在状态不符时写这一行（`WHERE` 过滤），已收敛的库
+    /// 启动时零行写入。暂停中的任务保持暂停，不在升级时自动开下。
+    async fn normalize_main_queue(&self) -> Result<(), DbError> {
+        sqlx::query(
+            "UPDATE queues SET is_running = 1, schedule_enabled = 0, schedule_start = '', schedule_stop = '', schedule_days = 127 \
+             WHERE id = $1 AND (is_running <> 1 OR schedule_enabled <> 0 OR schedule_start <> '' OR schedule_stop <> '' OR schedule_days <> 127)",
+        )
+        .bind(MAIN_QUEUE_ID)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn seed_builtin_queue_rows(&self) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
         // 第一条语句即写入：SQLite 取得写锁、PostgreSQL 锁定冲突行，
         // 并发的第二个进程在此阻塞，提交后读到 rows_affected == 0 即退出。
@@ -7968,26 +7989,32 @@ mod tests {
         close_test_db(&db, dir).await;
     }
 
+    /// 旧版本允许停止 / 定时主队列：升级后再次播种必须把主队列收敛为运行中、无定时，
+    /// 其他队列的启停与定时原样保留。
     #[tokio::test]
-    async fn queue_running_and_schedule_roundtrip() {
+    async fn reseeding_migrates_stopped_or_scheduled_main_queue() {
         let (db, dir) = open_test_db().await;
         db.seed_builtin_queues().await.expect("seed");
-        db.set_queue_running(MAIN_QUEUE_ID, false)
-            .await
-            .expect("stop");
-        db.set_queue_schedule(MAIN_QUEUE_ID, true, "08:30", "23:00", 0b001_1111)
-            .await
-            .expect("schedule");
+        for id in [MAIN_QUEUE_ID, crate::model::LATER_QUEUE_ID] {
+            db.set_queue_running(id, false).await.expect("stop");
+            db.set_queue_schedule(id, true, "08:30", "23:00", 0b001_1111)
+                .await
+                .expect("schedule");
+        }
+        db.seed_builtin_queues().await.expect("reseed");
         let queues = db.load_all_queues().await.expect("load");
-        let main = queues
-            .iter()
-            .find(|q| q.queue_id == MAIN_QUEUE_ID)
-            .expect("main row");
-        assert!(!main.is_running);
-        assert!(main.schedule_enabled);
-        assert_eq!(main.schedule_start, "08:30");
-        assert_eq!(main.schedule_stop, "23:00");
-        assert_eq!(main.schedule_days, 0b001_1111);
+        let find = |id: &str| queues.iter().find(|q| q.queue_id == id).expect("queue row");
+        let main = find(MAIN_QUEUE_ID);
+        assert!(main.is_running);
+        assert!(!main.schedule_enabled);
+        assert!(main.schedule_start.is_empty() && main.schedule_stop.is_empty());
+        assert_eq!(main.schedule_days, 127);
+        let later = find(crate::model::LATER_QUEUE_ID);
+        assert!(!later.is_running);
+        assert!(later.schedule_enabled);
+        assert_eq!(later.schedule_start, "08:30");
+        assert_eq!(later.schedule_stop, "23:00");
+        assert_eq!(later.schedule_days, 0b001_1111);
         close_test_db(&db, dir).await;
     }
 

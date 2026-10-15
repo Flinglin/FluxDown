@@ -112,6 +112,7 @@
   "queueScheduleStartLabel": "Start time",
   "queueScheduleStopLabel": "Stop time",
   "queueScheduleTimeHint": "HH:MM, empty = off",
+  "mainQueueAlwaysRunningHint": "The main queue always runs and cannot be stopped or scheduled. Use Download Later or a custom queue for scheduled downloads.",
   "queueScheduleTimeInvalid": "Time must be HH:MM",
   "queueScheduleTimeUnset": "Off",
   "queueScheduleTimePickHint": "Choose Off to skip this trigger",
