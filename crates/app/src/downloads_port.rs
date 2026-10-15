@@ -476,6 +476,10 @@ impl AgentDownloadsPort {
                     method::DAEMON_SITE_AUTH_MATCH,
                     serialize(fluxdown_protocol::SiteAuthMatchParams { url })?,
                 ),
+                DownloadsCommand::ProbeLink { url } => (
+                    method::DAEMON_LINK_PROBE,
+                    serialize(fluxdown_protocol::LinkProbeParams { url })?,
+                ),
                 DownloadsCommand::RemoteDispatch(params) => {
                     (method::AGENT_REMOTE_DISPATCH, serialize(params)?)
                 }

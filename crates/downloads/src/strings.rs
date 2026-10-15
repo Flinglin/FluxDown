@@ -485,6 +485,10 @@ pub(crate) struct NewDownloadStrings {
     pub(crate) url_label: SharedString,
     pub(crate) url_placeholder: SharedString,
     url_count: SharedString,
+    pub(crate) probe_checking: SharedString,
+    probe_found: SharedString,
+    probe_size_unknown: SharedString,
+    pub(crate) probe_unavailable: SharedString,
     pub(crate) no_valid_url: SharedString,
     pub(crate) open_torrent: SharedString,
     pub(crate) select_torrent: SharedString,
@@ -576,6 +580,10 @@ impl NewDownloadStrings {
             url_label: shared(translator.text("downloadUrl")),
             url_placeholder: shared(translator.text("batchUrlPlaceholder")),
             url_count: shared(translator.text("urlCount")),
+            probe_checking: shared(translator.text("newDownloadProbeChecking")),
+            probe_found: shared(translator.text("newDownloadProbeFound")),
+            probe_size_unknown: shared(translator.text("newDownloadProbeSizeUnknown")),
+            probe_unavailable: shared(translator.text("newDownloadProbeUnavailable")),
             no_valid_url: shared(translator.text("newDownloadNoValidUrl")),
             open_torrent: shared(translator.text("openTorrentFile")),
             select_torrent: shared(translator.text("selectTorrentFile")),
@@ -670,6 +678,20 @@ impl NewDownloadStrings {
     /// `{count} 个链接`。
     pub(crate) fn format_url_count(&self, count: usize) -> SharedString {
         SharedString::from(self.url_count.replace("{count}", &count.to_string()))
+    }
+
+    /// `已识别：{文件名 · 大小}`；大小未知（0）时显示「大小未知」。名称为空时只显示大小。
+    pub(crate) fn format_probe_found(&self, file_name: &str, total_bytes: i64) -> SharedString {
+        let size = match u64::try_from(total_bytes) {
+            Ok(bytes) if bytes > 0 => crate::model::format_bytes(bytes),
+            _ => self.probe_size_unknown.to_string(),
+        };
+        let info = if file_name.is_empty() {
+            size
+        } else {
+            format!("{file_name} · {size}")
+        };
+        SharedString::from(self.probe_found.replace("{info}", &info))
     }
 
     /// `已导入 {count} 个链接`。

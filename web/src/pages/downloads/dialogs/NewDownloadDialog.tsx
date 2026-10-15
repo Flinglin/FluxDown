@@ -22,7 +22,9 @@ import { ManifestSelectDialog } from './ManifestSelectDialog'
 import type { ManifestBaseOptions } from './ManifestSelectDialog'
 import { DEFAULT_HASH_ALGORITHM, HASH_ALGORITHMS, MAX_THREADS, PROXY_CHOICES, THREAD_PRESETS, UA_PRESET_CUSTOM, UA_PRESET_DEFAULT, UA_PRESET_KEYS } from './model'
 import type { DraftOptions, ProxyChoice, ThreadChoice, UrlEntry } from './model'
-import { appendEntries, buildBatch, buildRequests, captureEntry, checksumSpec, customSegments, detectUaPreset, entryToText, isHttpUrl, isMagnetUrl, manualProxyUrl, mergeImported, parseEntries, proxyWire, threadChoiceFromSegments, uaPresetValue } from './model'
+import { appendEntries, buildBatch, buildRequests, captureEntry, checksumSpec, customSegments, detectUaPreset, entryToText, isHttpUrl, isMagnetUrl, manualProxyUrl, parseEntries, parseInput, proxyWire, threadChoiceFromSegments, uaPresetValue } from './model'
+import { applyHints, emptyHints, emptyTracking, hintsEqual } from './aria2c'
+import type { FillTracking, RequestHints } from './aria2c'
 import { IMPORT_CHUNK_SIZE, importNotice, runImport } from './importRunner'
 import type { ImportProgress } from './importRunner'
 import { SplitButton } from './SplitButton'
@@ -126,7 +128,30 @@ export function NewDownloadDialog({ session }: { session: NewDownloadSession }) 
   const txtInput = useRef<HTMLInputElement>(null)
   const resolveToken = useRef(0)
 
-  const entries = useMemo(() => parseEntries(text, false), [text])
+  const parsed = useMemo(() => parseInput(text, false), [text])
+  const entries = parsed.entries
+
+  // aria2c 命令带出的 Cookie / UA / 请求头回填到高级字段（规则同桌面端，见 `aria2c.ts`）：
+  // 与上次处理的 hints 相同则不处理；用户编辑过的字段 / 行不再覆盖。
+  const lastHints = useRef<RequestHints>(emptyHints())
+  const fillTracking = useRef<FillTracking>(emptyTracking())
+  useEffect(() => {
+    if (hintsEqual(parsed.hints, lastHints.current)) return
+    lastHints.current = parsed.hints
+    const result = applyHints({ cookie, userAgent, rows: headers }, fillTracking.current, parsed.hints, () => {
+      headerSeq.current += 1
+      return headerSeq.current
+    })
+    fillTracking.current = result.tracking
+    if (result.cookie !== cookie) setCookie(result.cookie)
+    if (result.userAgent !== userAgent) {
+      setUserAgent(result.userAgent)
+      setUaPreset(detectUaPreset(result.userAgent))
+    }
+    if (result.rows.length !== headers.length || result.rows.some((row, index) => row !== headers[index])) setHeaders(result.rows)
+    if (result.filled) setAdvancedOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在命令头部信息变化时回填，表单当前值取渲染时快照
+  }, [parsed.hints])
   const count = entries.length
   const batch = count > 1
   const allMagnet = count > 0 && entries.every((entry) => isMagnetUrl(entry.url))
@@ -480,7 +505,7 @@ export function NewDownloadDialog({ session }: { session: NewDownloadSession }) 
         toast.key('importTxtNoUrls', 'warning')
         return
       }
-      setText((current) => mergeImported(current, imported))
+      setText((current) => appendEntries(current, imported))
       toast.key('importTxtFound', 'success', { count: imported.length })
     } finally {
       setBusyFiles(false)

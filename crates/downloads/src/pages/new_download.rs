@@ -4,7 +4,12 @@
 //! 提交时经 `agent.capture.resolve` 确认，Cookie / 请求头 / 请求体等上下文由 agent 合并；
 //! 未确认的捕获在窗口关闭时一并忽略。
 
+mod hints;
 mod preview;
+mod probe;
+
+use hints::HintAutofill;
+use probe::LinkProbe;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -26,8 +31,8 @@ use crate::{
             BuiltRequests, DEFAULT_HASH_ALGORITHM, DraftOptions, HASH_ALGORITHMS, MAX_THREADS,
             ProxyChoice, THREAD_PRESETS, ThreadChoice, UA_PRESET_CUSTOM, UA_PRESET_DEFAULT,
             UrlEntry, append_entries, build_requests, capture_entry, checksum_spec,
-            compose_request, custom_segments, detect_ua_preset, manual_proxy_url, merge_imported,
-            parse_entries, ua_preset_keys, ua_preset_value,
+            compose_request, custom_segments, detect_ua_preset, manual_proxy_url, parse_entries,
+            parse_input, ua_preset_keys, ua_preset_value,
         },
     },
     strings::NewDownloadStrings,
@@ -253,6 +258,9 @@ pub struct NewDownloadView {
     http_password: Entity<InputState>,
     save_site_auth: bool,
     auth_autofill: AuthAutofill,
+    hint_fill: HintAutofill,
+    /// 链接预探测（#402）：文件名 / 大小提示，仅展示，不进入提交请求。
+    probe: LinkProbe,
     proxy_choice: ProxyChoice,
     custom_proxy: Entity<InputState>,
     ignore_tls_errors: bool,
@@ -336,6 +344,7 @@ impl NewDownloadView {
             custom_proxy: Self::input(strings.proxy_placeholder.clone(), window, cx),
             user_agent: Self::input(strings.user_agent_desc.clone(), window, cx),
             checksum: Self::input(strings.checksum_placeholder.clone(), window, cx),
+            probe: LinkProbe::new(strings.rename_placeholder.clone()),
             strings,
             translator: translator.clone(),
             preview_gate: crate::model::preview::PreviewGate::default(),
@@ -353,6 +362,7 @@ impl NewDownloadView {
             http_password,
             save_site_auth: false,
             auth_autofill: AuthAutofill::default(),
+            hint_fill: HintAutofill::default(),
             proxy_choice: ProxyChoice::FollowGlobal,
             ignore_tls_errors: false,
             ua_preset: UA_PRESET_DEFAULT,
@@ -447,11 +457,14 @@ impl NewDownloadView {
 
     /// 按当前语言重设全部输入框占位（打开表单时语言可能尚未从偏好恢复）。
     fn refresh_placeholders(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // 占位随探测结果：探测名只作提示，语言切换时不能把它重置回默认文案。
+        let rename_placeholder = self.rename_placeholder();
+        self.probe.set_placeholder(rename_placeholder.clone());
         let strings = &self.strings;
         let inputs = [
             (&self.save_dir, &strings.save_dir_placeholder),
             (&self.custom_threads, &strings.threads_custom_hint),
-            (&self.rename, &strings.rename_placeholder),
+            (&self.rename, &rename_placeholder),
             (&self.http_user, &strings.http_auth_user),
             (&self.http_password, &strings.http_auth_password),
             (&self.custom_proxy, &strings.proxy_placeholder),
@@ -482,8 +495,11 @@ impl NewDownloadView {
     }
 
     fn refresh_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.entries = parse_entries(&self.urls.read(cx).value(), false);
+        let parsed = parse_input(&self.urls.read(cx).value(), false);
+        self.entries = parsed.entries;
         self.sync_site_auth(window, cx);
+        self.sync_hints(parsed.hints, window, cx);
+        self.sync_probe(window, cx);
         cx.notify();
     }
 
@@ -1031,7 +1047,7 @@ impl NewDownloadView {
                     return;
                 }
                 let count = imported.len();
-                let merged = merge_imported(&this.urls.read(cx).value(), imported);
+                let merged = append_entries(&this.urls.read(cx).value(), imported);
                 this.urls
                     .update(cx, |input, cx| input.set_value(merged, window, cx));
                 this.refresh_entries(window, cx);
@@ -1372,6 +1388,7 @@ impl NewDownloadView {
             .when(has_text && count == 0, |this| {
                 this.child(field_error(self.strings.no_valid_url.clone(), cx))
             })
+            .children(self.render_probe_status(cx))
             .when(!self.captures.is_empty() && !self.is_remote(), |this| {
                 this.child(field_hint(self.strings.capture_context_hint.clone(), cx))
             })

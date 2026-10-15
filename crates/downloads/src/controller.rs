@@ -204,6 +204,11 @@ pub enum DownloadsCommand {
     SiteAuthMatch {
         url: String,
     },
+    /// 新建下载表单的只读元信息预探测（`daemon.link.probe`，只发一次 HEAD，不消耗
+    /// 一次性令牌）；结果为 [`fluxdown_protocol::LinkProbeResult`]。
+    ProbeLink {
+        url: String,
+    },
     /// 经 FluxCloud 把链接下发到账号内另一台设备（`agent.remote.dispatch`）。
     RemoteDispatch(RemoteDispatchParams),
     /// 下发到局域网已配对设备（`agent.link.dispatch`）。
