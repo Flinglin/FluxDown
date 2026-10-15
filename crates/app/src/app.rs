@@ -33,7 +33,8 @@ const EVENT_BATCH: usize = 256;
 /// 次实例等待刚启动主实例的 IPC 端点就绪、或等待旧主实例释放锁的最长时间。
 const ACTIVATION_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
 const ACTIVATION_RETRY_INTERVAL: Duration = Duration::from_millis(50);
-/// `--after-update`：旧桌面进程随 agent 整体退出而退出，等它释放单实例锁的最长时间与轮询间隔。
+/// `--after-update` / `--relaunch`：旧桌面进程随 agent 整体退出而退出，等它释放单实例锁的最长
+/// 时间与轮询间隔。
 const AFTER_UPDATE_LOCK_WAIT: Duration = Duration::from_secs(30);
 const AFTER_UPDATE_LOCK_INTERVAL: Duration = Duration::from_millis(100);
 /// agent 拉起的确认 / 进度界面（`--capture` / `--progress-task`）等旧主实例释放单实例锁的最长
@@ -134,7 +135,7 @@ pub(crate) fn run() -> Result<RunOutcome, AppError> {
         settings: launch.settings,
         progress_task: launch.progress_task.clone(),
     };
-    let lock_wait = if launch.after_update {
+    let lock_wait = if launch.after_update || launch.relaunch {
         Some(AFTER_UPDATE_LOCK_WAIT)
     } else if launch.agent_initiated() {
         Some(AGENT_LAUNCH_LOCK_WAIT)

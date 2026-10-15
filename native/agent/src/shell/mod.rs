@@ -58,6 +58,8 @@ pub enum TrayAction {
     ResumeAll,
     CancelShutdown,
     Quit,
+    /// 完全退出后重新拉起桌面程序（桌面再拉起 agent 与 daemon）。
+    Restart,
     /// 系统把链接 / `.torrent` 交给了 agent（macOS 上仅当 agent 被 Launch Services 视为
     /// 处理程序时出现，如未打包的开发布局；打包后这些事件由外层桌面程序接收）。
     OpenUrls(Vec<String>),
@@ -75,6 +77,7 @@ pub struct TrayModel {
     pub resume_all: String,
     /// `Some` 时显示「取消完成后关机」菜单项。
     pub cancel_shutdown: Option<String>,
+    pub restart: String,
     pub quit: String,
     pub tooltip: String,
 }
@@ -601,6 +604,7 @@ async fn handle_action(
         TrayAction::ResumeAll => call_daemon(daemon, method::DAEMON_TASK_RESUME_ALL).await,
         TrayAction::CancelShutdown => power.disarm(),
         TrayAction::Quit | TrayAction::SessionEnd => lifecycle.request_quit(),
+        TrayAction::Restart => restart_agent(lifecycle),
         TrayAction::OpenUrls(urls) => {
             submit_opened_urls(gateway, urls).await;
             if !state.resident() && state.ui_clients() == 0 {
@@ -614,6 +618,22 @@ async fn call_daemon(daemon: &DaemonClient, method_name: &str) {
     if let Err(error) = daemon.call::<Value, Value>(method_name, None).await {
         tracing::warn!(code = ?error.code, method_name, "tray daemon action failed");
     }
+}
+
+/// 托盘「重启」：登记非更新的重启计划后走完全退出（daemon 优雅关停、下载状态照常持久化），
+/// agent 运行期结束后由 `main` 重新拉起桌面程序。已在退出流程中（含更新重启）时忽略，避免
+/// 覆盖已登记的计划；拿不到任何可重启的程序时保持当前运行，不退出。
+fn restart_agent(lifecycle: &Arc<Lifecycle>) {
+    if lifecycle.quit_requested() {
+        tracing::debug!("restart ignored: a full quit is already in progress");
+        return;
+    }
+    let Some(plan) = crate::update::restart::desktop_relaunch() else {
+        tracing::error!("restart unavailable: cannot locate a program to start; keeping running");
+        return;
+    };
+    crate::update::restart::schedule(plan);
+    lifecycle.request_restart();
 }
 
 /// 与桌面进程处理系统交来的链接一致：`.torrent` 文件与可捕获链接都静默建任务，并声明来源
