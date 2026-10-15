@@ -1181,7 +1181,7 @@ async fn run_ftp_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
     let tracker = TransferTracker::new();
 
     if use_segments {
-        ftp_download_multi_segment(
+        let outcome = ftp_download_multi_segment(
             &p.task_id,
             &ftp_url,
             &temp_path,
@@ -1196,7 +1196,16 @@ async fn run_ftp_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
             &p.sink,
             p.spawn_gen,
         )
-        .await?;
+        .await;
+        // 暂停终态帧读 tasks.downloaded_bytes：退出前按已落库分段对齐（同 HTTP 多段）。
+        if matches!(outcome, Err(DownloadError::Cancelled))
+            && let Err(error) =
+                p.db.sync_task_progress_from_segments(&p.task_id, p.spawn_gen)
+                    .await
+        {
+            crate::logger::report_warning("ftp-download", "sync paused progress", &error);
+        }
+        outcome?;
     } else {
         // Retry wrapper for single-thread FTP download.
         // ftp_download_single supports resume (checks existing file length),

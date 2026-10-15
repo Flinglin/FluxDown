@@ -4932,7 +4932,7 @@ async fn download_multi_segment(
     //   • db_total >  probe_total  → file genuinely shrank, rebuild segments
 
     // Delegate to the IDM-style dynamic segment coordinator.
-    crate::segment_coordinator::run_coordinated_download(
+    let outcome = crate::segment_coordinator::run_coordinated_download(
         task_id,
         url,
         dest,
@@ -4954,7 +4954,18 @@ async fn download_multi_segment(
         auto_proxy,
         multi_nic,
     )
-    .await
+    .await;
+    // 暂停终态帧在 TaskDone 后读 tasks.downloaded_bytes：退出前按已落库分段对齐，
+    // 否则显示上一个周期写入的旧值（开头几秒内暂停即为 0%）。只在活跃下载器被
+    // 取消时执行一次（并发上限内），排队 / 已暂停任务不经过此处。
+    if matches!(outcome, Err(DownloadError::Cancelled))
+        && let Err(error) = db
+            .sync_task_progress_from_segments(task_id, spawn_gen)
+            .await
+    {
+        crate::logger::report_warning("http-download", "sync paused progress", &error);
+    }
+    outcome
 }
 
 // ---------------------------------------------------------------------------

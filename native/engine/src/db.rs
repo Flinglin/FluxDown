@@ -1660,6 +1660,58 @@ impl Db {
     ///   不含 hook 耗时；重复写 3（幂等竞态）不会覆盖首次记录。
     /// - `status ∈ {0, 1, 5}`（重新排队/下载/准备）→ 清空，重下后重新记录。
     /// - 其余状态（暂停/错误）保持不变。
+    /// 以已落库的分段进度回写任务级 `downloaded_bytes`（单调，只前进）。
+    ///
+    /// 多段下载在运行期只按 `DB_SAVE_INTERVAL_SECS` 周期写任务级进度，而暂停 /
+    /// 取消时 worker 会 fsync 后把每段最终偏移写进 `task_segments`。暂停终态帧与
+    /// 重启后的列表都读 `tasks.downloaded_bytes`，若不在下载器退出前对齐，就会
+    /// 显示上一个周期的旧值（开始几秒内暂停即为 0%）。
+    ///
+    /// 一条语句内聚合 + 写入（主键前缀索引，≤ 512 行），不把段行搬进内存；
+    /// `segments_epoch` 守卫使被新 spawn 夺权后的旧下载器 0 行生效。与
+    /// `restart_task` 的 `delete_segments`（同事务删段 + 进度归零）并发时不得
+    /// 出现「读到删前段和、写在归零之后」：SQLite 单语句天然原子；pg 读已提交
+    /// 下子查询快照早于行锁，故先 `FOR UPDATE` 锁任务行，再以锁后的新快照聚合。
+    pub async fn sync_task_progress_from_segments(
+        &self,
+        id: &str,
+        epoch: i64,
+    ) -> Result<(), DbError> {
+        match self.backend {
+            Backend::Sqlite => {
+                sqlx::query(
+                    "UPDATE tasks SET downloaded_bytes = MAX(downloaded_bytes,
+                         (SELECT COALESCE(SUM(downloaded_bytes), 0)
+                            FROM task_segments WHERE task_id = $1))
+                     WHERE id = $1 AND segments_epoch = $2",
+                )
+                .bind(id)
+                .bind(epoch)
+                .execute(&self.pool)
+                .await?;
+            }
+            Backend::Postgres => {
+                let mut tx = self.pool.begin().await?;
+                sqlx::query("SELECT 1 FROM tasks WHERE id = $1 FOR UPDATE")
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                sqlx::query(
+                    "UPDATE tasks SET downloaded_bytes = GREATEST(downloaded_bytes,
+                         (SELECT COALESCE(SUM(downloaded_bytes), 0)::BIGINT
+                            FROM task_segments WHERE task_id = $1))
+                     WHERE id = $1 AND segments_epoch = $2",
+                )
+                .bind(id)
+                .bind(epoch)
+                .execute(&mut *tx)
+                .await?;
+                tx.commit().await?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn update_task_status(
         &self,
         id: &str,
@@ -7018,6 +7070,76 @@ mod tests {
             .expect("get config")
             .expect("default present");
         // 与 server.rs 的解析函数同规则：逗号分隔、每项 host:port。
+    /// 暂停时分段已落库而任务级进度仍是旧周期值：回写后必须等于分段之和，
+    /// 且不会把更大的已有值拉低（暂停帧不能显示 0% / 倒退）。
+    #[tokio::test]
+    async fn task_progress_syncs_from_segments_monotonically() {
+        let (db, dir) = open_test_db().await;
+        insert_task_with_size(&db, "seg-sync", 2000).await;
+        db.insert_segments("seg-sync", &[(0, 0, 999), (1, 1000, 1999)])
+            .await
+            .expect("insert segments");
+        db.set_segments_epoch("seg-sync", 1)
+            .await
+            .expect("set epoch");
+        db.update_segment_progress_bounded("seg-sync", 0, 600, 0, 1)
+            .await
+            .expect("segment 0");
+        db.update_segment_progress_bounded("seg-sync", 1, 300, 1000, 1)
+            .await
+            .expect("segment 1");
+
+        // 已被新 spawn 夺权的旧下载器：0 行生效。
+        db.sync_task_progress_from_segments("seg-sync", 0)
+            .await
+            .expect("stale sync");
+        let task = db
+            .load_task_by_id("seg-sync")
+            .await
+            .expect("load")
+            .expect("task exists");
+        assert_eq!(task.downloaded_bytes, 0, "旧世代回写必须被 epoch 拦截");
+
+        db.sync_task_progress_from_segments("seg-sync", 1)
+            .await
+            .expect("sync");
+        let task = db
+            .load_task_by_id("seg-sync")
+            .await
+            .expect("load")
+            .expect("task exists");
+        assert_eq!(task.downloaded_bytes, 900, "任务进度必须对齐分段之和");
+
+        db.update_task_progress("seg-sync", 1500)
+            .await
+            .expect("newer progress");
+        db.sync_task_progress_from_segments("seg-sync", 1)
+            .await
+            .expect("sync again");
+        let task = db
+            .load_task_by_id("seg-sync")
+            .await
+            .expect("load")
+            .expect("task exists");
+        assert_eq!(task.downloaded_bytes, 1500, "回写不得拉低已有进度");
+
+        // restart 的删段归零之后，迟到回写不得复活旧进度。
+        db.delete_segments("seg-sync")
+            .await
+            .expect("delete segments");
+        db.sync_task_progress_from_segments("seg-sync", 1)
+            .await
+            .expect("sync after delete");
+        let task = db
+            .load_task_by_id("seg-sync")
+            .await
+            .expect("load")
+            .expect("task exists");
+        assert_eq!(task.downloaded_bytes, 0, "删段后回写必须保持 0");
+
+        close_test_db(&db, dir).await;
+    }
+
         let servers: Vec<&str> = list.split(',').filter(|s| !s.is_empty()).collect();
         assert!(!servers.is_empty(), "默认列表非空");
         for s in servers {
