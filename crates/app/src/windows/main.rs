@@ -44,7 +44,6 @@ fn open_with(cx: &mut App, focus: bool) -> Option<WindowHandle<Root>> {
     let session = desktop.session.clone();
     let client = desktop.client.clone();
     let settings_store = desktop.settings_store.clone();
-    let menu_bar = desktop.menu_bar.clone();
     let mut options = main_window_options();
     options.focus = focus;
     WindowRegistry::restore_bounds(RememberedWindow::Main, &mut options, MAIN_WINDOW_SIZE, cx);
@@ -137,7 +136,7 @@ fn open_with(cx: &mut App, focus: bool) -> Option<WindowHandle<Root>> {
             }
         }
         let shell =
-            cx.new(|cx| ShellView::new(translator.clone(), routes, actions, Some(menu_bar), cx));
+            cx.new(|cx| ShellView::new(translator.clone(), routes, actions, cx));
         shell.update(cx, |shell, cx| {
             let preferences = Desktop::preferences(cx).clone();
             activity::apply_visibility(shell, &preferences, cx);

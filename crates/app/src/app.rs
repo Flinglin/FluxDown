@@ -17,7 +17,6 @@ use fluxdown_ui_i18n::{I18nCatalog, I18nError, Translator, system_locale};
 use fluxdown_ui_settings::{SettingsStore, SettingsView, component_locale};
 use fluxdown_ui_shell::ShellView;
 use gpui::{App, AppContext as _, Entity, Global, WeakEntity};
-use gpui_component::menu::AppMenuBar;
 use tokio::sync::mpsc;
 
 use crate::agent_client::{AgentClient, AgentClientConfig, AgentClientError};
@@ -78,7 +77,6 @@ pub(crate) struct Desktop {
     pub settings_store: Entity<SettingsStore>,
     /// 账户 / 设备 / 局域网配对状态：设置页与「添加设备」对话框共享。
     pub account_host: Entity<AccountHost>,
-    pub menu_bar: Entity<AppMenuBar>,
     /// 主窗口内的下载页（主窗口关闭后失效）。
     pub main_downloads: Option<WeakEntity<DownloadView>>,
     pub main_shell: Option<WeakEntity<ShellView>>,
@@ -253,7 +251,7 @@ pub(crate) fn run() -> Result<RunOutcome, AppError> {
         .detach();
 
         crate::menus::bind_keys(cx);
-        let menu_bar = crate::menus::install(cx, &translator);
+        crate::menus::install(cx, &translator);
         crate::menus::install_global_actions(cx);
         cx.set_global(Desktop {
             translator: translator.clone(),
@@ -261,7 +259,6 @@ pub(crate) fn run() -> Result<RunOutcome, AppError> {
             client: agent_client.clone(),
             settings_store,
             account_host,
-            menu_bar,
             main_downloads: None,
             main_shell: None,
             settings_view: None,
