@@ -12,6 +12,8 @@ export const METHOD = {
   DAEMON_TASK_GET: 'daemon.task.get',
   DAEMON_TASK_ACTIVITY: 'daemon.task.activity',
   DAEMON_TASK_CREATE: 'daemon.task.create',
+  /** 批量建任务（`DaemonCreateTasksParams`）：整块一个事务、一次 `tasksChanged` 事件，按 `batchId` 幂等。 */
+  DAEMON_TASK_CREATE_MANY: 'daemon.task.createMany',
   DAEMON_TASK_PAUSE: 'daemon.task.pause',
   DAEMON_TASK_RESUME: 'daemon.task.resume',
   DAEMON_TASK_RENAME: 'daemon.task.rename',

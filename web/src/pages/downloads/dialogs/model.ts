@@ -1,7 +1,7 @@
 // 「新建下载」表单的纯模型：链接解析、代理 / UA / 线程预设与请求构建。
 // 与 crates/downloads/src/model/new_download.rs 的桌面端规则保持同步。
 
-import type { CreateTaskRequest } from '../../../lib/rpc'
+import type { CreateTaskItem, CreateTaskRequest } from '../../../lib/rpc'
 import { MAX_TASK_SEGMENTS } from '../../../lib/threadsRisk'
 
 /** 一条解析出的下载条目（aria2 风格：URL + 可选 `out=` / `checksum=` 选项行）。 */
@@ -285,6 +285,29 @@ export function buildRequests(entries: readonly UrlEntry[], options: DraftOption
     httpPassword: single ? options.httpPassword : '',
     saveSiteAuth: single && options.saveSiteAuth,
   }))
+}
+
+/**
+ * `daemon.task.createMany` 的整批共享选项 + 逐条条目（对齐 GPUI `build_requests` 的单条覆盖）。
+ * `common` 的 url / fileName / checksum 恒为空，由条目决定；`single` 默认按条目数判定，
+ * 外部捕获等拆分提交时由调用方按整个表单的条目数传入。
+ */
+export function buildBatch(entries: readonly UrlEntry[], options: DraftOptions, single = entries.length === 1): { common: CreateTaskRequest; items: CreateTaskItem[] } {
+  const [shared] = buildRequests([{ url: '', fileName: '', checksum: '' }], options)
+  const common: CreateTaskRequest = {
+    ...shared,
+    fileName: '',
+    checksum: '',
+    httpUser: single ? options.httpUser : '',
+    httpPassword: single ? options.httpPassword : '',
+    saveSiteAuth: single && options.saveSiteAuth,
+  }
+  const items = entries.map((entry) => ({
+    url: entry.url,
+    fileName: single && options.rename !== '' ? options.rename : entry.fileName,
+    checksum: single && options.checksum !== '' ? options.checksum : entry.checksum,
+  }))
+  return { common, items }
 }
 
 /** 是否单条 http(s) 链接（清单预解析 / 站点凭据回填的前置条件）。 */

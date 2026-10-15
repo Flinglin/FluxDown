@@ -90,6 +90,8 @@ export type DaemonEvent =
   | { type: 'snapshotReplaced'; data: DaemonSnapshot }
   | { type: 'engine'; data: WsServerMsg }
   | { type: 'taskChanged'; data: TaskDto }
+  /** 一批任务事实：等价于按序逐条 `taskChanged`（`daemon.task.createMany` 一块一条）。 */
+  | { type: 'tasksChanged'; data: TaskDto[] }
   | { type: 'taskDeleted'; data: { taskId: string } }
   | { type: 'queuesChanged'; data: QueueDto[] }
   | { type: 'groupsChanged'; data: GroupDto[] }

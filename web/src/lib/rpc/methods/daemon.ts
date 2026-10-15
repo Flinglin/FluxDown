@@ -14,6 +14,8 @@ import type {
   CreatedTask,
   DaemonConfigPatch,
   DaemonConfigSnapshot,
+  DaemonCreateTasksParams,
+  DaemonCreateTasksResult,
   DaemonCreateTaskParams,
   DaemonDiagnosticsDescribe,
   DaemonRuntimeStatsDto,
@@ -91,6 +93,9 @@ const task = {
   activity: (params: TaskActivityQuery) =>
     call<TaskActivityPage>(METHOD.DAEMON_TASK_ACTIVITY, params),
   create: (params: DaemonCreateTaskParams) => call<CreatedTask>(METHOD.DAEMON_TASK_CREATE, params),
+  /** 批量建任务：一块（≤512 条）共享同一份选项，整块一个事务，按 `batchId` 幂等。 */
+  createMany: (params: DaemonCreateTasksParams) =>
+    call<DaemonCreateTasksResult>(METHOD.DAEMON_TASK_CREATE_MANY, params),
   pause: (params: TaskIdParams) => call<OkResult>(METHOD.DAEMON_TASK_PAUSE, params),
   resume: (params: TaskIdParams) => call<OkResult>(METHOD.DAEMON_TASK_RESUME, params),
   rename: (params: TaskRenameParams) => call<OkResult>(METHOD.DAEMON_TASK_RENAME, params),
