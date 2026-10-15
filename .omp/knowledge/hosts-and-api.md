@@ -109,6 +109,8 @@ FluxCloud 对没有任务 SSE 的心跳返回 `409 presence_connection_missing`�
 
 **分发目标**（`fluxdown-agent` + `fluxdownd` 同目录，入口 `fluxdown-agent --server`，镜像名仍 `ghcr.io/zerx-lab/fluxdown-server`；资产随统一 `vX.Y.Z` release 发布，历史版本在 `server-v*` release）：Docker（amd64+arm64）、群晖 SPK、QNAP QPKG、OpenWrt IPK+LuCI、Unraid CA 模板、CasaOS。脚本在 `packaging/`、`promotion/`、`docker/`。
 
+**OpenWrt LuCI**（`packaging/openwrt/`，`build_ipk.sh` 手打 ipk，无 OpenWrt SDK / `po2lmo`）：运行状态经 ubus `service list` 每 5s 轮询；访问密钥 = UCI `token`（非空时 init 传 `FLUXDOWN_TOKEN` + `FLUXDOWN_TOKEN_FORCE=1`，前端校验镜像 `validate_access_key`），当前生效密钥由 `/usr/libexec/fluxdown/luci-token` 用 `jsonfilter` 只取 `agent-state.json` 的 `gatewayUserToken`（ACL 只放行该脚本，状态文件绝不整体给浏览器）；汉化 = 视图内置 zh 词典（`T()`：`_()` 命中优先，否则按 `L.env.lang` 取词典）。
+
 ## 应用内更新（`native/agent/src/update/`，桌面、headless 与原生 Android 共用）
 
 状态归 agent：`UpdateService`（`update/mod.rs`）独占 `UpdateStatusDto`，经 `AgentSnapshot.update` + `AgentEvent::UpdateChanged` 推送（协议 v8）；方法 `agent.update.{check,download,install,cancel}` 都返回 `UpdateStatusDto`。UI 只渲染状态、发请求，GPUI（`crates/settings/src/update_view.rs` 判定 + `about.rs`、`crates/app/src/update_notices.rs` 提醒窗口时机与通知）与 Web（`web/src/lib/update.ts` ↔ 同一套阶段 / 按钮 / 文案键规则，`shell/UpdateStatus.tsx` 横幅与重启遮罩）逐条对齐。
