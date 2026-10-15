@@ -87,6 +87,8 @@ const SELECTED_INSET_X: f32 = 4.;
 const ROW_GROUP: &str = "download-task-row";
 /// 表头全选格 group 名：悬停该格时显示全选框。
 const SELECT_ALL_GROUP: &str = "download-select-all";
+/// 任务行首图标格 group 名：只在悬停该格本身时把文件图标换成复选框。
+const SELECT_CELL_GROUP: &str = "download-task-select-cell";
 /// 超过一天的剩余时间估算不可信，不显示。
 const MAX_ETA_SECS: u64 = 86_400;
 /// 表头按下与抬起的位移超过它视为拖动列（不触发排序）。
@@ -393,6 +395,9 @@ pub(crate) enum MenuEntry {
     Redownload,
     CopyUrl,
     MoveToQueue,
+    /// 以当前选区进入显式多选模式（行首复选框常显、表头换选择条）。
+    Select,
+    SelectAll,
     Separator,
     Delete,
     DeleteWithFiles,
@@ -465,6 +470,31 @@ pub(crate) fn context_menu_items(selection: &[TaskMenuFacts]) -> Vec<MenuEntry> 
     if selection.iter().any(|task| task.is_local) {
         items.push(MenuEntry::ShowDetail);
     }
+    items
+}
+
+/// 右键菜单完整条目：未处于显式多选模式时，在删除组前插入「选择 / 全选」作为
+/// 多选模式的鼠标入口（已在多选模式时表头选择条与复选框已可见，不再重复）。
+pub(crate) fn task_menu_entries(
+    selection: &[TaskMenuFacts],
+    in_multi_select: bool,
+) -> Vec<MenuEntry> {
+    let mut items = context_menu_items(selection);
+    if in_multi_select || items.is_empty() {
+        return items;
+    }
+    let at = items
+        .iter()
+        .position(|entry| *entry == MenuEntry::Separator)
+        .unwrap_or(items.len());
+    items.splice(
+        at..at,
+        [
+            MenuEntry::Separator,
+            MenuEntry::Select,
+            MenuEntry::SelectAll,
+        ],
+    );
     items
 }
 
@@ -1293,6 +1323,27 @@ impl DownloadTableDelegate {
         self.multi_select && !self.selected_tasks.is_empty()
     }
 
+    /// 右键「选择」：保留当前选区（右键已选中该行）并进入显式多选模式。
+    pub(crate) fn enter_multi_select(&mut self) {
+        self.multi_select = !self.selected_tasks.is_empty();
+    }
+
+    /// 行首复选框点击：未处于多选模式时以该行开启多选（不并入普通单击选中的行），
+    /// 已在多选模式时切换该行。
+    pub(crate) fn toggle_multi_select(&mut self, key: RowKey) {
+        if self.is_pending_delete(&key) {
+            return;
+        }
+        if !self.in_multi_select() {
+            self.selected_tasks.clear();
+            self.selected_tasks.insert(key.clone());
+        } else if !self.selected_tasks.remove(&key) {
+            self.selected_tasks.insert(key.clone());
+        }
+        self.multi_select = true;
+        self.selection_anchor = Some(key);
+    }
+
     pub(crate) fn select_task(&mut self, key: RowKey, modifiers: Modifiers) {
         // 正在删除的任务不参与选择。
         if self.is_pending_delete(&key) {
@@ -1593,7 +1644,8 @@ impl DownloadTableDelegate {
     }
 
     /// 固定左列：平时显示系统文件图标（取不到时回退为按类型的图标，元数据加载中为
-    /// Spinner）；行悬停时经 `group_hover` 换成复选框；行已选中或存在任意选中时复选框常显。
+    /// Spinner）。只有悬停该格本身（而非整行）时图标换成复选框，点击即以该行进入多选；
+    /// 横扫列表不会让每行图标闪烁。多选模式下复选框常显。
     /// 隐藏（`invisible`）的元素不绘制、不注册鼠标监听，不会拦截行点击。
     fn render_selection_cell(
         &self,
@@ -1609,6 +1661,7 @@ impl DownloadTableDelegate {
         let key = task.key.clone();
         let selected = self.selected_tasks.contains(&key);
         let checkbox_pinned = self.in_multi_select();
+        let checked = checkbox_pinned && selected;
         let glyph = (!checkbox_pinned).then(|| {
             if task.metadata_pending {
                 return Spinner::new()
@@ -1625,52 +1678,72 @@ impl DownloadTableDelegate {
             };
             task_file_icon(task, size, window, cx)
         });
-        let checkbox = div()
-            .id(("download-task-multi-select", row_ix))
-            .p(px(4.))
-            .cursor_pointer()
-            .child(
-                check_mark(
-                    if selected {
-                        CheckState::Checked
-                    } else {
-                        CheckState::Unchecked
-                    },
-                    cx,
-                )
-                .when(!selected, |mark| {
-                    mark.hover(move |style| style.border_color(hover_border))
-                }),
-            )
-            .on_click(cx.listener(move |table, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                let delegate = table.delegate_mut();
-                if delegate.is_pending_delete(&key) {
-                    return;
-                }
-                if !delegate.selected_tasks.remove(&key) {
-                    delegate.selected_tasks.insert(key.clone());
-                }
-                delegate.selection_anchor = Some(key.clone());
-                cx.notify();
-            }));
-        // 复选框只在多选状态（已有选中项，经 Cmd/Ctrl+点击进入）显示；悬浮不再露出。
-        div()
-            .size_full()
-            .relative()
-            .when_some(glyph, |this, glyph| {
-                this.child(h_flex().absolute().inset_0().justify_center().child(glyph))
-            })
-            .when(checkbox_pinned, |this| {
-                this.child(
+        let check = check_mark(
+            if checked {
+                CheckState::Checked
+            } else {
+                CheckState::Unchecked
+            },
+            cx,
+        );
+        let toggle = cx.listener(move |table, _: &ClickEvent, _, cx| {
+            cx.stop_propagation();
+            table.delegate_mut().toggle_multi_select(key.clone());
+            cx.notify();
+        });
+        if !checkbox_pinned {
+            let tooltip = self.strings.select_task_tooltip.clone();
+            // 不拦截 mouse_down：从图标处仍可拖出文件；点击（未拖动）才进入多选。
+            return div()
+                .id(("download-task-select-cell", row_ix))
+                .group(SELECT_CELL_GROUP)
+                .size_full()
+                .relative()
+                .cursor_pointer()
+                .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                .when_some(glyph, |this, glyph| {
+                    this.child(
+                        h_flex()
+                            .absolute()
+                            .inset_0()
+                            .justify_center()
+                            .group_hover(SELECT_CELL_GROUP, |style| style.invisible())
+                            .child(glyph),
+                    )
+                })
+                .child(
                     h_flex()
                         .absolute()
                         .inset_0()
                         .justify_center()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(checkbox),
+                        .invisible()
+                        .group_hover(SELECT_CELL_GROUP, |style| style.visible())
+                        .child(check.group_hover(SELECT_CELL_GROUP, move |style| {
+                            style.border_color(hover_border)
+                        })),
                 )
-            })
+                .on_click(toggle)
+                .into_any_element();
+        }
+        let checkbox = div()
+            .id(("download-task-multi-select", row_ix))
+            .p(px(4.))
+            .cursor_pointer()
+            .child(check.when(!checked, |mark| {
+                mark.hover(move |style| style.border_color(hover_border))
+            }))
+            .on_click(toggle);
+        div()
+            .size_full()
+            .relative()
+            .child(
+                h_flex()
+                    .absolute()
+                    .inset_0()
+                    .justify_center()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(checkbox),
+            )
             .into_any_element()
     }
 
@@ -2146,12 +2219,12 @@ impl DownloadTableDelegate {
         })
     }
 
-    /// 任务行右键菜单：按 [`context_menu_items`] 的纯函数结果逐项渲染。
+    /// 任务行右键菜单：按 [`task_menu_entries`] 的纯函数结果逐项渲染。
     fn task_context_menu(&self, menu: PopupMenu) -> PopupMenu {
         let Some((selected, facts)) = self.selected_menu_facts() else {
             return menu;
         };
-        context_menu_items(&facts)
+        task_menu_entries(&facts, self.in_multi_select())
             .into_iter()
             .fold(menu, |menu, entry| {
                 self.apply_menu_entry(menu, entry, &selected)
@@ -2250,6 +2323,16 @@ impl DownloadTableDelegate {
                 self.strings.detail.clone(),
                 FluxIcon::PanelRight,
                 Box::new(crate::actions::ShowSelectedDetail),
+            ),
+            MenuEntry::Select => menu.menu_with_icon(
+                self.strings.select_tasks.clone(),
+                FluxIcon::CircleCheck,
+                Box::new(crate::actions::EnterMultiSelect),
+            ),
+            MenuEntry::SelectAll => menu.menu_with_icon(
+                self.strings.select_all_tasks.clone(),
+                FluxIcon::CheckboxCheck,
+                Box::new(crate::actions::SelectAllTasks),
             ),
         }
     }
@@ -3526,6 +3609,36 @@ mod tests {
     }
 
     #[test]
+    fn checkbox_starts_multi_select_from_its_row_then_toggles() -> Result<(), I18nError> {
+        let mut delegate = delegate(&[2, 2, 2])?;
+        delegate.refresh_view();
+        // 普通单击选中 t0 后点 t1 的复选框：以 t1 开启多选，不并入单击选中的行。
+        delegate.select_task(RowKey::Local("t0".into()), Modifiers::default());
+        delegate.toggle_multi_select(RowKey::Local("t1".into()));
+        assert!(delegate.in_multi_select());
+        assert_eq!(
+            delegate.selected_tasks,
+            HashSet::from([RowKey::Local("t1".into())])
+        );
+        delegate.toggle_multi_select(RowKey::Local("t2".into()));
+        delegate.toggle_multi_select(RowKey::Local("t1".into()));
+        assert_eq!(
+            delegate.selected_tasks,
+            HashSet::from([RowKey::Local("t2".into())])
+        );
+        // 取消最后一项即退出多选。
+        delegate.toggle_multi_select(RowKey::Local("t2".into()));
+        assert!(!delegate.in_multi_select());
+
+        // 右键「选择」把右键选区（含 shift 范围选）转为多选模式。
+        delegate.select_task_for_context_menu(RowKey::Local("t0".into()));
+        assert!(!delegate.in_multi_select());
+        delegate.enter_multi_select();
+        assert!(delegate.in_multi_select());
+        Ok(())
+    }
+
+    #[test]
     fn pending_delete_rows_leave_the_selection_and_cannot_be_selected() -> Result<(), I18nError> {
         let mut delegate = delegate(&[2, 2, 2, 2])?;
         delegate.refresh_view();
@@ -4490,7 +4603,9 @@ mod tests {
 
 #[cfg(test)]
 mod context_menu_tests {
-    use super::{MenuEntry, PLUGIN_ERROR_PREFIX, TaskMenuFacts, context_menu_items};
+    use super::{
+        MenuEntry, PLUGIN_ERROR_PREFIX, TaskMenuFacts, context_menu_items, task_menu_entries,
+    };
     use crate::model::TaskState;
 
     fn task(is_local: bool, state: TaskState) -> TaskMenuFacts {
@@ -4636,6 +4751,21 @@ mod context_menu_tests {
 
         let remote = task(false, TaskState::Completed);
         assert!(!context_menu_items(&[remote]).contains(&MenuEntry::Redownload));
+    }
+
+    #[test]
+    fn select_entries_only_outside_multi_select_and_before_delete_group() {
+        let selection = [task(true, TaskState::Completed)];
+        let items = task_menu_entries(&selection, false);
+        let select = items.iter().position(|entry| *entry == MenuEntry::Select);
+        let delete = items.iter().position(|entry| *entry == MenuEntry::Delete);
+        assert!(matches!((select, delete), (Some(s), Some(d)) if s < d));
+        assert!(items.contains(&MenuEntry::SelectAll));
+
+        let in_mode = task_menu_entries(&selection, true);
+        assert!(!in_mode.contains(&MenuEntry::Select));
+        assert!(!in_mode.contains(&MenuEntry::SelectAll));
+        assert!(task_menu_entries(&[], false).is_empty());
     }
 }
 

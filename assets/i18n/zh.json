@@ -150,6 +150,8 @@
   "tabPaused": "已暂停",
   "tabError": "失败",
   "selectAll": "全选",
+  "selectTasks": "选择",
+  "selectTaskTooltip": "选择（Ctrl/⌘+点击可多选）",
   "deselectAll": "取消全选",
   "selectedCount": "已选 {n} 项",
   "deleteTask": "删除任务",

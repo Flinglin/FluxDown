@@ -90,6 +90,12 @@ pub(crate) struct DownloadStrings {
     /// 复制下载地址后的成功提示。
     pub(crate) url_copied: SharedString,
     pub(crate) move_to_queue: SharedString,
+    /// 右键「选择」：以当前选区进入多选模式。
+    pub(crate) select_tasks: SharedString,
+    /// 右键「全选」。
+    pub(crate) select_all_tasks: SharedString,
+    /// 行首图标格悬停复选框的提示。
+    pub(crate) select_task_tooltip: SharedString,
     /// 右键「详情」：在停靠面板中查看。
     pub(crate) detail: SharedString,
     /// 详情面板头部「在独立窗口打开」。
@@ -215,6 +221,9 @@ impl DownloadStrings {
             copy_url: shared(translator.text("copyUrl")),
             url_copied: shared(translator.text("urlCopied")),
             move_to_queue: shared(translator.text("moveToQueueAction")),
+            select_tasks: shared(translator.text("selectTasks")),
+            select_all_tasks: shared(translator.text("selectAll")),
+            select_task_tooltip: shared(translator.text("selectTaskTooltip")),
             detail: shared(translator.text("detail")),
             open_in_window: shared(translator.text("menuOpenInWindow")),
             group_pause_all: shared(translator.text("groupPauseAll")),

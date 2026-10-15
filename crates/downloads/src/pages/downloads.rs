@@ -10,9 +10,9 @@ use crate::{
     UserStartIntent,
     actions::{
         ClearFinished, ClearSelection, CopySelectedUrl, CycleDensity, CycleGroupBy, CycleSort,
-        DeleteSelected, DeleteSelectedWithFiles, FocusSearch, KEY_CONTEXT, NewDownload,
-        OpenQueueManager, OpenSelected, OpenSelectedInWindow, OpenTorrentFile, PauseAll,
-        PauseSelected, RedownloadSelected, RenameSelected, ResumeAll, ResumeSelected,
+        DeleteSelected, DeleteSelectedWithFiles, EnterMultiSelect, FocusSearch, KEY_CONTEXT,
+        NewDownload, OpenQueueManager, OpenSelected, OpenSelectedInWindow, OpenTorrentFile,
+        PauseAll, PauseSelected, RedownloadSelected, RenameSelected, ResumeAll, ResumeSelected,
         RevealSelected, SelectAllTasks, ShowSelectedDetail, ToggleBoostSelected, ToggleDetailPanel,
         TogglePauseSelected,
     },
@@ -1654,6 +1654,18 @@ impl DownloadView {
         self.run_page_command(PageCommand::SelectAll, window, cx);
     }
 
+    fn on_enter_multi_select(
+        &mut self,
+        _: &EnterMultiSelect,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.table_state.update(cx, |table, cx| {
+            table.delegate_mut().enter_multi_select();
+            cx.notify();
+        });
+    }
+
     fn on_clear_selection(&mut self, _: &ClearSelection, _: &mut Window, cx: &mut Context<Self>) {
         self.clear_table_selection(cx);
     }
@@ -2265,6 +2277,7 @@ impl Render for DownloadView {
             .min_h_0()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_select_all))
+            .on_action(cx.listener(Self::on_enter_multi_select))
             .on_action(cx.listener(Self::on_clear_selection))
             .on_action(cx.listener(Self::on_pause_selected))
             .on_action(cx.listener(Self::on_resume_selected))

@@ -150,6 +150,8 @@
   "tabPaused": "Paused",
   "tabError": "Failed",
   "selectAll": "Select All",
+  "selectTasks": "Select",
+  "selectTaskTooltip": "Select (Ctrl/⌘+click to multi-select)",
   "deselectAll": "Deselect All",
   "selectedCount": "{n} selected",
   "deleteTask": "Delete Task",

@@ -14,6 +14,8 @@ actions!(
         DeleteSelected,
         DeleteSelectedWithFiles,
         SelectAllTasks,
+        /// 以当前选区进入显式多选模式（右键「选择」）。
+        EnterMultiSelect,
         ClearSelection,
         PauseAll,
         ResumeAll,
