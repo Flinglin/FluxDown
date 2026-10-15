@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use fluxdown_protocol::{CreateTaskRequest, MAX_TASK_SEGMENTS};
+use fluxdown_protocol::{CreateTaskItem, CreateTaskRequest, MAX_TASK_SEGMENTS};
 
 /// 一条解析出的下载条目（aria2 风格：URL + 可选 `out=` / `checksum=` 选项行）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -445,60 +445,99 @@ pub(crate) struct DraftOptions {
     pub(crate) save_site_auth: bool,
 }
 
-/// 每条条目一个 [`CreateTaskRequest`]，共享字段来自 [`DraftOptions`]。
+/// 一次提交的建任务请求：整批共享的 `common`（`url` / `fileName` / `checksum` 为空）+
+/// 逐条链接。共享选项只存一份，不随条目复制。
+#[derive(Clone, Debug)]
+pub(crate) struct BuiltRequests {
+    pub(crate) common: CreateTaskRequest,
+    pub(crate) items: Vec<CreateTaskItem>,
+}
+
+impl BuiltRequests {
+    /// 条目还原成完整的单条请求（单条预解析 / 外部捕获确认需要完整请求）。
+    pub(crate) fn request_for(&self, item: &CreateTaskItem) -> CreateTaskRequest {
+        compose_request(&self.common, item.clone())
+    }
+
+    /// 把一条完整请求拆回「共享选项 + 单条」（预解析后沿普通任务路径提交）。
+    pub(crate) fn from_single(mut request: CreateTaskRequest) -> Self {
+        let item = CreateTaskItem {
+            url: std::mem::take(&mut request.url),
+            file_name: std::mem::take(&mut request.file_name),
+            checksum: std::mem::take(&mut request.checksum),
+        };
+        Self {
+            common: request,
+            items: vec![item],
+        }
+    }
+}
+
+/// 共享选项 + 一条链接 → 完整请求。
+pub(crate) fn compose_request(
+    common: &CreateTaskRequest,
+    item: CreateTaskItem,
+) -> CreateTaskRequest {
+    let mut request = common.clone();
+    request.url = item.url;
+    request.file_name = item.file_name;
+    request.checksum = item.checksum;
+    request
+}
+
+/// 每条条目一个 [`CreateTaskItem`]，共享字段来自 [`DraftOptions`]。
 ///
 /// 单条时重命名优先于 `out=`、高级面板校验值优先于
 /// `checksum=`、附带 HTTP 认证；多条时仅使用条目自带的文件名 / 校验值。
-pub(crate) fn build_requests(
-    entries: &[UrlEntry],
-    options: &DraftOptions,
-) -> Vec<CreateTaskRequest> {
+pub(crate) fn build_requests(entries: &[UrlEntry], options: &DraftOptions) -> BuiltRequests {
     let single = entries.len() == 1;
-    entries
+    let items = entries
         .iter()
-        .map(|entry| {
-            let file_name = if single && !options.rename.is_empty() {
+        .map(|entry| CreateTaskItem {
+            url: entry.url.clone(),
+            file_name: if single && !options.rename.is_empty() {
                 options.rename.clone()
             } else {
                 entry.file_name.clone()
-            };
-            let checksum = if single && !options.checksum.is_empty() {
+            },
+            checksum: if single && !options.checksum.is_empty() {
                 options.checksum.clone()
             } else {
                 entry.checksum.clone()
-            };
-            CreateTaskRequest {
-                url: entry.url.clone(),
-                file_name,
-                save_dir: options.save_dir.clone(),
-                segments: options.segments,
-                cookies: options.cookies.clone(),
-                referrer: String::new(),
-                proxy_url: options.proxy_url.clone(),
-                user_agent: options.user_agent.clone(),
-                queue_id: options.queue_id.clone(),
-                checksum,
-                ignore_tls_errors: options.ignore_tls_errors,
-                headers: (!options.headers.is_empty()).then(|| options.headers.clone()),
-                torrent_b64: None,
-                method: None,
-                body: None,
-                audio_url: None,
-                start_paused: options.start_paused,
-                http_user: if single {
-                    options.http_user.clone()
-                } else {
-                    String::new()
-                },
-                http_password: if single {
-                    options.http_password.clone()
-                } else {
-                    String::new()
-                },
-                save_site_auth: single && options.save_site_auth,
-            }
+            },
         })
-        .collect()
+        .collect();
+    let common = CreateTaskRequest {
+        url: String::new(),
+        file_name: String::new(),
+        save_dir: options.save_dir.clone(),
+        segments: options.segments,
+        cookies: options.cookies.clone(),
+        referrer: String::new(),
+        proxy_url: options.proxy_url.clone(),
+        user_agent: options.user_agent.clone(),
+        queue_id: options.queue_id.clone(),
+        checksum: String::new(),
+        ignore_tls_errors: options.ignore_tls_errors,
+        headers: (!options.headers.is_empty()).then(|| options.headers.clone()),
+        torrent_b64: None,
+        method: None,
+        body: None,
+        audio_url: None,
+        start_paused: options.start_paused,
+        http_user: if single {
+            options.http_user.clone()
+        } else {
+            String::new()
+        },
+        http_password: if single {
+            options.http_password.clone()
+        } else {
+            String::new()
+        },
+        save_site_auth: single && options.save_site_auth,
+    };
+    BuiltRequests { common, items }
 }
 
 #[cfg(test)]
@@ -746,25 +785,33 @@ mod tests {
             checksum: "md5=ff".to_owned(),
         };
         let single = build_requests(std::slice::from_ref(&entry), &options);
-        assert_eq!(single.len(), 1);
-        assert_eq!(single[0].file_name, "renamed.bin");
-        assert_eq!(single[0].checksum, "sha-256=deadbeef");
-        assert_eq!(single[0].http_user, "u");
-        assert!(single[0].save_site_auth);
-        assert!(single[0].start_paused);
-        assert_eq!(single[0].queue_id, "later");
+        assert_eq!(single.items.len(), 1);
+        assert_eq!(single.items[0].file_name, "renamed.bin");
+        assert_eq!(single.items[0].checksum, "sha-256=deadbeef");
+        assert_eq!(single.common.http_user, "u");
+        assert!(single.common.save_site_auth);
+        assert!(single.common.start_paused);
+        assert_eq!(single.common.queue_id, "later");
         assert_eq!(
-            single[0].headers.as_ref().and_then(|h| h.get("X-Test")),
+            single.common.headers.as_ref().and_then(|h| h.get("X-Test")),
             Some(&"1".to_owned())
         );
+        // 共享选项里不带逐条字段，条目还原后才是完整请求。
+        assert!(single.common.url.is_empty());
+        assert!(single.common.file_name.is_empty());
+        assert!(single.common.checksum.is_empty());
+        let full = single.request_for(&single.items[0]);
+        assert_eq!(full.url, "https://a.example/x");
+        assert_eq!(full.file_name, "renamed.bin");
+        assert_eq!(full.checksum, "sha-256=deadbeef");
 
         let batch = build_requests(&[entry.clone(), entry], &options);
-        assert_eq!(batch.len(), 2);
-        assert_eq!(batch[0].file_name, "out.bin");
-        assert_eq!(batch[0].checksum, "md5=ff");
-        assert_eq!(batch[0].http_user, "");
-        assert!(!batch[0].save_site_auth);
-        assert_eq!(batch[0].segments, 8);
+        assert_eq!(batch.items.len(), 2);
+        assert_eq!(batch.items[0].file_name, "out.bin");
+        assert_eq!(batch.items[0].checksum, "md5=ff");
+        assert_eq!(batch.common.http_user, "");
+        assert!(!batch.common.save_site_auth);
+        assert_eq!(batch.common.segments, 8);
     }
 
     #[test]
@@ -776,6 +823,6 @@ mod tests {
             }],
             &DraftOptions::default(),
         );
-        assert!(requests[0].headers.is_none());
+        assert!(requests.common.headers.is_none());
     }
 }

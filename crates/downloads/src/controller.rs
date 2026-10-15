@@ -85,6 +85,9 @@ pub enum DownloadsCommand {
     /// 分页读取 daemon 持久活动历史。
     TaskActivity(TaskActivityQuery),
     Create(Box<fluxdown_protocol::DaemonCreateTaskParams>),
+    /// 批量建任务（`daemon.task.createMany`）：整块一个事务、按 `batch_id` 幂等，
+    /// 结果不确定时可原样重发。
+    CreateMany(Box<fluxdown_protocol::DaemonCreateTasksParams>),
     Pause {
         task_id: String,
     },
@@ -247,6 +250,8 @@ pub enum DownloadsResult {
     Preview(fluxdown_protocol::ResolvePreviewResponse),
     /// `FileIcon` 的 PNG 字节。
     FileIcon(Vec<u8>),
+    /// `CreateMany` 的逐条结果（与请求条目同序）。
+    CreateMany(fluxdown_protocol::DaemonCreateTasksResult),
 }
 
 impl DownloadsResult {
@@ -646,6 +651,16 @@ impl DownloadsController {
                 self.upsert(task.clone());
                 true
             }
+            DaemonEvent::TasksChanged(tasks) => {
+                for task in tasks {
+                    if !matches!(task.status, 1 | 5) {
+                        self.live_speeds.remove(&task.task_id);
+                        self.stop_runtime(&task.task_id);
+                    }
+                }
+                self.upsert_many(tasks);
+                !tasks.is_empty()
+            }
             DaemonEvent::TaskRuntimeChanged(runtime) => {
                 let task_id = &runtime.task_id;
                 if self.task_runtime.get(task_id).is_some_and(|previous| {
@@ -912,6 +927,26 @@ impl DownloadsController {
         }
     }
 
+    /// 按序批量 upsert（语义等同逐条 [`Self::upsert`]），新增行只登记一次结构变化。
+    fn upsert_many(&mut self, tasks: &[TaskDto]) {
+        let mut appended = false;
+        self.local.reserve(tasks.len());
+        for task in tasks {
+            let view = self.view_of(task);
+            if let Some(ix) = self.store.find_local(&task.task_id) {
+                self.local[ix].clone_from(task);
+                self.store.set_local(ix, view);
+            } else {
+                self.local.push(task.clone());
+                self.store.append_local(view);
+                appended = true;
+            }
+        }
+        if appended {
+            self.store.commit_appends();
+        }
+    }
+
     fn rebuild_all(&mut self) {
         let rows = self.local.iter().map(|task| self.view_of(task)).collect();
         self.store.replace_local(rows);
@@ -1062,6 +1097,66 @@ mod tests {
         assert_eq!(controller.store.find_local("a"), Some(0));
         assert!(controller.store.local()[0].runtime.is_none());
         assert!(controller.task_runtime("a").is_none());
+    }
+
+    #[test]
+    fn tasks_changed_batch_equals_sequential_task_changed_with_one_structure_bump() {
+        let mut batched = DownloadsController::new(Arc::new(NullPort));
+        let mut sequential = DownloadsController::new(Arc::new(NullPort));
+        let mut running = task("a");
+        running.status = 1;
+        for controller in [&mut batched, &mut sequential] {
+            controller.apply_daemon_event(&DaemonEvent::TaskChanged(running.clone()));
+            controller.apply_daemon_event(&DaemonEvent::TaskRuntimeChanged(
+                fluxdown_protocol::TaskRuntimeDto {
+                    task_id: "a".to_owned(),
+                    active_transfers: Some(2),
+                    ..Default::default()
+                },
+            ));
+        }
+        // 已有任务进入终态 + 两个新任务 + 同批里对新任务的再次更新。
+        let mut finished = running.clone();
+        finished.status = 3;
+        let mut updated = task("c");
+        updated.downloaded_bytes = 7;
+        let events = vec![finished, task("b"), task("c"), updated];
+
+        let structure = batched.store.structure_generation();
+        assert!(batched.apply_daemon_event(&DaemonEvent::TasksChanged(events.clone())));
+        assert_eq!(
+            batched.store.structure_generation(),
+            structure.wrapping_add(1)
+        );
+        for event in events {
+            sequential.apply_daemon_event(&DaemonEvent::TaskChanged(event));
+        }
+        assert_eq!(batched.local, sequential.local);
+        assert_eq!(
+            batched.store.find_local("c"),
+            sequential.store.find_local("c")
+        );
+        let rows = |controller: &DownloadsController| {
+            controller
+                .store
+                .local()
+                .iter()
+                .map(|row| {
+                    (
+                        row.key.clone(),
+                        row.progress.to_bits(),
+                        row.active_transfers(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rows(&batched), rows(&sequential));
+        // 终态任务的运行时在批内同样被收口。
+        assert_eq!(
+            batched.task_runtime("a").expect("runtime").active_transfers,
+            Some(0)
+        );
+        assert!(!batched.apply_daemon_event(&DaemonEvent::TasksChanged(Vec::new())));
     }
 
     #[test]

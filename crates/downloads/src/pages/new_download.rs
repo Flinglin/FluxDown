@@ -23,11 +23,11 @@ use crate::{
         devices::{DeviceEntry, DeviceKind, DispatchTarget, other_devices},
         dispatch::{RemoteDirCheck, check_remote_save_dir},
         new_download::{
-            DEFAULT_HASH_ALGORITHM, DraftOptions, HASH_ALGORITHMS, MAX_THREADS, ProxyChoice,
-            THREAD_PRESETS, ThreadChoice, UA_PRESET_CUSTOM, UA_PRESET_DEFAULT, UrlEntry,
-            append_entries, build_requests, capture_entry, checksum_spec, custom_segments,
-            detect_ua_preset, manual_proxy_url, merge_imported, parse_entries, ua_preset_keys,
-            ua_preset_value,
+            BuiltRequests, DEFAULT_HASH_ALGORITHM, DraftOptions, HASH_ALGORITHMS, MAX_THREADS,
+            ProxyChoice, THREAD_PRESETS, ThreadChoice, UA_PRESET_CUSTOM, UA_PRESET_DEFAULT,
+            UrlEntry, append_entries, build_requests, capture_entry, checksum_spec,
+            compose_request, custom_segments, detect_ua_preset, manual_proxy_url, merge_imported,
+            parse_entries, ua_preset_keys, ua_preset_value,
         },
     },
     strings::NewDownloadStrings,
@@ -890,38 +890,48 @@ impl NewDownloadView {
             return;
         }
         let options = self.draft_options(later, queue_override, cx);
-        let requests = build_requests(&self.entries, &options);
-        if let [request] = requests.as_slice()
-            && crate::model::preview::previewable(request)
-        {
-            self.start_preview(request.clone(), window, cx);
-            return;
+        let built = build_requests(&self.entries, &options);
+        if let [item] = built.items.as_slice() {
+            let request = built.request_for(item);
+            if crate::model::preview::previewable(&request) {
+                self.start_preview(request, window, cx);
+                return;
+            }
         }
-        self.submit_requests(requests, window, cx);
+        self.submit_requests(built, window, cx);
     }
 
     fn submit_requests(
         &mut self,
-        requests: Vec<fluxdown_protocol::CreateTaskRequest>,
+        built: BuiltRequests,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut tasks = Vec::new();
+        let BuiltRequests { common, items } = built;
+        let mut tasks = Vec::with_capacity(items.len());
         let mut captures = Vec::new();
-        for request in requests {
+        for item in items {
             match self
                 .captures
                 .iter()
-                .position(|capture| capture.url == request.url)
+                .position(|capture| capture.url == item.url)
             {
                 Some(index) => captures.push(CapturedTask {
                     transaction_id: self.captures.remove(index).transaction_id,
-                    request,
+                    request: compose_request(&common, item),
                 }),
-                None => tasks.push(request),
+                None => tasks.push(item),
             }
         }
-        (self.on_submit)(NewDownloadSubmission::Tasks { tasks, captures }, window, cx);
+        (self.on_submit)(
+            NewDownloadSubmission::Tasks {
+                common: Box::new(common),
+                items: tasks,
+                captures,
+            },
+            window,
+            cx,
+        );
         window.remove_window();
     }
 

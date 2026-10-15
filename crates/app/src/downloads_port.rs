@@ -143,7 +143,9 @@ impl SubmissionGate {
     }
 }
 
-fn is_submission(command: &DownloadsCommand) -> bool {
+/// 失败后结果不确定的提交：服务端可能已落库，重发会造成重复，所以结果不确定时暂停整条导入。
+/// `CreateMany` 按 `batchId` 幂等，调用方可原样重发，不属于此类。
+fn is_non_idempotent_submission(command: &DownloadsCommand) -> bool {
     matches!(
         command,
         DownloadsCommand::Create(_)
@@ -167,7 +169,7 @@ fn queue_fields(fields: &fluxdown_ui_downloads::QueueFields) -> Value {
 
 impl DownloadsPort for AgentDownloadsPort {
     fn execute(&self, command: DownloadsCommand) -> PortFuture<DownloadsResult> {
-        let submission = is_submission(&command);
+        let submission = is_non_idempotent_submission(&command);
         let source = match &command {
             DownloadsCommand::Create(params) => Some(params.request.url.clone()),
             DownloadsCommand::CreateGroup { context, .. } => Some(context.url.clone()),
@@ -253,6 +255,12 @@ impl AgentDownloadsPort {
                         .decode(icon.png)
                         .map_err(|_| internal_error())?;
                     return Ok(DownloadsResult::FileIcon(png));
+                }
+                DownloadsCommand::CreateMany(params) => {
+                    let result = client
+                        .call(method::DAEMON_TASK_CREATE_MANY, Some(params))
+                        .await?;
+                    return Ok(DownloadsResult::CreateMany(result));
                 }
                 DownloadsCommand::Create(params) => {
                     (method::DAEMON_TASK_CREATE, serialize(params)?)

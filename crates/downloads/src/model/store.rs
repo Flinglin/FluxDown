@@ -146,14 +146,25 @@ impl TaskStore {
     }
 
     pub(crate) fn push_local(&self, row: DownloadTaskView) -> usize {
+        let ix = self.append_local(row);
+        self.bump_structure();
+        ix
+    }
+
+    /// 追加一行但不记结构变化：批量追加后由调用方 [`Self::commit_appends`] 一次登记。
+    pub(crate) fn append_local(&self, row: DownloadTaskView) -> usize {
         let mut rows = self.local.borrow_mut();
         let ix = rows.len();
         self.index
             .borrow_mut()
             .insert(row.key.task_id().to_owned(), ix);
         rows.push(row);
-        self.bump_structure();
         ix
+    }
+
+    /// 登记一批 [`Self::append_local`] 的结构变化（整批一次）。
+    pub(crate) fn commit_appends(&self) {
+        self.bump_structure();
     }
 
     /// Preserve authoritative snapshot order without replacing unchanged views.
@@ -177,7 +188,7 @@ impl TaskStore {
     pub(crate) fn swap_remove_local(&self, ix: usize) {
         let mut rows = self.local.borrow_mut();
         if ix >= rows.len() {
-            return;
+            return false;
         }
         let removed = rows.swap_remove(ix);
         let mut index = self.index.borrow_mut();
@@ -185,6 +196,11 @@ impl TaskStore {
         if let Some(moved) = rows.get(ix) {
             index.insert(moved.key.task_id().to_owned(), ix);
         }
+        true
+    }
+
+    /// 登记一批 [`Self::swap_remove_local_quiet`] 的结构变化（整批一次）。
+    pub(crate) fn commit_removals(&self) {
         self.bump_structure();
     }
 }

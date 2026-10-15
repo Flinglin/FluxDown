@@ -39,6 +39,13 @@ pub(crate) struct DownloadStrings {
     pub(crate) too_many_windows_hint: SharedString,
     pub(crate) confirm: SharedString,
     pub(crate) cancel: SharedString,
+    import_progress: SharedString,
+    import_retrying: SharedString,
+    pub(crate) import_cancelling: SharedString,
+    delete_progress: SharedString,
+    delete_cancelled: SharedString,
+    delete_partial: SharedString,
+    deleted_count: SharedString,
     pub(crate) disconnected: SharedString,
     pub(crate) action_failed: SharedString,
     pub(crate) metadata_loading: SharedString,
@@ -146,6 +153,13 @@ impl DownloadStrings {
             empty_title: shared(translator.text("emptyTitle")),
             empty_subtitle: shared(translator.text("emptySubtitle")),
             cancel: shared(translator.text("cancel")),
+            import_progress: shared(translator.text("importProgress")),
+            import_retrying: shared(translator.text("importRetrying")),
+            import_cancelling: shared(translator.text("importCancelling")),
+            delete_progress: shared(translator.text("deleteProgress")),
+            delete_cancelled: shared(translator.text("deleteCancelled")),
+            delete_partial: shared(translator.text("deletePartial")),
+            deleted_count: shared(translator.text("mobileToastDeletedN")),
             disconnected: shared(translator.text("localServiceDisconnected")),
             action_failed: shared(translator.text("localServiceActionFailed")),
             metadata_loading: shared(translator.text("statusPreparing")),
@@ -456,6 +470,8 @@ pub(crate) struct NewDownloadStrings {
     dispatch_partial: SharedString,
     pub(crate) dispatch_failed: SharedString,
     pub(crate) created: SharedString,
+    import_cancelled: SharedString,
+    import_partial: SharedString,
 }
 
 impl NewDownloadStrings {
@@ -551,6 +567,8 @@ impl NewDownloadStrings {
             dispatch_partial: shared(translator.text("downloadToPartial")),
             dispatch_failed: shared(translator.text("dispatchFailed")),
             created: shared(translator.text("taskCreatedToast")),
+            import_cancelled: shared(translator.text("importCancelled")),
+            import_partial: shared(translator.text("importPartial")),
         }
     }
 
@@ -631,6 +649,26 @@ impl NewDownloadStrings {
             .replace("{failed}", &failed.to_string())
             .replace("{device}", device)
     }
+
+    /// 已取消导入：`已取消导入：已添加 {added} / 共 {total}`。
+    pub(crate) fn format_import_cancelled(&self, added: usize, total: usize) -> String {
+        self.import_cancelled
+            .replace("{added}", &group_digits(added))
+            .replace("{total}", &group_digits(total))
+    }
+
+    /// 部分添加：`已添加 {added} / 共 {total}；{failed} 个失败`。
+    pub(crate) fn format_import_partial(
+        &self,
+        added: usize,
+        total: usize,
+        failed: usize,
+    ) -> String {
+        self.import_partial
+            .replace("{added}", &group_digits(added))
+            .replace("{total}", &group_digits(total))
+            .replace("{failed}", &group_digits(failed))
+    }
 }
 
 /// agent 端口不透传服务端 message：优先按 `reason` 给出可操作文案，缺失再按码回退。
@@ -669,6 +707,19 @@ pub(crate) fn error_text(
     translator.text(key).to_owned()
 }
 
+/// 千分位分组（`1234567` → `1,234,567`），进度与计数提示共用。
+fn group_digits(value: usize) -> String {
+    let digits = value.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+
 fn shared(value: &str) -> SharedString {
     SharedString::from(value.to_owned())
 }
@@ -698,5 +749,20 @@ mod tests {
             "2026-03-19 00:00:00"
         );
         assert_eq!(DownloadStrings::format_datetime(i64::MAX).as_ref(), "—");
+    }
+
+    #[test]
+    fn digit_grouping_uses_thousands_separators() {
+        use super::group_digits;
+        for (value, expected) in [
+            (0, "0"),
+            (999, "999"),
+            (1_000, "1,000"),
+            (1_234, "1,234"),
+            (10_000, "10,000"),
+            (1_234_567, "1,234,567"),
+        ] {
+            assert_eq!(group_digits(value), expected);
+        }
     }
 }

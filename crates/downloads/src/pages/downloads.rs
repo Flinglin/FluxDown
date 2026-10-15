@@ -34,19 +34,26 @@ use crate::{
     pages::new_download::{NewDownloadContext, build_new_download_context},
     pages::task_detail::TaskDetailView,
     strings::{DownloadStrings, error_text},
-    submission::{NewDownloadSubmission, SubmitNotice, run_submission},
+    submission::{
+        CancelToken, NewDownloadSubmission, SubmissionHooks, SubmissionProgress, SubmitNotice,
+        run_submission,
+    },
 };
 use fluxdown_ui_components::{ControlExt as _, FluxIcon, SidebarChange, SidebarState};
 use fluxdown_ui_i18n::Translator;
 use gpui::{
-    App, AppContext as _, ClipboardItem, Context, Entity, ExternalPaths, FocusHandle, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement, PathPromptOptions, Pixels, Render,
-    SharedString, Styled, Window, div, prelude::FluentBuilder as _, px,
+    AnyWindowHandle, App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity,
+    ExternalPaths, FocusHandle, FontWeight, InteractiveElement as _, IntoElement, ParentElement,
+    PathPromptOptions, Pixels, Render, SharedString, Styled, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    Icon, ResizableState, WindowExt as _, h_flex, h_resizable,
+    Disableable as _, Icon, ResizableState, WindowExt as _,
+    button::{Button, ButtonVariants as _},
+    h_flex, h_resizable,
     input::{Input, InputEvent, InputState},
     notification::Notification,
+    progress::Progress,
     resizable_panel,
     table::{TableEvent, TableState},
     v_flex, v_resizable,
@@ -348,8 +355,43 @@ impl DownloadView {
         let starts_immediately = submission.starts_immediately();
         let port = Arc::clone(&self.port);
         let on_user_started = self.host.on_user_started.clone();
+        let timer = cx.background_executor().clone();
+        let cancel = CancelToken::default();
+        // 超过一块的导入才显示进度条（小批量保持原来的静默路径）。
+        let job = submission.exceeds_one_chunk().then(|| {
+            let id = self.next_import_id;
+            self.next_import_id += 1;
+            self.imports.push(ImportJob {
+                id,
+                progress: SubmissionProgress {
+                    total: submission.task_count(),
+                    ..SubmissionProgress::default()
+                },
+                cancel: cancel.clone(),
+                cancelling: false,
+            });
+            cx.notify();
+            id
+        });
         cx.spawn(async move |this, cx| {
-            let report = run_submission(submission, move |command| port.execute(command)).await;
+            let progress_view = this.clone();
+            let mut progress_cx = cx.clone();
+            let hooks = SubmissionHooks::new(move |delay| timer.timer(delay))
+                .with_cancel(cancel)
+                .with_progress(move |progress: &SubmissionProgress| {
+                    let Some(id) = job else {
+                        return;
+                    };
+                    let progress = *progress;
+                    // 每块一次更新；页面已释放则不再有可更新的界面。
+                    let Ok(()) = progress_view.update(&mut progress_cx, |this, cx| {
+                        this.update_import(id, progress, cx);
+                    }) else {
+                        return;
+                    };
+                });
+            let report =
+                run_submission(submission, move |command| port.execute(command), hooks).await;
             if starts_immediately
                 && let ([task_id], Some(hook)) = (report.created_task_ids(), on_user_started)
             {
@@ -360,6 +402,9 @@ impl DownloadView {
                 message: String::new(),
             };
             this.update(cx, |this, cx| {
+                if let Some(id) = job {
+                    this.imports.retain(|import| import.id != id);
+                }
                 let notice = report.notice(this.translator.read(cx));
                 this.last_error = report
                     .failed()
@@ -1707,6 +1752,8 @@ impl DownloadView {
             .last_error
             .clone()
             .map(|error| self.render_error_strip(error, cx));
+        let import_strips = self.render_import_strips(cx);
+        let delete_strips = self.render_delete_strips(cx);
         // 选择条覆盖在表格容器顶部的表头上，不遮挡任务行。
         let table = self
             .render_table(cx)
@@ -1716,6 +1763,8 @@ impl DownloadView {
             .min_w_0()
             .min_h_0()
             .children(error_strip)
+            .children(import_strips)
+            .children(delete_strips)
             .child(v_flex().flex_1().min_w_0().min_h_0().child(table));
 
         let body: gpui::AnyElement = if prefs.detail_open {

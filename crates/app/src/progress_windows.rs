@@ -354,6 +354,11 @@ fn on_event(event: &ServiceEvent, cx: &mut App) {
         AgentEvent::Daemon(DaemonEvent::TaskChanged(task)) => {
             record_status(&task.task_id, task.status, cx)
         }
+        AgentEvent::Daemon(DaemonEvent::TasksChanged(tasks)) => {
+            for task in tasks {
+                record_status(&task.task_id, task.status, cx);
+            }
+        }
         AgentEvent::Daemon(DaemonEvent::Engine(WsServerMsg::TaskProgress {
             task_id,
             status,
