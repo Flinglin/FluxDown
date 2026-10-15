@@ -32,6 +32,8 @@ object HostMethod {
     const val daemonTaskResumeMany = "daemon.task.resumeMany"
     /** 批量删除（`{taskIds, deleteFiles}`）：语义同批量暂停。 */
     const val daemonTaskDeleteMany = "daemon.task.deleteMany"
+    /** 批量建任务（`DaemonCreateTasksParams`）：整块一个事务、一次 `tasksChanged` 事件，按 `batchId` 幂等。 */
+    const val daemonTaskCreateMany = "daemon.task.createMany"
     const val daemonQueueList = "daemon.queue.list"
     const val daemonQueueCreate = "daemon.queue.create"
     const val daemonQueueUpdate = "daemon.queue.update"

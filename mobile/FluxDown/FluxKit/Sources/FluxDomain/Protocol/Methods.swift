@@ -32,6 +32,8 @@ public enum HostMethod {
     public static let daemonTaskResumeMany = "daemon.task.resumeMany"
     /// 批量删除（`{taskIds, deleteFiles}`）：语义同批量暂停。
     public static let daemonTaskDeleteMany = "daemon.task.deleteMany"
+    /// 批量建任务（`DaemonCreateTasksParams`）：整块一个事务、一次 `tasksChanged` 事件，按 `batchId` 幂等。
+    public static let daemonTaskCreateMany = "daemon.task.createMany"
     public static let daemonQueueList = "daemon.queue.list"
     public static let daemonQueueCreate = "daemon.queue.create"
     public static let daemonQueueUpdate = "daemon.queue.update"
