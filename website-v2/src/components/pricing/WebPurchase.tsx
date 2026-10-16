@@ -8,7 +8,7 @@ import { formatMinor } from "@/components/pay/money";
 import type { PlanBrief } from "./types";
 import { withBase } from "@/lib/base";
 
-/** Web purchase from a plan card: account lookup → confirm → WeChat QR → poll until paid. */
+/** Web purchase from a plan card: account lookup → confirm (optional referral code) → WeChat QR → poll until paid. */
 
 interface Identity {
   nickname: string;
@@ -24,8 +24,16 @@ interface WebOrder {
   status: string;
   amountMinor: number;
   creditMinor: number;
+  referralDiscountMinor: number;
   currency: string;
   codeUrl: string | null;
+}
+/** `POST /api/cloud/order-referral` result; `code` is the normalized input it was checked for. */
+interface ReferralCheck {
+  code: string;
+  valid: boolean;
+  discountMinor: number;
+  reason: string | null;
 }
 
 type Step = "account" | "confirm" | "pay" | "success";
@@ -43,7 +51,21 @@ const ERROR_KEYS: Record<string, keyof Errors> = {
   plan_tier_not_higher: "tierNotHigher",
   gateway_error: "gateway",
   upstream_unreachable: "gateway",
+  referral_code_invalid: "referralInvalid",
+  referral_already_used: "referralAlreadyUsed",
+  referral_plan_excluded: "referralPlanExcluded",
 };
+
+/** Referral validate `reason` (valid=false) → message key. */
+const REFERRAL_REASON_KEYS: Record<string, keyof Errors> = {
+  not_found: "referralInvalid",
+  feature_disabled: "referralDisabled",
+  plan_excluded: "referralPlanExcluded",
+  already_used: "referralAlreadyUsed",
+};
+
+/** Same normalization as FluxCloud `referral::normalize_code`. */
+const normalizeCode = (raw: string) => raw.trim().toUpperCase();
 
 const POLL_INTERVAL = 3000;
 
@@ -63,6 +85,10 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>("account");
   const [account, setAccount] = useState("");
+  const [referralCode, setReferralCode] = useState("");
+  const [referralCheck, setReferralCheck] = useState<ReferralCheck | null>(null);
+  const [referralBusy, setReferralBusy] = useState(false);
+  const [referralError, setReferralError] = useState<string | null>(null);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [order, setOrder] = useState<WebOrder | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,12 +100,16 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
     setOrder(null);
     setError(null);
     setBusy(false);
+    // A referral check is account-specific (already-used, plan gates): drop it with the account.
+    setReferralCheck(null);
+    setReferralError(null);
   }, []);
 
   const close = useCallback(() => {
     setOpen(false);
     reset();
     setAccount("");
+    setReferralCode("");
   }, [reset]);
 
   async function lookup() {
@@ -106,6 +136,35 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
     }
   }
 
+  async function checkReferral() {
+    const code = normalizeCode(referralCode);
+    if (!code || referralBusy) return;
+    setReferralBusy(true);
+    setReferralError(null);
+    setReferralCheck(null);
+    try {
+      const res = await fetch(withBase("/api/cloud/order-referral"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: account.trim(), planCode: plan.code, code }),
+      });
+      if (!res.ok) {
+        setReferralError(t.err[ERROR_KEYS[await errorCode(res)] ?? "network"]);
+        return;
+      }
+      const body = (await res.json()) as Omit<ReferralCheck, "code">;
+      if (!body.valid) {
+        setReferralError(t.err[REFERRAL_REASON_KEYS[body.reason ?? ""] ?? "referralInvalid"]);
+        return;
+      }
+      setReferralCheck({ ...body, code });
+    } catch {
+      setReferralError(t.err.network);
+    } finally {
+      setReferralBusy(false);
+    }
+  }
+
   async function createOrder() {
     setBusy(true);
     setError(null);
@@ -113,7 +172,11 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
       const res = await fetch(withBase("/api/cloud/order"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ account: account.trim(), planCode: plan.code }),
+        body: JSON.stringify({
+          account: account.trim(),
+          planCode: plan.code,
+          referralCode: normalizeCode(referralCode) || undefined,
+        }),
       });
       if (!res.ok) {
         setError(t.err[ERROR_KEYS[await errorCode(res)] ?? "network"]);
@@ -153,6 +216,8 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
   }, [step, order, account, t]);
 
   const money = (minor: number, currency = plan.currency) => formatMinor(minor, currency, lang);
+  const estimate = Math.max(0, plan.priceMinor - (identity?.purchaseCreditMinor ?? 0));
+  const referralDiscount = referralCheck ? Math.min(referralCheck.discountMinor, estimate) : 0;
 
   return (
     <>
@@ -225,18 +290,67 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
               {identity.originId != null && <Row label={t.fieldOrigin} value={String(identity.originId)} mono />}
               <Row label={t.fieldPlan} value={identity.planName} />
             </dl>
-            {/* Estimate: plan price − current-plan credit = payable; the order amount is authoritative. */}
+            <form
+              className="mt-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void checkReferral();
+              }}
+            >
+              <label htmlFor={`webbuy-${plan.code}-referral`} className="block text-[13px] font-medium">
+                {t.referralLabel}
+              </label>
+              <div className="mt-2 flex gap-2">
+                <input
+                  id={`webbuy-${plan.code}-referral`}
+                  value={referralCode}
+                  onChange={(e) => {
+                    // Any edit invalidates the previous check: the discount shown must match the code sent.
+                    setReferralCode(e.target.value);
+                    setReferralCheck(null);
+                    setReferralError(null);
+                  }}
+                  placeholder={t.referralPlaceholder}
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  maxLength={32}
+                  aria-invalid={referralError ? true : undefined}
+                  aria-describedby={`webbuy-${plan.code}-referral-help`}
+                  className="field num min-w-0 flex-1 font-mono uppercase"
+                />
+                <button
+                  type="submit"
+                  disabled={referralBusy || !normalizeCode(referralCode)}
+                  className="btn btn-secondary shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {referralBusy && <LoaderCircle size={15} className="animate-spin" aria-hidden />}
+                  {referralBusy ? t.loading : t.referralApply}
+                </button>
+              </div>
+              <p
+                id={`webbuy-${plan.code}-referral-help`}
+                role={referralError ? "alert" : referralCheck ? "status" : undefined}
+                className={`mt-2 text-[12.5px] leading-relaxed ${
+                  referralError ? "text-danger" : referralCheck ? "text-accent-ink" : "text-muted"
+                }`}
+              >
+                {referralError ??
+                  (referralCheck
+                    ? referralDiscount > 0
+                      ? t.referralValid(money(referralDiscount))
+                      : t.referralNoDiscount
+                    : t.referralHelp)}
+              </p>
+            </form>
+            {/* Estimate: plan price − current-plan credit − checked referral discount; the order amount is authoritative. */}
             <dl className="mt-4 divide-y divide-line border-y border-line">
               <Row label={t.pricePlan} value={money(plan.priceMinor)} mono />
               {identity.purchaseCreditMinor > 0 && (
                 <Row label={t.priceCredit} value={`− ${money(Math.min(identity.purchaseCreditMinor, plan.priceMinor))}`} mono />
               )}
-              <Row
-                label={t.pricePayable}
-                value={money(Math.max(0, plan.priceMinor - identity.purchaseCreditMinor))}
-                mono
-                strong
-              />
+              {referralDiscount > 0 && <Row label={t.priceReferral} value={`− ${money(referralDiscount)}`} mono />}
+              <Row label={t.pricePayable} value={money(estimate - referralDiscount)} mono strong />
             </dl>
             <ErrorLine text={error} />
             <div className="mt-6 grid grid-cols-2 gap-3">
@@ -265,6 +379,9 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
             <div className="num mt-5 text-3xl font-semibold tracking-tight">{money(order.amountMinor, order.currency)}</div>
             {order.creditMinor > 0 && (
               <p className="mt-1 text-xs text-accent-ink">{t.credit(money(order.creditMinor, order.currency))}</p>
+            )}
+            {order.referralDiscountMinor > 0 && (
+              <p className="mt-1 text-xs text-accent-ink">{t.referralApplied(money(order.referralDiscountMinor, order.currency))}</p>
             )}
             <p className="mt-4 inline-flex items-center gap-2 text-xs text-muted" role="status">
               <LoaderCircle size={13} className="animate-spin text-accent" aria-hidden />
