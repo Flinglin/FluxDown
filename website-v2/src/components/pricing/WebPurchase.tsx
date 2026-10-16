@@ -4,7 +4,7 @@ import type { Lang } from "@/i18n/config";
 import { pricing } from "@/i18n/messages/pricing";
 import Dialog from "@/components/pay/Dialog";
 import { QrTile, WechatBadge } from "@/components/pay/WechatQr";
-import { formatMinor } from "@/components/pay/money";
+import { estimateUsdtMicros, formatMinor, formatUsdt } from "@/components/pay/money";
 import type { PlanBrief } from "./types";
 import { withBase } from "@/lib/base";
 
@@ -27,6 +27,12 @@ interface WebOrder {
   referralDiscountMinor: number;
   currency: string;
   codeUrl: string | null;
+  payMethod: "wxpay" | "usdt";
+  payAmountMicros: number | null;
+  payReceivedMicros: number | null;
+  payAddress: string | null;
+  payNetworks: { key: string; name: string; chainId: number }[];
+  expiresAt: string;
 }
 /** `POST /api/cloud/order-referral` result; `code` is the normalized input it was checked for. */
 interface ReferralCheck {
@@ -54,6 +60,8 @@ const ERROR_KEYS: Record<string, keyof Errors> = {
   referral_code_invalid: "referralInvalid",
   referral_already_used: "referralAlreadyUsed",
   referral_plan_excluded: "referralPlanExcluded",
+  usdt_disabled: "usdtDisabled",
+  usdt_not_available: "usdtUnavailable",
 };
 
 /** Referral validate `reason` (valid=false) → message key. */
@@ -68,6 +76,7 @@ const REFERRAL_REASON_KEYS: Record<string, keyof Errors> = {
 const normalizeCode = (raw: string) => raw.trim().toUpperCase();
 
 const POLL_INTERVAL = 3000;
+const USDT_EXPIRED_POLL_MS = 30 * 60 * 1000;
 
 async function errorCode(res: Response): Promise<string> {
   try {
@@ -93,6 +102,7 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
   const [order, setOrder] = useState<WebOrder | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [payMethod, setPayMethod] = useState<"wxpay" | "usdt">("wxpay");
 
   const reset = useCallback(() => {
     setStep("account");
@@ -176,6 +186,7 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
           account: account.trim(),
           planCode: plan.code,
           referralCode: normalizeCode(referralCode) || undefined,
+          payMethod,
         }),
       });
       if (!res.ok) {
@@ -191,11 +202,17 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
     }
   }
 
-  // Poll the order every 3 s: paid → success; expired/failed → back to confirm with an error.
+  // Poll every 3 s: paid → success; failed → back to confirm. WeChat `expired` → back to confirm;
+  // USDT `expired` stays on the pay step (late deposits within grace may still be credited) and keeps polling for 30 min.
   useEffect(() => {
     if (step !== "pay" || !order) return;
     const query = withBase(`/api/cloud/order?orderNo=${encodeURIComponent(order.orderNo)}&account=${encodeURIComponent(account.trim())}`);
+    let expiredSince: number | null = order.payMethod === "usdt" && order.status === "expired" ? Date.now() : null;
     const timer = window.setInterval(async () => {
+      if (expiredSince != null && Date.now() - expiredSince > USDT_EXPIRED_POLL_MS) {
+        window.clearInterval(timer);
+        return;
+      }
       try {
         const res = await fetch(query);
         if (!res.ok) return; // transient failure / rate limit: wait for the next tick
@@ -203,17 +220,22 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
         if (fresh.status === "paid") {
           setOrder(fresh);
           setStep("success");
+        } else if (fresh.status === "expired" && fresh.payMethod === "usdt") {
+          expiredSince ??= Date.now();
+          setOrder((prev) => (prev && prev.status === "expired" && prev.payReceivedMicros === fresh.payReceivedMicros ? prev : fresh));
         } else if (fresh.status === "expired" || fresh.status === "failed") {
           setError(fresh.status === "expired" ? t.err.expired : t.err.failed);
           setOrder(null);
           setStep("confirm");
+        } else if (fresh.payMethod === "usdt") {
+          setOrder(fresh); // refresh received amount
         }
       } catch {
         // network blip: next tick
       }
     }, POLL_INTERVAL);
     return () => window.clearInterval(timer);
-  }, [step, order, account, t]);
+  }, [step, order?.orderNo, order?.payMethod, account, t]);
 
   const money = (minor: number, currency = plan.currency) => formatMinor(minor, currency, lang);
   const estimate = Math.max(0, plan.priceMinor - (identity?.purchaseCreditMinor ?? 0));
@@ -343,6 +365,25 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
                     : t.referralHelp)}
               </p>
             </form>
+            {plan.priceUsdtMicros != null && (
+              <div className="mt-4">
+                <p className="text-[13px] font-medium">{t.payMethod}</p>
+                <div role="radiogroup" aria-label={t.payMethod} className="mt-2 grid grid-cols-2 gap-2">
+                  {(["wxpay", "usdt"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      role="radio"
+                      aria-checked={payMethod === m}
+                      onClick={() => setPayMethod(m)}
+                      className={`btn ${payMethod === m ? "btn-primary" : "btn-secondary"}`}
+                    >
+                      {m === "wxpay" ? t.payWechat : t.payUsdt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* Estimate: plan price − current-plan credit − checked referral discount; the order amount is authoritative. */}
             <dl className="mt-4 divide-y divide-line border-y border-line">
               <Row label={t.pricePlan} value={money(plan.priceMinor)} mono />
@@ -350,7 +391,15 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
                 <Row label={t.priceCredit} value={`− ${money(Math.min(identity.purchaseCreditMinor, plan.priceMinor))}`} mono />
               )}
               {referralDiscount > 0 && <Row label={t.priceReferral} value={`− ${money(referralDiscount)}`} mono />}
-              <Row label={t.pricePayable} value={money(estimate - referralDiscount)} mono strong />
+              <Row label={t.pricePayable} value={money(estimate - referralDiscount)} mono strong={payMethod !== "usdt"} />
+              {payMethod === "usdt" && plan.priceUsdtMicros != null && (
+                <Row
+                  label={t.usdtEstimate}
+                  value={`≈ ${formatUsdt(estimateUsdtMicros(estimate - referralDiscount, plan.basePriceMinor, plan.priceUsdtMicros))}`}
+                  mono
+                  strong
+                />
+              )}
             </dl>
             <ErrorLine text={error} />
             <div className="mt-6 grid grid-cols-2 gap-3">
@@ -365,7 +414,22 @@ export default function WebPurchase({ plan, lang }: { plan: PlanBrief; lang: Lan
           </div>
         )}
 
-        {step === "pay" && order && (
+        {step === "pay" && order && order.payMethod === "usdt" && order.status === "expired" && (
+          <div className="flex flex-col items-center text-center" role="status">
+            <h3 className="text-base font-semibold">{t.usdtExpiredTitle}</h3>
+            <p className="mt-2 text-[13px] leading-relaxed text-muted">{t.usdtExpiredDesc}</p>
+            <p className="num mt-4 font-mono text-[11px] text-subtle">
+              {t.orderNo} · {order.orderNo}
+            </p>
+            <button type="button" onClick={close} className="btn btn-secondary mt-5 w-full">
+              {t.close}
+            </button>
+          </div>
+        )}
+
+        {step === "pay" && order && order.payMethod === "usdt" && order.status !== "expired" && <UsdtPayPanel order={order} t={t} />}
+
+        {step === "pay" && order && order.payMethod !== "usdt" && (
           <div className="flex flex-col items-center text-center">
             <WechatBadge label={t.wechatBadge} />
             <p className="mt-3 text-[13px] text-muted">{t.scanTitle}</p>
@@ -427,5 +491,110 @@ function ErrorLine({ text }: { text: string | null }) {
     <p role="alert" className="mt-3 text-[13px] text-danger">
       {text}
     </p>
+  );
+}
+
+/** Copy-to-clipboard button; briefly flips its label to "copied". */
+function CopyButton({ text, label, doneLabel }: { text: string; label: string; doneLabel: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      className="btn btn-secondary shrink-0 px-2.5 py-1 text-xs"
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setDone(true);
+          window.setTimeout(() => setDone(false), 1500);
+        });
+      }}
+    >
+      {done ? doneLabel : label}
+    </button>
+  );
+}
+
+function formatRemaining(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const mm = String(Math.floor(s / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
+/** Logos for the ops chain keys (`public/chains/`); unknown keys render name only. */
+const CHAIN_LOGOS: Record<string, string> = {
+  polygon: "/chains/polygon.png",
+  arbitrum: "/chains/arbitrum.png",
+  bsc: "/chains/bsc.png",
+  xlayer: "/chains/xlayer.svg",
+};
+
+/** USDT payment view: deposit address QR, exact amount, networks, countdown and received progress. */
+function UsdtPayPanel({ order, t }: { order: WebOrder; t: (typeof pricing)["en"]["webbuy"] }) {
+  const expiresMs = Date.parse(order.expiresAt);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const address = order.payAddress ?? "";
+  const amount = order.payAmountMicros ?? 0;
+  const amountText = (amount / 1e6).toFixed(2);
+  return (
+    <div className="flex flex-col items-center text-center">
+      <p className="text-[13px] text-muted">{t.payUsdt}</p>
+      {address && (
+        <div className="mt-4">
+          <QrTile value={address} size={188} />
+        </div>
+      )}
+      <div className="mt-4 w-full text-left">
+        <p className="text-xs text-muted">{t.usdtAddress}</p>
+        <div className="mt-1 flex items-center gap-2">
+          <code className="num min-w-0 flex-1 break-all font-mono text-[12px]">{address}</code>
+          <CopyButton text={address} label={t.copy} doneLabel={t.copied} />
+        </div>
+        <p className="mt-3 text-xs text-muted">{t.usdtAmount}</p>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="num flex-1 text-2xl font-semibold tracking-tight">{formatUsdt(amount)}</span>
+          <CopyButton text={amountText} label={t.copy} doneLabel={t.copied} />
+        </div>
+        {order.payNetworks.length > 0 && (
+          <>
+            <p className="mt-3 text-xs text-muted">{t.usdtNetworks}</p>
+            <ul className="mt-1.5 flex flex-wrap gap-2">
+              {order.payNetworks.map((n) => (
+                <li
+                  key={n.key}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[13px] font-medium"
+                >
+                  {CHAIN_LOGOS[n.key] && (
+                    <img src={CHAIN_LOGOS[n.key]} alt="" width={18} height={18} className="size-[18px] rounded-full" />
+                  )}
+                  {n.name}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        <p className="num mt-3 text-xs text-muted">
+          {t.usdtExpiresIn}: {Number.isNaN(expiresMs) ? "--:--" : formatRemaining(expiresMs - now)}
+        </p>
+        <p className="num mt-1 text-xs text-muted">
+          {t.usdtReceived}: {formatUsdt(order.payReceivedMicros ?? 0)} / {formatUsdt(amount)}
+        </p>
+      </div>
+      <ul className="mt-4 w-full list-disc pl-5 text-left text-xs leading-relaxed text-danger">
+        <li>{t.usdtWarnExact}</li>
+        <li>{t.usdtWarnNetwork}</li>
+        <li>{t.usdtWarnLate}</li>
+      </ul>
+      <p className="mt-4 inline-flex items-center gap-2 text-xs text-muted" role="status">
+        <LoaderCircle size={13} className="animate-spin text-accent" aria-hidden />
+        {t.waiting}
+      </p>
+      <p className="num mt-2 font-mono text-[11px] text-subtle">
+        {t.orderNo} · {order.orderNo}
+      </p>
+    </div>
   );
 }
