@@ -8,7 +8,6 @@ import { sendBatchDownloadRequest, sendDownloadRequest, warmupNativeHost, isUnre
 import type { DownloadRequest } from "@/utils/native-messaging";
 import { extractCleanFilename } from "@/utils/filename";
 import { t } from "@/utils/i18n";
-import { loadSettings } from "@/utils/settings";
 import { allowBypass, claimAppDownNotice, markAppDown, markAppUp, probeAppReachable } from "./breaker";
 import { notify } from "./notify";
 import type { SendChannel, SendResult } from "./protocol";
@@ -286,7 +285,7 @@ export function describeSendError(message?: string): string {
 export async function shouldNotifyChannel(
   channel?: "local" | "remote",
 ): Promise<boolean> {
-  const settings = await loadSettings();
+  const settings = await getCachedSettings();
   return channel === "remote"
     ? settings.notifyRemoteTask !== false
     : settings.notifyLocalTask === true;

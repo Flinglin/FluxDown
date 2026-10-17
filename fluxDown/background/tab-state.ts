@@ -275,22 +275,49 @@ function mergeRuleIds(existing: DetectedResource, ruleIds: string[] | undefined)
   return true;
 }
 
+/** 合并重复命中的资源；返回是否有字段真的变化（同一分片 / Range 的重复请求通常没有）。 */
 function mergeResource(
   existing: DetectedResource,
   incoming: ResourceMessagePayload,
   ctx: IngestContext,
-): void {
+): boolean {
+  let changed = false;
   if (existing.type === "other" && incoming.type && incoming.type !== "other") {
     existing.type = incoming.type;
+    changed = true;
   }
-  if (!existing.filename && incoming.filename) existing.filename = incoming.filename;
-  if (existing.size <= 0 && incoming.size && incoming.size > 0) existing.size = incoming.size;
-  if (!existing.mimeType && incoming.mimeType) existing.mimeType = incoming.mimeType;
-  if (!existing.quality && incoming.quality) existing.quality = incoming.quality;
-  if (incoming.isAttachment) existing.isAttachment = true;
-  if (!existing.lang && incoming.lang) existing.lang = incoming.lang;
-  if (!existing.label && incoming.label) existing.label = incoming.label;
-  if (!existing.elementKey && incoming.elementKey) existing.elementKey = incoming.elementKey;
+  if (!existing.filename && incoming.filename) {
+    existing.filename = incoming.filename;
+    changed = true;
+  }
+  if (existing.size <= 0 && incoming.size && incoming.size > 0) {
+    existing.size = incoming.size;
+    changed = true;
+  }
+  if (!existing.mimeType && incoming.mimeType) {
+    existing.mimeType = incoming.mimeType;
+    changed = true;
+  }
+  if (!existing.quality && incoming.quality) {
+    existing.quality = incoming.quality;
+    changed = true;
+  }
+  if (incoming.isAttachment && !existing.isAttachment) {
+    existing.isAttachment = true;
+    changed = true;
+  }
+  if (!existing.lang && incoming.lang) {
+    existing.lang = incoming.lang;
+    changed = true;
+  }
+  if (!existing.label && incoming.label) {
+    existing.label = incoming.label;
+    changed = true;
+  }
+  if (!existing.elementKey && incoming.elementKey) {
+    existing.elementKey = incoming.elementKey;
+    changed = true;
+  }
   // 同一媒体路径的签名/token 轮换会归并为同一 id：以最新 URL 与认证头为准，
   // 否则下载用的是已过期的首次链接。
   if (incoming.url !== existing.url) {
@@ -298,26 +325,39 @@ function mergeResource(
     existing.detectedAt = Date.now();
     if (ctx.cookies) existing.cookies = ctx.cookies;
     if (ctx.headers && Object.keys(ctx.headers).length > 0) existing.headers = ctx.headers;
+    changed = true;
   }
-  if (ctx.cookies && !existing.cookies) existing.cookies = ctx.cookies;
+  if (ctx.cookies && !existing.cookies) {
+    existing.cookies = ctx.cookies;
+    changed = true;
+  }
   if (ctx.headers && Object.keys(ctx.headers).length > 0 && !existing.headers) {
     existing.headers = ctx.headers;
+    changed = true;
   }
-  mergeRuleIds(existing, ctx.ruleIds);
+  if (mergeRuleIds(existing, ctx.ruleIds)) changed = true;
   // 只在 API JSON 里出现过的地址后来被页面真正请求：按真实请求重新评估可信度。
   if (existing.detectedBy === "api-scan" && incoming.detectedBy !== "api-scan") {
     existing.detectedBy = incoming.detectedBy;
+    changed = true;
   }
   // 换页后页面又请求了这份清单：它属于当前页
-  if (existing.carried) delete existing.carried;
+  if (existing.carried) {
+    delete existing.carried;
+    changed = true;
+  }
 
   // 重新计算可信度（信息更丰富后可能升级）
   const next = computeConfidence(existing.type, existing.size, existing.detectedBy, existing.isAttachment);
-  if (CONFIDENCE_ORDER[next] > CONFIDENCE_ORDER[existing.confidence]) existing.confidence = next;
+  if (CONFIDENCE_ORDER[next] > CONFIDENCE_ORDER[existing.confidence]) {
+    existing.confidence = next;
+    changed = true;
+  }
+  return changed;
 }
 
 /**
- * 入库一批资源；返回新增数量。任何新增 / 合并都会通知订阅者。
+ * 入库一批资源；返回新增数量。新增或合并出变化时才通知订阅者（持久化、视图重建、徽标）。
  * blob:/data: 在此处丢弃（magnet 例外）。
  */
 export function ingestResources(
@@ -340,8 +380,7 @@ export function ingestResources(
     const id = engine.dedupeKey(url, effectivePageUrl);
     const existing = state.resources.get(id);
     if (existing) {
-      mergeResource(existing, payload, ctx);
-      changed = true;
+      if (mergeResource(existing, payload, ctx)) changed = true;
       continue;
     }
 

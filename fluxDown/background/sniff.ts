@@ -192,7 +192,8 @@ export function installSniff(): void {
         onMainFrameResponse(details);
         return undefined;
       },
-      { urls: ["<all_urls>"] },
+      // 让浏览器侧过滤：不带 types 时每个图片 / 脚本响应的头都会送进扩展再被丢弃
+      { urls: ["<all_urls>"], types: ["main_frame"] },
       ["responseHeaders"],
     );
     browser.webRequest.onHeadersReceived.addListener(
