@@ -50,6 +50,8 @@ import type {
   PluginInstallParams,
   PluginMarketInstallParams,
   PluginSetEnabledParams,
+  PluginSetSiteDefaultParams,
+  PluginSiteDefaultDto,
   PluginUpdateSettingsParams,
   LinkProbeParams,
   LinkProbeResult,
@@ -254,6 +256,10 @@ const plugin = {
     call<InstalledPlugin>(METHOD.DAEMON_PLUGIN_MARKET_INSTALL, params, { timeoutMs: SLOW_MIRROR_TIMEOUT_MS }),
   /** 忽略插件解析失败并重试（清除任务 resolver 后恢复任务）。 */
   ignoreRetry: (params: TaskIdParams) => call<OkResult>(METHOD.DAEMON_PLUGIN_IGNORE_RETRY, params),
+  /** 站点默认插件列表（按 site 排序）。 */
+  siteDefaults: () => call<PluginSiteDefaultDto[]>(METHOD.DAEMON_PLUGIN_SITE_DEFAULTS),
+  /** 确认 / 变更站点默认插件；`identity: null` 移除条目。 */
+  setSiteDefault: (params: PluginSetSiteDefaultParams) => call<OkResult>(METHOD.DAEMON_PLUGIN_SET_SITE_DEFAULT, params),
   /** 授权插件请求的全部能力；集合须与请求完全一致。 */
   consent: (params: PluginConsentParams) => call<OkResult>(METHOD.DAEMON_PLUGIN_CONSENT, params),
   auditList: (params: PluginAuditListParams = {}) =>

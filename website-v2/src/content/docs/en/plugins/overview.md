@@ -24,7 +24,7 @@ The resolver design has three properties worth understanding before you write on
 - **Off the main loop.** Resolution runs on a dedicated thread pool. A slow or hung script cannot freeze the app.
 - **Fail-closed.** If your script throws, times out, or returns garbage, the task goes to the *error* state with a `[插件]`-prefixed message. FluxDown never falls back to downloading the original page URL — that would save an HTML page as a video file. The user can explicitly bypass a broken plugin via the "ignore plugin retry" action on the failed task.
 
-When several enabled plugins match the same URL, the one with the lexicographically smallest `identity` wins.
+When several enabled plugins match the same URL, FluxDown asks the user which plugin to use the first time such a task starts (the dialog lists every matching plugin, sorted by `identity`) and can remember the choice as the site's default plugin; users manage these under Plugins → Site default plugins. Unattended downloads (RSS, remote dispatch, silent mode with follow-up choices skipped) never ask: they use the site's default plugin, otherwise the plugin with the lexicographically smallest `identity`.
 
 One consequence of lazy resolution: tasks handled by a resolver skip the normal metadata probe, so if the same plugin also subscribes to `onMetaProbed`, that hook never fires for its own tasks (FluxDown logs a warning about this at load time).
 

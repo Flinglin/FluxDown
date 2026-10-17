@@ -21,6 +21,7 @@
   - 来源归因迁移列 `src_cdn_bytes` / `src_proxy_bytes` / `src_nic_bytes`（BIGINT）：coordinator 在既有 DB flush 节拍按 `NodePool::source_bytes` 把「多 CDN 钉定节点 / Auto 代理路径 / 多网卡链路」的增量以 `segments_epoch` 守卫累加；源站 = `downloaded_bytes` − 三者之和，P2P 协议由客户端整体归 P2P。任何把 `downloaded_bytes` 复位为 0 的写入同语句清零三列。实时值走 `TaskRuntimeDto.sourceBytes`（含在途），持久值走 `TaskDto.sourceBytes`；客户端详情常规页「来源构成」区块的切片算法 GPUI / Web 逐条镜像（见 AGENTS.md §5）。
   - 命名来源迁移列 `name_inferred`（1 = 引擎推断名，HTTP 完成期可精修）/ `resp_name` / `resp_mime`（实际 GET 响应的命名证据），语义见下方 `naming/`。
   - 「文件已存在」逐任务决定迁移列 `exists_decision`（`''` / `rename` / `overwrite` / `skip`），语义见下方「文件已存在策略」。
+  - 多插件冲突待选迁移列 `resolver_choice_pending`（1 = 多个 resolver 同时匹配、首次起跑前还要定案），语义见下方「多插件 resolver 冲突」。
 - `task_segments`(复合 PK task_id+segment_index；旧库遗留 id AUTOINCREMENT 不再读)
 - `task_groups`(id PK, name, source_url, save_dir, created_at)
 - `config`(key PK, value)——**所有设置键**都存这里
@@ -185,6 +186,8 @@
 
 **市场撤回强制执行**：daemon 处理 `daemon.plugin.market.list` 拉到索引后，把 `yanked` 为 `vulnerable` / `malicious` 的 `(plugin_id, version)` 交给 `PluginManager::apply_market_revocations`：命中的已装（非 dev）插件写 `enabled=false` + `disabled_reason=Revoked` + `plugin.<id>.revoked_version`，重载并发 `PluginAutoDisabled { reason: "Revoked" }`（客户端用 `pluginDisabledRevoked` 徽标 / `pluginRevokedToast`）；不再命中时只清 `revoked_version`、保持禁用。被撤回版本 `set_enabled(true)` 报错，安装不同版本时 `finish_install` 自动启用并清标记。agent `plugin_revocation.rs` 启动 120s 后每 24h 触发一次（有非 dev 插件才拉索引；daemon 无插件能力即退出；embedded 不启动）。
 
-**off-actor 惰性 resolve 接线**：`create_task` 命中 `match_resolver` → 落 `tasks.resolver_plugin_id`（仅存 ID）+ 跳过 meta_prober。`do_start/resume_task` 体首守卫：resolver 非空且未解析 → 占位 active_tasks + off-actor spawn → return。worker 经 `resolve_rx` 回流，actor `select!` 分支 `on_resolve_ready`（复查生命周期 → 用解析后 url 重算五路协议分派）。**宿主 actor 必须接线 `resolve_rx` + `plugin_retry_rx`**。
+**off-actor 惰性 resolve 接线**：`create_task` 经 `PluginManager::route_resolver` 绑定 → 落 `tasks.resolver_plugin_id`（仅存 ID）+ 跳过 meta_prober。`do_start/resume_task` 体首守卫：resolver 非空且未解析 → 占位 active_tasks + off-actor spawn → return。worker 经 `resolve_rx` 回流，actor `select!` 分支 `on_resolve_ready`（复查生命周期 → 用解析后 url 重算五路协议分派）。**宿主 actor 必须接线 `resolve_rx` + `plugin_retry_rx`**。
 
-**config 命名空间**：`plugin.<identity>.enabled`/`.disabled_reason`（`CircuitBreaker` / `Revoked`）/`.revoked_version`/`.setting.<key>`/`.kv.<key>`；`plugin.dev.<identity>`（devMode 路径）；`market.<index_id>.sequence`。identity 格式 `^[a-z0-9_-]+@[a-z0-9_-]+$`。
+**多插件 resolver 冲突**（`plugin/routing.rs`）：多个已启用插件的 resolver 同时匹配时，建任务绑首个候选（identity 升序）并置 `tasks.resolver_choice_pending=1`（二段解析任务不置）；worker 在首次 resolve 前 `choose_task_resolver` 定案并 `set_task_resolver` 改绑清 0。优先级：用户确认过且覆盖当前全部候选的站点默认插件 > 无人值守（`tasks.unattended`）回退（站点记录插件 > 已绑回退 > 首个候选，并写未确认 `automatic` 记录）> `HostSelection::select_resolver_plugin` 询问（`SelectionKind::Plugin`，60s 超时取回退，可勾「记住」写确认记录；关闭 = 以 `UserCancelled` 取消任务、保持待选）。同站点选择框经每站点锁串行，记住后排队任务直接沿用。站点键 = 主机名小写去 `www.`；候选出现记录外的新插件即重新询问。卸载插件：待选任务不清绑定（起跑时在剩余候选里重选），站点记录移出该插件、选中它或剩余 <2 的记录删除。RPC `daemon.plugin.siteDefaults` / `daemon.plugin.setSiteDefault`（只能确认 / 改选记录里的候选或删除）。
+
+**config 命名空间**：`plugin.<identity>.enabled`/`.disabled_reason`（`CircuitBreaker` / `Revoked`）/`.revoked_version`/`.setting.<key>`/`.kv.<key>`；`plugin.dev.<identity>`（devMode 路径）；`plugin.site_default.<site>`（多插件冲突的站点记录 JSON `{identity, candidates, automatic}`）；`market.<index_id>.sequence`。identity 格式 `^[a-z0-9_-]+@[a-z0-9_-]+$`。

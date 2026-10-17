@@ -34,6 +34,8 @@ use super::runtime::{
 
 #[path = "host_manager.rs"]
 mod host_manager;
+#[path = "routing.rs"]
+pub mod routing;
 
 /// 连续超时/超内存达到该次数 → 自动熔断禁用。
 const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
@@ -279,6 +281,8 @@ pub struct PluginManager {
     audit: super::audit::AuditLog,
     /// 常驻宿主（`main`）的运行态：宿主表、视图会话、定时器、任务端口。
     host: host_manager::HostState,
+    /// 多插件选择框按站点串行化（见 [`routing`]）。
+    site_prompts: routing::SitePromptLocks,
 }
 
 impl PluginManager {
@@ -320,6 +324,7 @@ impl PluginManager {
             load_lock: tokio::sync::Mutex::new(()),
             audit,
             host: host_manager::HostState::new(),
+            site_prompts: routing::SitePromptLocks::default(),
         }
     }
 
@@ -648,54 +653,6 @@ impl PluginManager {
             main_cache,
             timeout_streak: Arc::new(AtomicU32::new(0)),
         })
-    }
-
-    /// 纯 Rust glob 首匹配（按 identity 字典序稳定排序）。返回命中插件 identity。
-    pub async fn match_resolver(&self, url: &str) -> Option<String> {
-        let snapshot = self.plugins.read().await.clone();
-        let mut candidates: Vec<&LoadedPlugin> = snapshot
-            .iter()
-            .filter(|p| p.enabled && !p.manifest.resolvers.is_empty())
-            .collect();
-        candidates.sort_by(|a, b| a.manifest.identity.cmp(&b.manifest.identity));
-        for p in candidates {
-            for pat in p.manifest.resolver_urls() {
-                if super::manifest::url_glob_match(pat, url) {
-                    return Some(p.manifest.identity.clone());
-                }
-            }
-        }
-        None
-    }
-
-    /// 同 [`Self::match_resolver`]，但仅当命中插件的 resolver 声明了
-    /// `"multi": true` 时才返回——供前置预解析（[`ResolveManifest`]）判定是否
-    /// 触发，避免解析昂贵的单文件插件在创建下载时白跑一次（A2 契约）。
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # async fn run(pm: std::sync::Arc<fluxdown_engine::plugin::PluginManager>) {
-    /// // 未声明 multi 的插件恒不命中，即使 URL glob 匹配。
-    /// let hit = pm.match_multi_resolver("https://pan.example.com/s/abc").await;
-    /// assert!(hit.is_none() || hit.is_some());
-    /// # }
-    /// ```
-    pub async fn match_multi_resolver(&self, url: &str) -> Option<String> {
-        let snapshot = self.plugins.read().await.clone();
-        let mut candidates: Vec<&LoadedPlugin> = snapshot
-            .iter()
-            .filter(|p| p.enabled && p.manifest.resolvers.first().is_some_and(|r| r.multi))
-            .collect();
-        candidates.sort_by(|a, b| a.manifest.identity.cmp(&b.manifest.identity));
-        for p in candidates {
-            for pat in p.manifest.resolver_urls() {
-                if super::manifest::url_glob_match(pat, url) {
-                    return Some(p.manifest.identity.clone());
-                }
-            }
-        }
-        None
     }
 
     /// 惰性解析。off-actor worker 调用（在插件专用 runtime 上）。
@@ -1445,6 +1402,10 @@ impl PluginManager {
             .await
             .map_err(|e| PluginError::Runtime(e.to_string()))?;
         self.purge(identity).await?;
+        if let Err(error) = self.forget_site_defaults_of(identity).await {
+            // 与凭据清理同理：插件本体已卸载完成；残留记录选中它时会在下次匹配时失效重问。
+            log_info!("[plugin] 整理插件 {identity} 的站点默认插件记录失败（已忽略）: {error:#}");
+        }
         self.bridge.remove_plugin_workspace(identity).await;
         if let Err(e) = crate::auth::remove_plugin(&self.db, identity).await {
             // 只记日志不 `?`：目录/配置键已经清干净，卸载本身已经完成；凭据

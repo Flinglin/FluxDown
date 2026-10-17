@@ -91,6 +91,10 @@ public enum HostMethod {
     public static let daemonPluginMarketList = "daemon.plugin.marketList"
     public static let daemonPluginMarketInstall = "daemon.plugin.marketInstall"
     public static let daemonPluginIgnoreRetry = "daemon.plugin.ignoreRetry"
+    /// 站点默认插件列表（无参）→ `[PluginSiteDefault]`。
+    public static let daemonPluginSiteDefaults = "daemon.plugin.siteDefaults"
+    /// `PluginSetSiteDefaultParams`：确认 / 修改 / 移除（identity 为 null）站点默认插件。
+    public static let daemonPluginSetSiteDefault = "daemon.plugin.setSiteDefault"
     public static let daemonPluginConsent = "daemon.plugin.consent"
     public static let daemonPluginAuditList = "daemon.plugin.audit.list"
     public static let daemonPluginAuditClear = "daemon.plugin.audit.clear"

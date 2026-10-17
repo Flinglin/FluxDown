@@ -74,6 +74,7 @@ pub(crate) struct PluginsUi {
     /// 「重新加载」在途的 dev 插件（按钮显示转圈）；是 `busy` 的子集。
     pub reloading: HashSet<String>,
     pub market: MarketUi,
+    pub site_defaults: super::site_defaults::SiteDefaultsUi,
     /// 安装 / 更新 / 重载成功、等待插件列表追上后再判定授权流程的插件；
     /// 值 = 市场路径下用户安装前确认过的（权限，主机）。
     pub awaiting_consent: HashMap<String, Option<ConfirmedSets>>,
@@ -91,6 +92,7 @@ impl Default for PluginsUi {
             busy: HashSet::new(),
             reloading: HashSet::new(),
             market: MarketUi::default(),
+            site_defaults: super::site_defaults::SiteDefaultsUi::default(),
             awaiting_consent: HashMap::new(),
             market_confirmed: HashMap::new(),
         }
@@ -136,6 +138,7 @@ impl ExtensionsView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         self.ensure_market_loaded(window, cx);
+        self.ensure_site_defaults_loaded(window, cx);
         let search = self.ensure_market_search(window, cx);
         self.schedule_ready_consents(window, cx);
         let query = search.read(cx).value().to_string();
@@ -230,6 +233,7 @@ impl ExtensionsView {
             } else {
                 list_card(installed, frame, cx)
             })
+            .children(self.render_site_defaults(frame, cx))
             .child(
                 v_flex()
                     .w_full()
@@ -1688,7 +1692,7 @@ fn parse_market_entries(
 }
 
 /// 列表卡片：一张 surface 卡片内纵向排列各行，行间 hairline 分隔（与下载表格同一「少线」风格）。
-fn list_card(rows: Vec<gpui::AnyElement>, frame: Frame<'_>, cx: &gpui::App) -> Div {
+pub(super) fn list_card(rows: Vec<gpui::AnyElement>, frame: Frame<'_>, cx: &gpui::App) -> Div {
     let count = rows.len();
     card(cx)
         .w_full()
@@ -1702,7 +1706,7 @@ fn list_card(rows: Vec<gpui::AnyElement>, frame: Frame<'_>, cx: &gpui::App) -> D
 }
 
 /// 列表行：横向排布、行内控件间距 `spacing.sm`，内边距 md / sm，悬停 `row_hover`。
-fn list_row(frame: Frame<'_>) -> Div {
+pub(super) fn list_row(frame: Frame<'_>) -> Div {
     let hover = frame.extended.colors.row_hover;
     h_flex()
         .w_full()

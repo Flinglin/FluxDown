@@ -732,6 +732,8 @@ pub struct NewTaskRow<'a> {
     pub origin_url: &'a str,
     pub audio_url: &'a str,
     pub resolver_plugin_id: &'a str,
+    /// 多个插件同时匹配且站点无默认插件：首次起跑时询问用户（`resolver_choice_pending`）。
+    pub resolver_choice_pending: bool,
     pub group_id: &'a str,
     pub resolver_item: &'a str,
     pub unattended: bool,
@@ -1325,6 +1327,15 @@ impl Db {
         // 时已按「全部文件」写 bt_selected_files（既有三态语义，见 create_task）。
         self.add_column_if_missing("tasks", "unattended", "INTEGER NOT NULL DEFAULT 0")
             .await?;
+        // 多插件冲突待选标记：建任务时多个已启用插件的 resolver 同时匹配且站点无可用默认
+        // 插件 → 1，resolver_plugin_id 先绑回退插件；首次 resolve 前询问用户（无人值守
+        // 按站点记录 / 回退插件）后改绑并清 0。任何显式改绑（set_task_resolver）同样清 0。
+        self.add_column_if_missing(
+            "tasks",
+            "resolver_choice_pending",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
         // 文件已存在询问的逐任务决定（'' / rename / overwrite / skip）：
         // 绑定「询问时的文件名」语义由 manager 保证；重命名/改目录/重新下载时清空。
         self.add_column_if_missing("tasks", "exists_decision", "TEXT NOT NULL DEFAULT ''")
@@ -1571,9 +1582,9 @@ impl Db {
                 "INSERT INTO tasks (id, url, file_name, name_inferred, save_dir, segments, status, error_message, \
                  created_at, proxy_url, queue_id, checksum, ignore_tls_errors, queue_order, cookies, referrer, \
                  extra_headers, origin_url, audio_url, resolver_plugin_id, group_id, resolver_item, unattended, \
-                 bt_selected_files) \
+                 bt_selected_files, resolver_choice_pending) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, \
-                 $20, $21, $22, $23, $24)",
+                 $20, $21, $22, $23, $24, $25)",
             )
             .bind(row.id)
             .bind(row.url)
@@ -1599,6 +1610,7 @@ impl Db {
             .bind(row.resolver_item)
             .bind(i32::from(row.unattended))
             .bind(row.bt_selected_files)
+            .bind(i32::from(row.resolver_choice_pending))
             .execute(&mut *tx)
             .await?;
             if !row.torrent_file_bytes.is_empty() {
@@ -3856,17 +3868,31 @@ impl Db {
 
     /// 设置任务的 resolver 插件 ID（空串 = 清除，供「忽略插件重试」逃生舱）。
     /// 仅存 ID、不存解析结果 —— 每次 start/resume 重新 resolve 是惰性防直链过期。
+    /// 显式绑定即终结多插件待选（`resolver_choice_pending` 清 0）。
     pub async fn set_task_resolver(
         &self,
         id: &str,
         resolver_plugin_id: &str,
     ) -> Result<(), DbError> {
-        sqlx::query("UPDATE tasks SET resolver_plugin_id = $1 WHERE id = $2")
-            .bind(resolver_plugin_id)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE tasks SET resolver_plugin_id = $1, resolver_choice_pending = 0 WHERE id = $2",
+        )
+        .bind(resolver_plugin_id)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
+    }
+
+    /// 任务是否仍待多插件选择（读不到 / 任务不存在按 false）。
+    pub async fn is_task_resolver_choice_pending(&self, id: &str) -> Result<bool, DbError> {
+        let row = sqlx::query("SELECT resolver_choice_pending FROM tasks WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row
+            .map(|r| r.try_get::<i32, _>("resolver_choice_pending").unwrap_or(0) != 0)
+            .unwrap_or(false))
     }
 
     /// 读取任务的 resolver 插件 ID（空串 = 无）。
@@ -3887,13 +3913,16 @@ impl Db {
     ///
     /// 不清则留下 orphaned 绑定：resume 时 resolver 已不存在，任务会以
     /// fail-closed 报错卡住。卸载即等价于对受影响任务批量应用「忽略插件、
-    /// 按原始链接重跑」逃生舱。返回受影响任务数。
+    /// 按原始链接重跑」逃生舱。多插件待选任务例外：绑定只是回退值，起跑时会在
+    /// 剩余候选里重新选择，清空反而会让它绕过仍能处理该链接的插件。返回受影响任务数。
     pub async fn clear_tasks_resolver(&self, resolver_plugin_id: &str) -> Result<u64, DbError> {
-        let r =
-            sqlx::query("UPDATE tasks SET resolver_plugin_id = '' WHERE resolver_plugin_id = $1")
-                .bind(resolver_plugin_id)
-                .execute(&self.pool)
-                .await?;
+        let r = sqlx::query(
+            "UPDATE tasks SET resolver_plugin_id = '' \
+             WHERE resolver_plugin_id = $1 AND resolver_choice_pending = 0",
+        )
+        .bind(resolver_plugin_id)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected())
     }
 
@@ -8356,6 +8385,7 @@ mod tests {
             group_id: "",
             resolver_item: "",
             unattended: false,
+            resolver_choice_pending: false,
             bt_selected_files: "",
             torrent_file_bytes: &[],
         }

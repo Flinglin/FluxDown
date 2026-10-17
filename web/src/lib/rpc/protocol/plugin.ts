@@ -62,6 +62,17 @@ export interface PluginContributionsDto {
   sniffRules: boolean;
 }
 
+/** 站点默认插件条目（`daemon.plugin.siteDefaults`，按 site 排序）。 */
+export interface PluginSiteDefaultDto {
+  site: string;
+  /** 当前默认插件 identity。 */
+  identity: string;
+  /** 可选插件 identity 集合。 */
+  candidates: string[];
+  /** true = 无人值守下载自动选定、尚未确认（普通下载仍会询问）；false = 用户已确认。 */
+  automatic: boolean;
+}
+
 /** plugin 层嗅探规则包；`pack` 为 null 表示从未有过插件规则（sequence 为 0）。 */
 export interface PluginSniffRulesDto {
   sequence: number;

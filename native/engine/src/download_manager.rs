@@ -2536,6 +2536,8 @@ struct PreparedTask {
     resolver_item: String,
     unattended_selection: bool,
     resolver_plugin_id: String,
+    /// 多插件同时匹配且站点无确认过的默认插件（见 `plugin::routing`）。
+    resolver_choice_pending: bool,
     is_bt: bool,
 }
 
@@ -2587,6 +2589,7 @@ impl PreparedTask {
                 .filter(|audio| !audio.is_empty())
                 .unwrap_or(""),
             resolver_plugin_id: &self.resolver_plugin_id,
+            resolver_choice_pending: self.resolver_choice_pending,
             group_id: &self.group_id,
             resolver_item: &self.resolver_item,
             unattended: self.unattended_selection,
@@ -2862,8 +2865,8 @@ pub struct ResolveOutcome {
     pub kind: ResolveKind,
     pub generation: u64,
     pub result: Result<Option<crate::plugin::ResolveResult>, crate::plugin::PluginError>,
-    /// 用户在变体选择弹窗点关闭/取消 → 取消该任务（而非回退默认变体）。
-    pub cancelled: bool,
+    /// 用户关闭变体 / 插件选择框 → 以该原因取消任务（而非回退默认项）。
+    pub cancelled: Option<crate::plugin::CancelReason>,
 }
 
 /// resolve 等待中的任务状态。Start 携 `QueuedTask`（再入覆盖 res 后分派）；
@@ -3510,17 +3513,21 @@ impl DownloadManager {
         self.plugin_retry_rx.take()
     }
 
-    /// 纯 Rust glob 首匹配（同步逻辑，async 仅因读 RwLock）。feature 关时恒空。
+    /// 建任务时的 resolver 绑定：`(插件 ID, 是否待多插件选择)`；无命中为空串。
     #[cfg(feature = "plugins")]
-    async fn plugin_match_resolver(&self, url: &str) -> String {
-        match &self.plugin_manager {
-            Some(pm) => pm.match_resolver(url).await.unwrap_or_default(),
-            None => String::new(),
-        }
+    async fn plugin_route_resolver(&self, url: &str) -> (String, bool) {
+        let route = match &self.plugin_manager {
+            Some(pm) => pm.route_resolver(url).await,
+            None => None,
+        };
+        route.map_or_else(
+            || (String::new(), false),
+            |route| (route.identity, route.choice_pending),
+        )
     }
     #[cfg(not(feature = "plugins"))]
-    async fn plugin_match_resolver(&self, _url: &str) -> String {
-        String::new()
+    async fn plugin_route_resolver(&self, _url: &str) -> (String, bool) {
+        (String::new(), false)
     }
 
     /// 前置预解析（多文件清单，B2 契约）：off-actor、只读，不建任务、不写库。
@@ -3655,6 +3662,7 @@ impl DownloadManager {
         kind: ResolveKind,
         generation: u64,
         unattended: bool,
+        choice_pending: bool,
         cancel: CancellationToken,
     ) {
         use futures_util::FutureExt;
@@ -3663,11 +3671,60 @@ impl DownloadManager {
         };
         let tx = self.resolve_tx.clone();
         let handle = pm.runtime_handle();
-        let id_for_worker = identity.clone();
         let selector = self.selector.clone();
         let second_stage = !req.resolver_item.is_empty();
         handle.spawn(async move {
-            let fut = std::panic::AssertUnwindSafe(pm.resolve(&id_for_worker, req));
+            let mut identity = identity;
+            // 多插件冲突待选：首次 resolve 前定案（站点默认 / 无人值守回退 / 询问用户），
+            // 写回任务绑定后再用选中的插件解析。二段解析沿用母任务插件，绝不询问。
+            if choice_pending && !second_stage {
+                let choice = tokio::select! {
+                    c = pm.choose_task_resolver(
+                        &task_id,
+                        &req.url,
+                        &identity,
+                        unattended,
+                        selector.as_ref(),
+                    ) => c,
+                    _ = cancel.cancelled() => return,
+                };
+                match choice {
+                    Ok(crate::plugin::routing::ResolverChoice::Use(chosen)) => identity = chosen,
+                    Ok(crate::plugin::routing::ResolverChoice::Cancelled) => {
+                        if tx
+                            .send(ResolveOutcome {
+                                task_id,
+                                identity,
+                                kind,
+                                generation,
+                                result: Ok(None),
+                                cancelled: Some(crate::plugin::CancelReason::UserCancelled),
+                            })
+                            .is_err()
+                        {
+                            tracing::debug!("download-manager notification receiver closed");
+                        }
+                        return;
+                    }
+                    Err(error) => {
+                        if tx
+                            .send(ResolveOutcome {
+                                task_id,
+                                identity,
+                                kind,
+                                generation,
+                                result: Err(error),
+                                cancelled: None,
+                            })
+                            .is_err()
+                        {
+                            tracing::debug!("download-manager notification receiver closed");
+                        }
+                        return;
+                    }
+                }
+            }
+            let fut = std::panic::AssertUnwindSafe(pm.resolve(&identity, req));
             // 暂停/取消/删除会 cancel 占位 token：立即丢弃 resolve future（释放
             // resolve/yt-dlp 信号量槽位），且不回流——占位已由触发方清理。
             let resolved = tokio::select! {
@@ -3691,7 +3748,7 @@ impl DownloadManager {
             // 二段解析（resolver_item 非空）与无人值守任务（tasks.unattended，
             // RSS/免打扰接管）绝不弹选择框：静默取默认变体（引擎自动裂变场景
             // 不为 N 个子任务弹 N 个选择框，A1 契约）。
-            let mut cancelled = false;
+            let mut cancelled = None;
             if cancel.is_cancelled() {
                 return;
             }
@@ -3705,7 +3762,9 @@ impl DownloadManager {
                         c = collapse_resolve_variants(&task_id, res, selector.as_ref()) => c,
                         _ = cancel.cancelled() => return,
                     };
-                    cancelled = selected;
+                    if selected {
+                        cancelled = Some(crate::plugin::CancelReason::VariantSelectionCancelled);
+                    }
                 }
             }
             if tx
@@ -3753,19 +3812,16 @@ impl DownloadManager {
             }
             return;
         }
-        // 用户在变体选择弹窗点关闭/取消 → 取消该任务（cancel_task 会清 pending_resolve /
+        // 用户在变体 / 插件选择弹窗点关闭/取消 → 取消该任务（cancel_task 会清 pending_resolve /
         // active_tasks 占位、置 status=4、drain_queue）。放在世代守卫之后：确认本 outcome
         // 拥有当前 pending 条目才动手。
-        if out.cancelled {
+        if let Some(reason) = out.cancelled {
             log_info!(
-                "[plugin-resolve] task {} variant selection cancelled by user, cancelling task",
-                task_id
+                "[plugin-resolve] task {} selection cancelled by user ({:?}), cancelling task",
+                task_id,
+                reason
             );
-            self.cancel_task_with_reason(
-                &task_id,
-                crate::plugin::CancelReason::VariantSelectionCancelled,
-            )
-            .await;
+            self.cancel_task_with_reason(&task_id, reason).await;
             return;
         }
         // 任务已从 DB 删除（兜底；delete_task 亦已清 pending_resolve）→ 放弃再入。
@@ -4276,6 +4332,7 @@ impl DownloadManager {
             },
         );
         let unattended = self.db.is_task_unattended(&task_id).await.unwrap_or(false);
+        let choice_pending = self.resolver_choice_pending(&task_id).await;
         self.spawn_resolve_worker(
             task_id,
             identity,
@@ -4283,8 +4340,26 @@ impl DownloadManager {
             ResolveKind::Start,
             spawn_gen,
             unattended,
+            choice_pending,
             resolve_token,
         );
+    }
+
+    /// 任务是否仍待多插件选择。读库失败按「不询问」处理：沿用已绑定的回退插件，
+    /// 与该插件独占匹配时的行为一致。
+    #[cfg(feature = "plugins")]
+    async fn resolver_choice_pending(&self, task_id: &str) -> bool {
+        match self.db.is_task_resolver_choice_pending(task_id).await {
+            Ok(pending) => pending,
+            Err(error) => {
+                crate::logger::report_error(
+                    "download-manager",
+                    "load plugin choice pending flag",
+                    &error,
+                );
+                false
+            }
+        }
     }
 
     /// do_resume_task 体首守卫调用：对称占位（防 resumeAll 并发双 resolve）+ spawn。
@@ -4412,6 +4487,7 @@ impl DownloadManager {
                 generation: spawn_gen,
             },
         );
+        let choice_pending = self.resolver_choice_pending(task_id).await;
         self.spawn_resolve_worker(
             task_id.to_string(),
             identity,
@@ -4419,6 +4495,7 @@ impl DownloadManager {
             ResolveKind::Resume,
             spawn_gen,
             unattended,
+            choice_pending,
             resolve_token,
         );
     }
@@ -7607,7 +7684,9 @@ impl DownloadManager {
                 }
             }
         };
-        let resolver_plugin_id = self.plugin_match_resolver(&url).await;
+        let (resolver_plugin_id, choice_pending) = self.plugin_route_resolver(&url).await;
+        // 二段解析任务（resolver_item 非空）沿用来源插件，不进入多插件选择。
+        let resolver_choice_pending = choice_pending && resolver_item.is_empty();
         let is_bt = is_magnet(&url) || !torrent_file_bytes.is_empty();
         // 稍后下载的 hint 任务（一次性 URL，不探测）：名字为空时按 URL 推断占位名
         // （含预签名 URL 的 `response-content-disposition`），随创建行一并落库，
@@ -7656,6 +7735,7 @@ impl DownloadManager {
             resolver_item,
             unattended_selection,
             resolver_plugin_id,
+            resolver_choice_pending,
             is_bt,
         }))
     }

@@ -86,6 +86,8 @@ export const METHOD = {
   DAEMON_PLUGIN_MARKET_LIST: 'daemon.plugin.marketList',
   DAEMON_PLUGIN_MARKET_INSTALL: 'daemon.plugin.marketInstall',
   DAEMON_PLUGIN_IGNORE_RETRY: 'daemon.plugin.ignoreRetry',
+  DAEMON_PLUGIN_SITE_DEFAULTS: 'daemon.plugin.siteDefaults',
+  DAEMON_PLUGIN_SET_SITE_DEFAULT: 'daemon.plugin.setSiteDefault',
   DAEMON_PLUGIN_CONSENT: 'daemon.plugin.consent',
   DAEMON_PLUGIN_AUDIT_LIST: 'daemon.plugin.audit.list',
   DAEMON_PLUGIN_AUDIT_CLEAR: 'daemon.plugin.audit.clear',

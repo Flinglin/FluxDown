@@ -166,6 +166,8 @@ impl ExtensionsView {
     pub(crate) fn show_tab(&mut self, tab: ExtensionsTab, cx: &mut Context<Self>) {
         if self.tab != tab {
             self.tab = tab;
+            // 每次进入插件页都重新读取站点默认插件（下载过程中可能新增自动记录）。
+            self.plugins.site_defaults.requested = false;
             cx.notify();
         }
     }

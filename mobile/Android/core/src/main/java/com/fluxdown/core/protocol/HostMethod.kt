@@ -91,6 +91,8 @@ object HostMethod {
     const val daemonPluginMarketList = "daemon.plugin.marketList"
     const val daemonPluginMarketInstall = "daemon.plugin.marketInstall"
     const val daemonPluginIgnoreRetry = "daemon.plugin.ignoreRetry"
+    const val daemonPluginSiteDefaults = "daemon.plugin.siteDefaults"
+    const val daemonPluginSetSiteDefault = "daemon.plugin.setSiteDefault"
     const val daemonPluginConsent = "daemon.plugin.consent"
     const val daemonPluginAuditList = "daemon.plugin.audit.list"
     const val daemonPluginAuditClear = "daemon.plugin.audit.clear"

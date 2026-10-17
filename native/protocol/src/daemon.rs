@@ -45,6 +45,56 @@ pub enum SelectionKind {
         /// 该任务允许的动作；恒含 `rename`。
         actions: Vec<FileExistsAction>,
     },
+    /// 多个已启用插件的 resolver 同时匹配该任务链接，且该站点没有可用的默认插件：
+    /// 由用户选择本次使用的插件，可选记为站点默认插件。
+    #[serde(rename_all = "camelCase")]
+    Plugin {
+        /// 站点键（链接主机名，小写、去掉 `www.` 前缀）；也是站点默认插件的键。
+        site: String,
+        /// 任务原始链接（只用于展示）。
+        url: String,
+        /// 候选插件，按 identity 升序；默认项见 `default_choice`。
+        candidates: Vec<PluginCandidateDto>,
+    },
+}
+
+/// 多插件选择的候选项（取自插件 manifest，主机侧算好，远程客户端无需再查插件列表）。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCandidateDto {
+    pub identity: String,
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// 站点默认插件（`daemon.plugin.siteDefaults` 列表项）。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSiteDefaultDto {
+    /// 站点键（主机名，小写、去掉 `www.` 前缀）。
+    pub site: String,
+    /// 该站点使用的插件。
+    pub identity: String,
+    /// 记录时的冲突插件集合（升序）；出现集合外的新插件时会重新询问。
+    pub candidates: Vec<String>,
+    /// `true` = 无人值守下载（RSS / 远程派发 / 免打扰跳过二次选择）自动选用、尚未经用户
+    /// 确认；有界面的下载仍会询问。`false` = 用户确认过的站点默认插件。
+    pub automatic: bool,
+}
+
+/// `daemon.plugin.setSiteDefault`：`identity` 为 `None` 时删除该站点记录；否则把该站点
+/// 确认为使用 `identity`（必须是记录里的候选插件之一）。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSetSiteDefaultParams {
+    pub site: String,
+    #[serde(default)]
+    pub identity: Option<String>,
 }
 
 /// 文件已存在时可选的处理动作。
@@ -69,10 +119,23 @@ pub enum FileExistsAction {
     rename_all_fields = "camelCase"
 )]
 pub enum SelectionOutcome {
-    Hls { index: i32 },
-    Bt { indices: Vec<i32> },
-    Variant { index: i32 },
-    FileExists { action: FileExistsAction },
+    Hls {
+        index: i32,
+    },
+    Bt {
+        indices: Vec<i32>,
+    },
+    Variant {
+        index: i32,
+    },
+    FileExists {
+        action: FileExistsAction,
+    },
+    /// 应答 [`SelectionKind::Plugin`]：`remember` = 记为该站点的默认插件，以后不再询问。
+    Plugin {
+        identity: String,
+        remember: bool,
+    },
     Cancelled,
 }
 

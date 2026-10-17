@@ -983,6 +983,39 @@ impl DaemonService {
                 .await
             }
             #[cfg(feature = "plugins")]
+            method::DAEMON_PLUGIN_SITE_DEFAULTS => {
+                let defaults = self
+                    .plugin_manager()?
+                    .site_defaults()
+                    .await
+                    .map_err(|error| internal_error(format!("{error:#}")))?;
+                to_value(
+                    defaults
+                        .into_iter()
+                        .map(|entry| fluxdown_protocol::PluginSiteDefaultDto {
+                            site: entry.site,
+                            identity: entry.identity,
+                            candidates: entry.candidates,
+                            automatic: entry.automatic,
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }
+            #[cfg(feature = "plugins")]
+            method::DAEMON_PLUGIN_SET_SITE_DEFAULT => {
+                let params = parse_params::<fluxdown_protocol::PluginSetSiteDefaultParams>(params)?;
+                self.plugin_manager()?
+                    .set_site_default(&params.site, params.identity.as_deref())
+                    .await
+                    .map_err(|error| match error {
+                        fluxdown_engine::plugin::PluginError::InvalidSetting { key, message } => {
+                            invalid_argument(&key, &message)
+                        }
+                        other => internal_error(format!("{other:#}")),
+                    })?;
+                Ok(json!({ "ok": true }))
+            }
+            #[cfg(feature = "plugins")]
             method::DAEMON_PLUGIN_VIEW_OPEN
             | method::DAEMON_PLUGIN_VIEW_EVENT
             | method::DAEMON_PLUGIN_VIEW_CLOSE
@@ -1012,6 +1045,8 @@ impl DaemonService {
             | method::DAEMON_PLUGIN_MARKET_LIST
             | method::DAEMON_PLUGIN_MARKET_INSTALL
             | method::DAEMON_PLUGIN_IGNORE_RETRY
+            | method::DAEMON_PLUGIN_SITE_DEFAULTS
+            | method::DAEMON_PLUGIN_SET_SITE_DEFAULT
             | method::DAEMON_PLUGIN_CONSENT
             | method::DAEMON_PLUGIN_AUDIT_LIST
             | method::DAEMON_PLUGIN_AUDIT_CLEAR

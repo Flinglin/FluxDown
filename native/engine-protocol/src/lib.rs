@@ -8,11 +8,12 @@ use fluxdown_engine::model::{
     ResolveVariantOption, SegmentDetail, SourceBytes, TaskInfo,
 };
 use fluxdown_engine::rss::model::{RssItemInfo, RssSourceInfo};
+use fluxdown_engine::selection::PluginCandidate;
 use fluxdown_engine::webhook::{PresetInfo, TaskNotice, WebhookDelivery};
 use fluxdown_protocol::daemon::{
-    BtFileDto, CdnNodeDto, GroupDto, HlsQualityOptionDto, QueueDto, QueuePositionDto, RequestBody,
-    ResolveVariantOptionDto, RssItemDto, RssSourceDto, SegmentDetailDto, TaskDto,
-    WebhookDeliveryDto, WebhookPresetDto,
+    BtFileDto, CdnNodeDto, GroupDto, HlsQualityOptionDto, PluginCandidateDto, QueueDto,
+    QueuePositionDto, RequestBody, ResolveVariantOptionDto, RssItemDto, RssSourceDto,
+    SegmentDetailDto, TaskDto, WebhookDeliveryDto, WebhookPresetDto,
 };
 #[cfg(feature = "components")]
 use fluxdown_protocol::daemon::{ComponentFfmpegStatus, ComponentVersions, ComponentYtdlpStatus};
@@ -321,6 +322,17 @@ pub fn resolve_variant_option_to_dto(option: ResolveVariantOption) -> ResolveVar
         width: option.width,
         height: option.height,
         total_bytes: option.total_bytes,
+    }
+}
+
+/// 将多插件选择的候选插件转换为 wire DTO。
+#[must_use]
+pub fn plugin_candidate_to_dto(candidate: PluginCandidate) -> PluginCandidateDto {
+    PluginCandidateDto {
+        identity: candidate.identity,
+        name: candidate.name,
+        version: candidate.version,
+        description: candidate.description,
     }
 }
 

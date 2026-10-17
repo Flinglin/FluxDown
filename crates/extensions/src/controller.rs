@@ -354,6 +354,23 @@ impl ExtensionsController {
         self.call(method::DAEMON_PLUGIN_MARKET_LIST, serde_json::json!({}))
     }
 
+    /// 站点默认插件列表（按站点升序）。
+    pub fn site_defaults(&self) -> PortFuture<serde_json::Value> {
+        self.call(method::DAEMON_PLUGIN_SITE_DEFAULTS, serde_json::json!({}))
+    }
+
+    /// `identity = None` 删除该站点记录（之后重新询问）；否则确认 / 更改为该插件。
+    pub fn set_site_default(
+        &self,
+        site: String,
+        identity: Option<String>,
+    ) -> PortFuture<serde_json::Value> {
+        self.call(
+            method::DAEMON_PLUGIN_SET_SITE_DEFAULT,
+            serde_json::json!({ "site": site, "identity": identity }),
+        )
+    }
+
     /// `version` = 用户确认权限时看到的版本；市场最新版本已变化时 daemon 拒绝安装。
     pub fn market_install(
         &self,

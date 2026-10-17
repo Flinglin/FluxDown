@@ -93,6 +93,10 @@ pub const DAEMON_PLUGIN_UNINSTALL: &str = "daemon.plugin.uninstall";
 pub const DAEMON_PLUGIN_MARKET_LIST: &str = "daemon.plugin.marketList";
 pub const DAEMON_PLUGIN_MARKET_INSTALL: &str = "daemon.plugin.marketInstall";
 pub const DAEMON_PLUGIN_IGNORE_RETRY: &str = "daemon.plugin.ignoreRetry";
+/// 列出站点默认插件（多插件冲突的记忆选择，`Vec<PluginSiteDefaultDto>`）。
+pub const DAEMON_PLUGIN_SITE_DEFAULTS: &str = "daemon.plugin.siteDefaults";
+/// 确认 / 改选 / 删除站点默认插件（`PluginSetSiteDefaultParams`）。
+pub const DAEMON_PLUGIN_SET_SITE_DEFAULT: &str = "daemon.plugin.setSiteDefault";
 /// 授权插件请求的全部能力（`{identity, permissions, networkHosts}`，集合须与请求完全一致）。
 pub const DAEMON_PLUGIN_CONSENT: &str = "daemon.plugin.consent";
 /// 分页读取插件审计（`{identity?, beforeId?, limit?}`）。
@@ -389,6 +393,8 @@ pub const ALL_METHODS: &[&str] = &[
     DAEMON_PLUGIN_MARKET_LIST,
     DAEMON_PLUGIN_MARKET_INSTALL,
     DAEMON_PLUGIN_IGNORE_RETRY,
+    DAEMON_PLUGIN_SITE_DEFAULTS,
+    DAEMON_PLUGIN_SET_SITE_DEFAULT,
     DAEMON_PLUGIN_CONSENT,
     DAEMON_PLUGIN_AUDIT_LIST,
     DAEMON_PLUGIN_AUDIT_CLEAR,
