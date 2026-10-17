@@ -17,6 +17,17 @@ import type { CapturedBody } from "./request-cache";
 import { getCachedProfiles, getCachedSettings } from "./settings-cache";
 import { incrementStat } from "./stats";
 import { maybeArmTaskPollForChannel } from "./tasks";
+import { getEngine } from "./rules-store";
+
+/**
+ * 补上 request 阶段 headers 规则为该 URL 声明的请求头，只补缺失的名字（浏览器真实请求头优先）。
+ * 单条与批量下载共用。
+ */
+export function withRuleHeaders(url: string, pageUrl: string, headers: Record<string, string>): Record<string, string> {
+  const present = new Set(Object.keys(headers).map((name) => name.toLowerCase()));
+  const missing = Object.entries(getEngine().requestHeaders(url, pageUrl)).filter(([name]) => !present.has(name));
+  return missing.length > 0 ? { ...headers, ...Object.fromEntries(missing) } : headers;
+}
 
 /** 一次发送请求（单条下载）。 */
 export interface SendInput {
@@ -189,6 +200,9 @@ export async function sendToFluxDown(input: SendInput): Promise<SendOutcome> {
   if (Object.keys(extraHeaders).length === 0 && storedHeaders && Object.keys(storedHeaders).length > 0) {
     extraHeaders = storedHeaders;
   }
+
+  // 策略 4：request 阶段 headers 规则为该 CDN 声明的请求头（Referer / Origin 等）。
+  extraHeaders = withRuleHeaders(url, referrer || "", extraHeaders);
 
   // #610：所有下载路径统一兜底补上浏览器真实 UA。
   extraHeaders = withBrowserUserAgent(extraHeaders) ?? extraHeaders;

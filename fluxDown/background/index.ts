@@ -18,6 +18,7 @@ import {
   syncDownloadShelfState,
 } from "./intercept";
 import { createContextMenus, installMenus } from "./menus";
+import { downloadPlayingMedia } from "./downloads";
 import { installMessages } from "./messages";
 import { notify } from "./notify";
 import { installPorts } from "./ports";
@@ -84,6 +85,10 @@ export function startBackground(): void {
 
   // 快捷键切换拦截开关（替代原来的 Alt+Click 绕过机制）
   browser.commands.onCommand.addListener(async (command) => {
+    if (command === "download-playing-media") {
+      await downloadPlayingMedia();
+      return;
+    }
     if (command !== "toggle-intercept") return;
     const settings = await loadSettings();
     const enabled = !settings.enabled;
