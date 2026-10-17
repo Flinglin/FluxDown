@@ -95,10 +95,11 @@ cd website && npm run dev             # 官网 Astro localhost:4321
 cd fluxDown && npm run dev            # 扩展开发（Chrome）；dev:firefox / build / zip
 cd mobile/Android && ./gradlew :core:testDebugUnitTest :bridge:testDebugUnitTest :app:assembleDebug   # 原生 Android（JAVA_HOME = Android Studio 自带 JBR；:bridge 经 cargo-ndk 编译 fluxdown_mobile）
 mobile/Android/scripts/package.sh --version X.Y.Z[-后缀] --signing <签名属性文件>   # 原生 Android release 签名 APK（universal + 各 ABI）；CI = android-package.yml（见 .omp/knowledge/ops.md「原生 Android 打包」）
-mobile/FluxDown/scripts/build-core.sh [--release]   # 原生 iOS：编 fluxdown_mobile 为 xcframework + 生成 Swift 绑定（改 Rust 后必须重跑；产物 gitignore）
+mobile/FluxDown/scripts/build-core.sh [--release] [--flavor store|full]   # 原生 iOS：编 fluxdown_mobile 为 xcframework + 生成 Swift 绑定（改 Rust 后必须重跑；产物 gitignore）；默认 full，store = 追加 --no-default-features 剔除 BT/eD2K
 cd mobile/FluxDown/FluxKit && xcodebuild test -scheme FluxKit-Package -destination 'platform=iOS Simulator,name=iPhone 18 Pro'   # iOS 领域层 + 真实 FFI 冒烟
 cd mobile/FluxDown && xcodebuild build -project FluxDown.xcodeproj -scheme FluxDown -destination 'generic/platform=iOS Simulator' && python3 scripts/check-i18n.py   # iOS App 构建 + 文案键校验
-mobile/FluxDown/scripts/testflight.sh --version X.Y.Z --build N [--upload]   # iOS App Store 签名 IPA；缺省只 altool 校验，CI = ios-testflight.yml（见 .omp/knowledge/ops.md「iOS TestFlight」）
+mobile/FluxDown/scripts/testflight.sh --version X.Y.Z --build N [--upload]   # iOS App Store 签名 IPA（固定 store flavor）；缺省只 altool 校验，CI = ios-testflight.yml（见 .omp/knowledge/ops.md「iOS TestFlight」）
+mobile/FluxDown/scripts/sideload.sh --version X.Y.Z --build N   # iOS 完整版（full flavor）未签名 IPA，供用户侧载自签；CI = ios-sideload.yml
 
 # ── OpenAPI / 图标 / 发布 ──
 cargo run -p fluxdown_api --example gen_openapi > website-v2/public/openapi.json   # 改 API 后重生成
@@ -138,7 +139,7 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 - `fluxdown_mobile`（`native/mobile`）：原生移动端（Android / iOS）唯一 Rust 入口，UniFFI 导出 `FluxCore` / `HostSession`；本机主机 = 进程内 `fluxdown_daemon::runtime::run_with` + `fluxdown_agent` 嵌入模式（`start_embedded` / `LocalConnection`，不起 TCP 网关、NMH、自启、子进程），远端主机 = WebSocket `/rpc` + 访问密钥。握手、epoch/sequence 游标、缓冲、重同步、重连退避与 800ms 离线宽限都在这里，Kotlin / Swift 只应用已接受的信号。手写零 unsafe，UniFFI 宏胶水为独立审计边界。
 - `fluxdown_link`（`native/link`）：局域网直连 L1 协议（身份 / 配对 SAS / mDNS / 直连传输 / 地址解析），持久化经 `LinkStorage` trait 注入；agent 为生产宿主。零引擎、零数据库、零 UI 依赖。
 - `fluxdown_logfile`（`native/logfile`）：desktop 与 agent 共用的诊断日志文件（轮转 + 重复限流 + panic hook），零第三方依赖；`log` / `tracing` 适配留在各宿主。细节见 `.omp/knowledge/ops.md`「日志系统」。
-- **feature 门控**：`plugins`、`components`（默认关；desktop/server 开，mobile/CLI 关）。**关插件时下载主链路零行为变化**（注入 no-op `PluginManager`）。
+- **feature 门控**：`plugins`、`components`（默认关；desktop/server 开，mobile/CLI 关）。**关插件时下载主链路零行为变化**（注入 no-op `PluginManager`）。`bt`、`ed2k`（engine / engine_protocol / daemon / cli 默认开）与 `fluxdown_mobile` 的 `p2p`（default 唯一成员）：iOS 商店 flavor 以 `--no-default-features` 编译期剔除 librqbit 与 eD2K，建此类任务返回 `BT_DISABLED_MESSAGE` 类明确拒绝；Swift 侧对应条件 `FULL_P2P`（store 不定义，商店包不得残留 BT/eD2K 入口、scheme、文档类型，Apple 2.3.1 / 5.2.3），远端主机上的 BT 任务仍可显示与控制。细节见 `.omp/knowledge/clients.md` iOS 段。
 
 **编译期陷阱**
 - rquickjs（`engine/Cargo.toml`）：禁止叠加 `rust-alloc`/`allocator`（会让 `set_memory_limit` 静默失效）；必带 `parallel`（`AsyncRuntime`/`AsyncContext` 的 Send/Sync 依赖它）。
