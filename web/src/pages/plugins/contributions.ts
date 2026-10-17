@@ -19,10 +19,11 @@ export interface PluginViewRef {
   view: PluginViewDeclDto
 }
 
+// Web 无法运行桌面脚本：只有桌面实现（`portable: false`）的视图不出现在任何入口。
 function viewsAt(plugins: readonly PluginDto[], location: string): PluginViewRef[] {
   return plugins.filter(pluginUsable).flatMap((plugin) =>
     plugin.contributions.views
-      .filter((view) => view.location === location)
+      .filter((view) => view.portable && view.location === location)
       .map((view) => ({ identity: plugin.identity, pluginName: plugin.name, view })),
   )
 }
@@ -89,9 +90,9 @@ export function deriveDetailTabs(plugins: readonly PluginDto[]): PluginDetailTab
   return viewsAt(plugins, 'taskDetail').map((ref) => ({ ...ref, value: pluginRouteId(ref.identity, ref.view.id) }))
 }
 
-/** 插件的设置视图（至多一个；插件未启用 / 授权不全时仍可设置，故不按 usable 过滤）。 */
+/** 插件的可移植设置视图（至多一个；插件未启用 / 授权不全时仍可设置，故不按 usable 过滤）。 */
 export function settingsViewOf(plugin: PluginDto): PluginViewDeclDto | undefined {
-  return plugin.contributions.views.find((view) => view.location === 'settings')
+  return plugin.contributions.views.find((view) => view.portable && view.location === 'settings')
 }
 
 // ── 命令 ──

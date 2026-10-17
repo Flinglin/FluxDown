@@ -45,11 +45,7 @@ function TaskDetail({ view }: { view: DownloadTaskView }) {
         {active === 'log' ? <LogTab taskId={view.taskId} /> : null}
         {active === 'advanced' ? <AdvancedTab view={view} /> : null}
         {pluginTab && active === pluginTab.value ? (
-          pluginTab.view.portable ? (
-            <PluginViewHost key={`${pluginTab.value}/${view.taskId}`} identity={pluginTab.identity} view={pluginTab.view.id} taskId={view.taskId} />
-          ) : (
-            <div className="py-6 text-center text-sm text-muted-foreground">{t('pluginViewDesktopOnly')}</div>
-          )
+          <PluginViewHost key={`${pluginTab.value}/${view.taskId}`} identity={pluginTab.identity} view={pluginTab.view.id} taskId={view.taskId} />
         ) : null}
       </div>
     </div>

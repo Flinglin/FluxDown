@@ -91,4 +91,18 @@ describe('plugin contributions', () => {
     expect(derivePaletteCommands(good).map((command) => command.id)).toEqual(['refresh'])
     expect(derivePaletteCommands(pending)).toEqual([])
   })
+
+  test('desktop-only views are hidden from every entry', () => {
+    const desktopOnly = plugin({
+      identity: 'f@x',
+      contributions: {
+        views: [view('panel', 'activity', false), view('info', 'taskDetail', false), view('cfg', 'settings', false)],
+        commands: [],
+        sniffRules: false,
+      },
+    })
+    expect(deriveActivityEntries([desktopOnly])).toEqual([])
+    expect(deriveDetailTabs([desktopOnly])).toEqual([])
+    expect(settingsViewOf(desktopOnly)).toBeUndefined()
+  })
 })

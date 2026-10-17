@@ -273,13 +273,7 @@ function SettingsBody({ plugin, onClose }: { plugin: PluginDto; onClose: () => v
           />
         </div>
       ) : null}
-      {settingsView && activeTab === 'view' ? (
-        settingsView.portable ? (
-          <PluginViewHost identity={plugin.identity} view={settingsView.id} />
-        ) : (
-          <div className="py-6 text-center text-sm text-muted-foreground">{t('pluginViewDesktopOnly')}</div>
-        )
-      ) : null}
+      {settingsView && activeTab === 'view' ? <PluginViewHost identity={plugin.identity} view={settingsView.id} /> : null}
       <div className={activeTab === 'basic' ? 'flex w-full flex-col gap-4 py-1' : 'hidden'}>
         {serverError ? (
           <div role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">

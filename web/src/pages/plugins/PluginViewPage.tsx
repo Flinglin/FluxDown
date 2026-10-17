@@ -1,5 +1,5 @@
 // 插件活动页 `/plugins/$pluginId/$viewId`：页头（插件名 + 视图标题 + palette 命令按钮）+ 可移植视图。
-// 只有桌面实现（无 `main`）的视图显示「仅桌面」占位卡片。
+// 只有桌面实现的视图不在 Web 出现，直接访问其地址按「不存在」处理。
 
 import { useParams } from '@tanstack/react-router'
 import { MonitorSmartphone } from 'lucide-react'
@@ -34,7 +34,7 @@ export function PluginViewPage() {
   const { pluginId, viewId } = useParams({ strict: false }) as { pluginId?: string; viewId?: string }
   const plugins = usePlugins()
   const plugin = plugins.find((item) => item.identity === pluginId)
-  const view = plugin?.contributions.views.find((item) => item.id === viewId)
+  const view = plugin?.contributions.views.find((item) => item.id === viewId && item.portable)
 
   if (!plugin || !view) {
     return <EmptyState icon={MonitorSmartphone} title={t('pluginViewClosed')} className="flex-1" />
@@ -52,13 +52,7 @@ export function PluginViewPage() {
         ))}
       </header>
       <div className="min-h-0 flex-1 overflow-auto p-4">
-        {view.portable ? (
-          <PluginViewHost key={`${plugin.identity}/${view.id}`} identity={plugin.identity} view={view.id} />
-        ) : (
-          <div className="mx-auto max-w-md rounded-md border border-hairline bg-surface">
-            <EmptyState icon={MonitorSmartphone} title={t('pluginViewDesktopOnly')} />
-          </div>
-        )}
+        <PluginViewHost key={`${plugin.identity}/${view.id}`} identity={plugin.identity} view={view.id} />
       </div>
     </div>
   )
