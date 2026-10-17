@@ -796,7 +796,8 @@ pub struct PluginViewDeclDto {
     pub title: String,
     /// `activity` / `settings` / `taskDetail` / `window`。
     pub location: String,
-    /// 是否有可移植实现（manifest 声明了 `main`，视图由 main 内的 `flux.ui.view` 提供）。
+    /// 是否有可移植实现（由 main 内的 `flux.ui.view` 提供）：无 `desktop` 的视图恒为 true，
+    /// 带 `desktop` 的视图仅在 manifest 显式 `portable: true` 时为 true。
     #[serde(default)]
     pub portable: bool,
     /// 桌面增强实现（仅 GPUI 桌面端经 gpui-shell 运行，daemon 不执行）。

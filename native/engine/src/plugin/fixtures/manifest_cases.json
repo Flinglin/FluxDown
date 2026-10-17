@@ -847,6 +847,71 @@
   "risk": "full"
  },
  {
+  "name": "desktop view portable with main ok",
+  "manifest": {
+   "identity": "a@b",
+   "name": "N",
+   "version": "1.0.0",
+   "permissions": ["desktop"],
+   "main": { "entry": "main.js" },
+   "contributes": {
+    "views": [
+     { "id": "p", "title": "T", "location": "activity", "portable": true, "desktop": { "entry": "ui/p.js" } }
+    ]
+   }
+  },
+  "files": ["main.js", "ui/p.js"],
+  "ok": true,
+  "risk": "full"
+ },
+ {
+  "name": "desktop view portable without main",
+  "manifest": {
+   "identity": "a@b",
+   "name": "N",
+   "version": "1.0.0",
+   "permissions": ["desktop"],
+   "contributes": {
+    "views": [
+     { "id": "p", "title": "T", "location": "activity", "portable": true, "desktop": { "entry": "ui/p.js" } }
+    ]
+   }
+  },
+  "files": ["ui/p.js"],
+  "ok": false
+ },
+ {
+  "name": "portable without desktop",
+  "manifest": {
+   "identity": "a@b",
+   "name": "N",
+   "version": "1.0.0",
+   "main": { "entry": "main.js" },
+   "contributes": {
+    "views": [{ "id": "p", "title": "T", "location": "activity", "portable": true }]
+   }
+  },
+  "files": ["main.js"],
+  "ok": false
+ },
+ {
+  "name": "portable not boolean",
+  "manifest": {
+   "identity": "a@b",
+   "name": "N",
+   "version": "1.0.0",
+   "permissions": ["desktop"],
+   "main": { "entry": "main.js" },
+   "contributes": {
+    "views": [
+     { "id": "p", "title": "T", "location": "activity", "portable": "yes", "desktop": { "entry": "ui/p.js" } }
+    ]
+   }
+  },
+  "files": ["main.js", "ui/p.js"],
+  "ok": false
+ },
+ {
   "name": "desktop without desktop permission",
   "manifest": {
    "identity": "a@b",

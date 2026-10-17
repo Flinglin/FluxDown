@@ -121,6 +121,7 @@ sourceHash: "2d3cf352657e"
 | `title` | 是 | 1–40 个字符。 |
 | `location` | 是 | `activity`、`settings`、`taskDetail` 或 `window`；`settings` 至多一个视图使用。 |
 | `desktop` | 否 | 仅桌面端的增强实现，见下。没有 `desktop` 的视图是可移植视图，要求声明 `main`。 |
+| `portable` | 否 | 仅允许与 `desktop` 同时声明。`true` 表示 `main` 也经 `flux.ui.view` 实现了该视图，Web 与移动端可显示（要求声明 `main`）；缺省 `false` = 仅桌面端，其他客户端显示「仅桌面端可用」。 |
 
 `desktop`：
 

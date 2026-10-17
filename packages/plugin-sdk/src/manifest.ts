@@ -291,7 +291,7 @@ function checkContributes(
         errors.push("view 须为对象");
         continue;
       }
-      unknownKeys(errors, "view", view, ["id", "title", "location", "desktop"]);
+      unknownKeys(errors, "view", view, ["id", "title", "location", "desktop", "portable"]);
       if (!isValidContributionId(view.id)) {
         errors.push(`view id '${String(view.id)}' 非法：须匹配 ^[a-z][a-z0-9-]{0,31}$`);
       } else if (seen.has(view.id)) {
@@ -306,9 +306,15 @@ function checkContributes(
       if (view.location === "settings" && ++settingsViews > 1) {
         errors.push("location 为 settings 的 view 至多 1 个");
       }
-      if (view.desktop === undefined || view.desktop === null) {
-        if (!hasMain) errors.push(`view '${String(view.id)}' 未声明 desktop，必须声明 main`);
+      const hasDesktop = view.desktop !== undefined && view.desktop !== null;
+      if (view.portable !== undefined && typeof view.portable !== "boolean") {
+        errors.push(`view '${String(view.id)}' portable 须为布尔值`);
+      }
+      if (!hasDesktop) {
+        if (view.portable === true) errors.push(`view '${String(view.id)}' 的 portable 仅允许与 desktop 同时声明`);
       } else checkDesktop(errors, view, view.desktop, files, permissions);
+      const portable = !hasDesktop || view.portable === true;
+      if (portable && !hasMain) errors.push(`view '${String(view.id)}' 有可移植实现，必须声明 main`);
     }
   }
 

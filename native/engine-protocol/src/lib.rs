@@ -456,7 +456,7 @@ pub fn plugin_info_to_dto(
         resolver_urls: plugin.resolver_urls,
         load_status: plugin.load_status,
         load_error: plugin.load_error,
-        contributions: plugin_contributions_to_dto(&plugin.contributions, plugin.has_main),
+        contributions: plugin_contributions_to_dto(&plugin.contributions),
         risk: plugin.risk.as_str().to_owned(),
         consent_pending: plugin.consent_pending,
         consent_pending_hosts: plugin.consent_pending_hosts,
@@ -468,7 +468,6 @@ pub fn plugin_info_to_dto(
 #[cfg(feature = "plugins")]
 fn plugin_contributions_to_dto(
     contributes: &fluxdown_engine::plugin::manifest::ContributesDecl,
-    has_main: bool,
 ) -> fluxdown_protocol::daemon::PluginContributionsDto {
     use fluxdown_protocol::daemon::{
         PluginCommandDeclDto, PluginContributionsDto, PluginDesktopEntryDto, PluginViewDeclDto,
@@ -481,7 +480,7 @@ fn plugin_contributions_to_dto(
                 id: view.id.clone(),
                 title: view.title.clone(),
                 location: view.location.as_str().to_owned(),
-                portable: has_main,
+                portable: view.is_portable(),
                 desktop: view.desktop.as_ref().map(|d| PluginDesktopEntryDto {
                     entry: d.entry.clone(),
                     width: d.width,

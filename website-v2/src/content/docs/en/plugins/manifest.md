@@ -121,6 +121,7 @@ Empty `views` / `commands` arrays are the same as leaving them out.
 | `title` | yes | 1–40 characters. |
 | `location` | yes | `activity`, `settings`, `taskDetail` or `window`. At most one view may use `settings`. |
 | `desktop` | no | Desktop-only implementation, see below. A view without `desktop` is portable and requires `main`. |
+| `portable` | no | Only allowed together with `desktop`. `true` means `main` also implements this view via `flux.ui.view`, so Web and mobile can show it (requires `main`); default `false` = desktop-only, other clients show a "desktop only" notice. |
 
 `desktop`:
 

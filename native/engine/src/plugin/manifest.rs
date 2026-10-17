@@ -250,6 +250,17 @@ pub struct ViewDecl {
     pub location: ViewLocation,
     #[serde(default)]
     pub desktop: Option<DesktopEntryDecl>,
+    /// 声明了 `desktop` 的 view 是否同时由 `main` 提供可移植实现（Web / 移动端可用）。
+    /// 仅允许与 `desktop` 同时出现；未声明 `desktop` 的 view 恒为可移植。
+    #[serde(default)]
+    pub portable: bool,
+}
+
+impl ViewDecl {
+    /// 是否有可移植实现（daemon 经 `main` 渲染）：无 `desktop`，或显式 `portable: true`。
+    pub fn is_portable(&self) -> bool {
+        self.desktop.is_none() || self.portable
+    }
 }
 
 /// 命令贡献。
@@ -716,11 +727,17 @@ fn validate_contributes(m: &PluginManifest) -> Result<(), PluginError> {
         }
         match &v.desktop {
             None => {
-                if m.main.is_none() {
-                    return manifest_err(format!("view '{}' 未声明 desktop，必须声明 main", v.id));
+                if v.portable {
+                    return manifest_err(format!(
+                        "view '{}' 的 portable 仅允许与 desktop 同时声明",
+                        v.id
+                    ));
                 }
             }
             Some(d) => validate_desktop_entry(m, v, d)?,
+        }
+        if v.is_portable() && m.main.is_none() {
+            return manifest_err(format!("view '{}' 有可移植实现，必须声明 main", v.id));
         }
     }
     if c.commands.len() > COMMANDS_MAX {

@@ -41,7 +41,7 @@ export interface PluginViewDeclDto {
   title: string;
   /** `activity` / `settings` / `taskDetail` / `window`。 */
   location: string;
-  /** 是否有可移植实现（manifest 声明了 `main`）。 */
+  /** 是否有可移植实现：无 `desktop` 的视图恒为 true；带 `desktop` 的仅在 manifest 显式 `portable: true` 时为 true。 */
   portable: boolean;
   desktop?: PluginDesktopEntryDto;
 }

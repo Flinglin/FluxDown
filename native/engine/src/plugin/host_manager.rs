@@ -402,13 +402,20 @@ impl PluginManager {
                     "plugin has no main: {identity}"
                 )));
             }
-            let declared = plugin
+            let portable = plugin
                 .manifest
                 .contributes
                 .as_ref()
-                .is_some_and(|c| c.views.iter().any(|v| v.id == view));
-            if !declared {
-                return Err(PluginError::Runtime(format!("view not declared: {view}")));
+                .and_then(|c| c.views.iter().find(|v| v.id == view))
+                .map(|v| v.is_portable());
+            match portable {
+                None => return Err(PluginError::Runtime(format!("view not declared: {view}"))),
+                Some(false) => {
+                    return Err(PluginError::Runtime(format!(
+                        "view is desktop-only: {view}"
+                    )));
+                }
+                Some(true) => {}
             }
         }
         self.ensure_host(identity).await?;
