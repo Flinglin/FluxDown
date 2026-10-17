@@ -3143,6 +3143,7 @@ dependencies = [
  "fluxdown_ui_theme",
  "gpui-component",
  "gpui-pre",
+ "log",
  "serde_json",
 ]
 

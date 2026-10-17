@@ -320,7 +320,14 @@ fn settings_items(labels: &Labels, cx: &mut App) -> Vec<PaletteItem> {
     let desktop = Desktop::global(cx);
     let translator = desktop.translator.clone();
     let store = desktop.settings_store.clone();
-    let entries = search_index(&translator, &store, &crate::activity::toggles(), cx);
+    let referral_visible = desktop.referral_visibility.read(cx).visible();
+    let entries = search_index(
+        &translator,
+        &store,
+        &crate::activity::toggles(),
+        referral_visible,
+        cx,
+    );
     let root = labels.title(fluxdown_ui_i18n::keys::SETTINGS);
     entries
         .into_iter()

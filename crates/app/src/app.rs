@@ -14,7 +14,7 @@ use fluxdown_protocol::{
 use fluxdown_ui_account::AccountHost;
 use fluxdown_ui_downloads::DownloadView;
 use fluxdown_ui_i18n::{I18nCatalog, I18nError, Translator, system_locale};
-use fluxdown_ui_settings::{SettingsStore, SettingsView, component_locale};
+use fluxdown_ui_settings::{SettingsStore, SettingsView, SlotVisibility, component_locale};
 use fluxdown_ui_shell::ShellView;
 use gpui::{App, AppContext as _, Entity, Global, WeakEntity};
 use tokio::sync::mpsc;
@@ -78,6 +78,8 @@ pub(crate) struct Desktop {
     pub settings_store: Entity<SettingsStore>,
     /// 账户 / 设备 / 局域网配对状态：设置页与「添加设备」对话框共享。
     pub account_host: Entity<AccountHost>,
+    /// 设置侧栏「推介有奖」页的可见性（已登录 + 设备本地偏好），设置窗口与命令面板共用。
+    pub referral_visibility: Entity<SlotVisibility>,
     /// 主窗口内的下载页（主窗口关闭后失效）。
     pub main_downloads: Option<WeakEntity<DownloadView>>,
     pub main_shell: Option<WeakEntity<ShellView>>,
@@ -254,12 +256,14 @@ pub(crate) fn run() -> Result<RunOutcome, AppError> {
         crate::menus::bind_keys(cx);
         crate::menus::install(cx, &translator);
         crate::menus::install_global_actions(cx);
+        let referral_visibility = cx.new(|_| SlotVisibility::default());
         cx.set_global(Desktop {
             translator: translator.clone(),
             session: session.clone(),
             client: agent_client.clone(),
             settings_store,
             account_host,
+            referral_visibility,
             main_downloads: None,
             main_shell: None,
             settings_view: None,
@@ -271,6 +275,7 @@ pub(crate) fn run() -> Result<RunOutcome, AppError> {
         // 会话 → 运行时统计 / 外壳状态折叠进 Desktop。偏好不在此处理：`SettingsStore` 已订阅同一
         // 会话并叠加本地未回执编辑，外观与语言只从它投影（见 `observe_preferences`）。
         observe_preferences(cx);
+        crate::account_host::bind_referral_visibility(cx);
         after_first_snapshot(cx, crate::legacy_themes::migrate);
         cx.subscribe(&session, |_, signal, cx| match signal {
             SessionSignal::Snapshot(snapshot) => {
