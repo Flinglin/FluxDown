@@ -10186,6 +10186,9 @@ impl DownloadManager {
 
         // Cancel the active download (if any) and wait for the spawned task
         // to exit, ensuring all network sockets and file handles are closed.
+        // 先声明"删除":HLS 直播在任务令牌取消(= 停止并保存)时会把已录内容定稿,
+        // 删除不能走这条路径。登记在等待下载器退出之后释放。
+        hls_downloader::request_discard(task_id);
         let maybe_handle = if let Some(entry) = self.active_tasks.remove(task_id) {
             entry.token.cancel();
             entry.handle
@@ -10208,6 +10211,7 @@ impl DownloadManager {
         } else {
             false
         };
+        hls_downloader::clear_discard(task_id);
         if handle_timed_out {
             log_info!(
                 "[manager] delete_task {}: handle wait timed out, spawned task may still be running",
@@ -10591,6 +10595,7 @@ impl DownloadManager {
         let app_data_dir: Arc<str> = Arc::from(self.app_data_dir.as_str());
         let mut workers = Vec::with_capacity(task_ids.len());
         for task_id in task_ids {
+            hls_downloader::request_discard(task_id);
             let handle = self
                 .active_tasks
                 .remove(task_id.as_str())
@@ -10626,7 +10631,9 @@ impl DownloadManager {
         let mut deleted = Vec::with_capacity(workers.len());
         let mut failed = 0;
         for (task_id, worker) in workers {
-            match worker.await {
+            let joined = worker.await;
+            hls_downloader::clear_discard(task_id);
+            match joined {
                 Ok(Ok(())) => deleted.push(task_id.clone()),
                 Ok(Err(error)) => {
                     crate::logger::report_error(
