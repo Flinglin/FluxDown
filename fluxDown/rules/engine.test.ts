@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import cases from "./fixtures/engine-cases.json";
 import { BUILTIN_PACK, compileBuiltin, compileRules, type CompiledRules } from "./engine";
 import type { RuleOverrides, RulePack, RevocationDoc } from "./schema";
+import { TIER_RANK } from "./schema";
 import { validatePack } from "./validate";
 
 interface Setup {
@@ -84,6 +85,31 @@ describe("listRules 状态", () => {
       options: { sniffImages: false, communityEnabled: true, now: DEFAULT_NOW },
     }).listRules();
     expect(list.map((e) => e.status)).toEqual(["engine-too-new"]);
+  });
+});
+
+describe("plugin 层级", () => {
+  test("优先级：local < official < plugin < community < builtin", () => {
+    expect(TIER_RANK.local).toBeLessThan(TIER_RANK.official);
+    expect(TIER_RANK.official).toBeLessThan(TIER_RANK.plugin);
+    expect(TIER_RANK.plugin).toBeLessThan(TIER_RANK.community);
+    expect(TIER_RANK.community).toBeLessThan(TIER_RANK.builtin);
+  });
+
+  test("plugin 包规则可编译并生效", () => {
+    const pack = {
+      format: "fluxdown-sniff-pack",
+      packId: "plugin",
+      sequence: 1,
+      engine: 1,
+      issuedAt: "2026-01-01T00:00:00Z",
+      rules: [
+        { id: "plugin.a.b.r1", version: 1, tier: "plugin", stage: "response", match: { host: ["x.com"], ext: ["abc"] }, action: { kind: "resource", type: "other" } },
+      ],
+    } as unknown as RulePack;
+    const list = build({ packs: [pack] }).listRules();
+    const entry = list.find((e) => e.rule.id === "plugin.a.b.r1");
+    expect(entry?.status).toBe("active");
   });
 });
 

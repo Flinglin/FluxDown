@@ -42,6 +42,70 @@ describe("isSafeRegex", () => {
   });
 });
 
+describe("validatePack plugin 层", () => {
+  const plug = (over: Partial<SniffRuleV1> & { id: string }) =>
+    rule({ tier: "plugin", match: { host: ["x.com"], ext: ["abc"] }, ...over });
+
+  test("合法规则保留；空包允许", () => {
+    const r = validatePack(pack("plugin", [plug({ id: "plugin.a.b.ok" })]), "plugin");
+    expect(r.pack.rules.map((x) => x.id)).toEqual(["plugin.a.b.ok"]);
+    expect(validatePack(pack("plugin", []), "plugin").pack.rules).toEqual([]);
+  });
+
+  test("缺 host 被剔除", () => {
+    const r = validatePack(pack("plugin", [plug({ id: "plugin.a.nohost", match: { ext: ["abc"] } })]), "plugin");
+    expect(r.pack.rules).toEqual([]);
+  });
+
+  test("preempt 被剔除", () => {
+    const r = validatePack(
+      pack("plugin", [
+        plug({
+          id: "plugin.a.pp",
+          stage: "body",
+          action: {
+            kind: "extract",
+            fields: { u: "$.u" },
+            emit: { url: "{u}", mode: "preempt" },
+          } as unknown as SniffRuleV1["action"],
+        }),
+      ]),
+      "plugin",
+    );
+    expect(r.pack.rules).toEqual([]);
+  });
+
+  test("全局 strip-params 被剔除", () => {
+    const r = validatePack(
+      pack("plugin", [
+        plug({ id: "plugin.a.sp", stage: "normalize", match: {}, action: { kind: "strip-params", params: ["x"] } }),
+      ]),
+      "plugin",
+    );
+    expect(r.pack.rules).toEqual([]);
+  });
+
+  test("headers 规则被剔除并给出原因", () => {
+    const r = validatePack(
+      pack("plugin", [
+        plug({
+          id: "plugin.a.hd",
+          stage: "request",
+          action: { kind: "headers", set: { Referer: "https://x.com/" } },
+        }),
+      ]),
+      "plugin",
+    );
+    expect(r.pack.rules).toEqual([]);
+    expect(r.rejected[0]?.reason).toBe("plugin 规则不得改写请求头");
+  });
+
+  test("id 超过 64 字符被剔除", () => {
+    const r = validatePack(pack("plugin", [plug({ id: `plugin.${"a".repeat(60)}` })]), "plugin");
+    expect(r.pack.rules).toEqual([]);
+  });
+});
+
 describe("validatePack 单条剔除", () => {
   test("社区规则缺 host 被剔除，带 host 保留", () => {
     const r = validatePack(

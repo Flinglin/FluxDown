@@ -31,6 +31,20 @@ import type {
   PluginAuthRequest,
   PluginAuthResponse,
   PluginDto,
+  PluginAuditClearParams,
+  PluginAuditListDto,
+  PluginAuditListParams,
+  PluginAuditRecordParams,
+  PluginConsentParams,
+  PluginSniffRulesDto,
+  PluginCommandParams,
+  PluginInvokeParams,
+  PluginViewEventParams,
+  PluginViewKeepaliveParams,
+  PluginViewOpenParams,
+  PluginViewOpenedDto,
+  PluginViewSessionParams,
+  PluginViewSnapshotDto,
   PluginIdentityParams,
   PluginInstallDevParams,
   PluginInstallParams,
@@ -217,6 +231,7 @@ const rss = {
 
 const plugin = {
   list: () => call<PluginDto[]>(METHOD.DAEMON_PLUGIN_LIST),
+  sniffRules: () => call<PluginSniffRulesDto>(METHOD.DAEMON_PLUGIN_SNIFF_RULES),
   auth: (params: PluginAuthRequest) =>
     call<PluginAuthResponse>(METHOD.DAEMON_PLUGIN_AUTH, params),
   setEnabled: (params: PluginSetEnabledParams) =>
@@ -239,6 +254,32 @@ const plugin = {
     call<InstalledPlugin>(METHOD.DAEMON_PLUGIN_MARKET_INSTALL, params, { timeoutMs: SLOW_MIRROR_TIMEOUT_MS }),
   /** 忽略插件解析失败并重试（清除任务 resolver 后恢复任务）。 */
   ignoreRetry: (params: TaskIdParams) => call<OkResult>(METHOD.DAEMON_PLUGIN_IGNORE_RETRY, params),
+  /** 授权插件请求的全部能力；集合须与请求完全一致。 */
+  consent: (params: PluginConsentParams) => call<OkResult>(METHOD.DAEMON_PLUGIN_CONSENT, params),
+  auditList: (params: PluginAuditListParams = {}) =>
+    call<PluginAuditListDto>(METHOD.DAEMON_PLUGIN_AUDIT_LIST, params),
+  auditClear: (params: PluginAuditClearParams = {}) =>
+    call<OkResult>(METHOD.DAEMON_PLUGIN_AUDIT_CLEAR, params),
+  auditRecord: (params: PluginAuditRecordParams) =>
+    call<OkResult>(METHOD.DAEMON_PLUGIN_AUDIT_RECORD, params),
+  /** 打开可移植视图会话（可能激活常驻宿主，按慢方法超时）。 */
+  viewOpen: (params: PluginViewOpenParams) =>
+    call<PluginViewOpenedDto>(METHOD.DAEMON_PLUGIN_VIEW_OPEN, params, { timeoutMs: SLOW_MIRROR_TIMEOUT_MS }),
+  /** 投递视图事件；入队即返回，结果经 `pluginViewFrame` 事件送出。 */
+  viewEvent: (params: PluginViewEventParams) =>
+    call<OkResult>(METHOD.DAEMON_PLUGIN_VIEW_EVENT, params),
+  viewClose: (params: PluginViewSessionParams) =>
+    call<OkResult>(METHOD.DAEMON_PLUGIN_VIEW_CLOSE, params),
+  /** 取会话当前 `{seq, tree}`（序号断档 / 重连后重新同步）。 */
+  viewSnapshot: (params: PluginViewSessionParams) =>
+    call<PluginViewSnapshotDto>(METHOD.DAEMON_PLUGIN_VIEW_SNAPSHOT, params),
+  /** 会话续期；90 s 无续期的会话会被关闭。 */
+  viewKeepalive: (params: PluginViewKeepaliveParams) =>
+    call<OkResult>(METHOD.DAEMON_PLUGIN_VIEW_KEEPALIVE, params),
+  command: (params: PluginCommandParams) =>
+    call<OkResult>(METHOD.DAEMON_PLUGIN_COMMAND, params, { timeoutMs: SLOW_MIRROR_TIMEOUT_MS }),
+  invoke: (params: PluginInvokeParams) =>
+    call<unknown>(METHOD.DAEMON_PLUGIN_INVOKE, params, { timeoutMs: SLOW_MIRROR_TIMEOUT_MS }),
 };
 
 const component = {

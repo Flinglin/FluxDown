@@ -26,6 +26,7 @@ const PAGE_SIZE = 100;
 const TIER_TONES: Record<RuleTier, "neutral" | "accent" | "warning" | "success"> = {
   builtin: "neutral",
   official: "accent",
+  plugin: "accent",
   community: "warning",
   local: "success",
 };
@@ -58,6 +59,7 @@ export function RuleTable(props: RuleTableProps): JSX.Element {
   const tierLabels: Record<RuleTier, string> = {
     builtin: t("rules.tier.builtin"),
     official: t("rules.tier.official"),
+    plugin: t("rules.tier.plugin"),
     community: t("rules.tier.community"),
     local: t("rules.tier.local"),
   };
@@ -115,6 +117,7 @@ export function RuleTable(props: RuleTableProps): JSX.Element {
               { value: "all", label: t("rules.table.allTiers") },
               { value: "builtin", label: tierLabels.builtin },
               { value: "official", label: tierLabels.official },
+              { value: "plugin", label: tierLabels.plugin },
               { value: "community", label: tierLabels.community },
               { value: "local", label: tierLabels.local },
             ]}

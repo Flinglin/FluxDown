@@ -45,6 +45,7 @@ export function SyncCard(props: SyncCardProps): JSX.Element | null {
   const docs: [string, RuleDocSummary | null | undefined][] = [
     [t("rules.sync.official"), sync?.official],
     [t("rules.sync.community"), sync?.community],
+    [t("rules.sync.plugin"), sync?.plugin],
     [t("rules.sync.revocations"), sync?.revocations],
   ];
   const lastError = sync?.lastError ?? sync?.host?.lastError ?? null;

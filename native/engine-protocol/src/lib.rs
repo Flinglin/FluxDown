@@ -456,6 +456,51 @@ pub fn plugin_info_to_dto(
         resolver_urls: plugin.resolver_urls,
         load_status: plugin.load_status,
         load_error: plugin.load_error,
+        contributions: plugin_contributions_to_dto(&plugin.contributions, plugin.has_main),
+        risk: plugin.risk.as_str().to_owned(),
+        consent_pending: plugin.consent_pending,
+        consent_pending_hosts: plugin.consent_pending_hosts,
+        network_hosts: plugin.network_hosts,
+        package_dir: plugin.package_dir,
+    }
+}
+
+#[cfg(feature = "plugins")]
+fn plugin_contributions_to_dto(
+    contributes: &fluxdown_engine::plugin::manifest::ContributesDecl,
+    has_main: bool,
+) -> fluxdown_protocol::daemon::PluginContributionsDto {
+    use fluxdown_protocol::daemon::{
+        PluginCommandDeclDto, PluginContributionsDto, PluginDesktopEntryDto, PluginViewDeclDto,
+    };
+    PluginContributionsDto {
+        views: contributes
+            .views
+            .iter()
+            .map(|view| PluginViewDeclDto {
+                id: view.id.clone(),
+                title: view.title.clone(),
+                location: view.location.as_str().to_owned(),
+                portable: has_main,
+                desktop: view.desktop.as_ref().map(|d| PluginDesktopEntryDto {
+                    entry: d.entry.clone(),
+                    width: d.width,
+                    height: d.height,
+                    network_hosts: d.network_hosts.clone(),
+                }),
+            })
+            .collect(),
+        commands: contributes
+            .commands
+            .iter()
+            .map(|cmd| PluginCommandDeclDto {
+                id: cmd.id.clone(),
+                title: cmd.title.clone(),
+                palette: cmd.palette,
+                task_menu: cmd.task_menu,
+            })
+            .collect(),
+        sniff_rules: contributes.sniff_rules.is_some(),
     }
 }
 
@@ -480,6 +525,7 @@ pub fn market_entry_to_dto(
         yanked: entry.yanked,
         tags: entry.tags,
         permissions: entry.permissions,
+        network_hosts: entry.network_hosts,
     }
 }
 

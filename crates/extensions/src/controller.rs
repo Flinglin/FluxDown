@@ -155,6 +155,18 @@ impl ExtensionsController {
         )
     }
 
+    /// 事件是否整体替换了插件列表（快照 / `PluginsChanged`）。
+    #[must_use]
+    pub(crate) fn replaces_plugins(event: &ServiceEvent) -> bool {
+        matches!(
+            event,
+            ServiceEvent::Agent(
+                AgentEvent::DaemonSnapshotReplaced(_)
+                    | AgentEvent::Daemon(DaemonEvent::PluginsChanged(_))
+            )
+        )
+    }
+
     /// 应用事件；组件安装进度 / 结果以信号形式回传给 view 处理。
     pub fn apply_event(&mut self, event: &ServiceEvent) -> Option<ExtensionsSignal> {
         let ServiceEvent::Agent(event) = event else {
@@ -434,6 +446,44 @@ pub fn update_plugin_settings(
     port.call(
         method::DAEMON_PLUGIN_UPDATE_SETTINGS,
         serde_json::json!({ "identity": identity, "entries": entries }),
+    )
+}
+
+/// 授权插件当前请求的**完整**能力集合（不是 pending 子集）：daemon 要求集合与请求完全相等。
+pub(crate) fn grant_plugin_consent(
+    port: &Arc<dyn ExtensionsPort>,
+    plugin: &PluginDto,
+) -> PortFuture<serde_json::Value> {
+    port.call(
+        method::DAEMON_PLUGIN_CONSENT,
+        serde_json::json!({
+            "identity": plugin.identity,
+            "permissions": plugin.permissions,
+            "networkHosts": plugin.network_hosts,
+        }),
+    )
+}
+
+/// 分页读取审计；`before_id` 为上一页返回的 `nextBeforeId`。
+pub(crate) fn list_plugin_audit(
+    port: &Arc<dyn ExtensionsPort>,
+    identity: Option<&str>,
+    before_id: Option<i64>,
+    limit: u32,
+) -> PortFuture<serde_json::Value> {
+    port.call(
+        method::DAEMON_PLUGIN_AUDIT_LIST,
+        serde_json::json!({ "identity": identity, "beforeId": before_id, "limit": limit }),
+    )
+}
+
+pub(crate) fn clear_plugin_audit(
+    port: &Arc<dyn ExtensionsPort>,
+    identity: Option<&str>,
+) -> PortFuture<serde_json::Value> {
+    port.call(
+        method::DAEMON_PLUGIN_AUDIT_CLEAR,
+        serde_json::json!({ "identity": identity }),
     )
 }
 

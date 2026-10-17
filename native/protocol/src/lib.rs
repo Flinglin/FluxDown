@@ -12,6 +12,7 @@ pub mod error;
 pub mod event;
 pub mod handshake;
 pub mod method;
+pub mod plugin_view;
 pub mod rpc;
 pub mod settings;
 pub mod shell_open;
@@ -73,19 +74,23 @@ pub use daemon::{
     LinkPairFinishRequest, LinkPairFinishResponse, LinkPairHelloRequest, LinkPairHelloResponse,
     LinkPairRevealRequest, LinkPairRevealResponse, LinkPingInfo, LinkProbeParams, LinkProbeRequest,
     LinkProbeResult, LinkProbeVerdict, LinkTaskRequest, LogFileDto, LogsResponse, MAIN_QUEUE_ID,
-    MarketEntryDto, MarketInstallRequest, MigrationAckParams, MoveQueueRequest, PluginAuthRequest,
-    PluginAuthResponse, PluginDto, PreviewItemDto, PreviewVariantDto, ProxyTestRequest,
-    ProxyTestResponse, QueueDto, QueuePositionDto, QueueScheduleRequest, RenameTaskRequest,
-    ReorderQueueRequest, RequestBody, ResolvePreviewRequest, ResolvePreviewResponse,
-    ResolveVariantOptionDto, ResultMessage, RssItemActionRequest, RssItemDto, RssSourceDto,
-    RssValidateRequest, RssValidateResponse, SegmentDetailDto, SelectionKind, SelectionOutcome,
-    SelectionRequestDto, SelectionResolutionDto, SetPluginEnabledRequest, SetTaskSegmentsParams,
-    SettingFieldDto, SettingOptionDto, SetupRequest, SetupStatusResponse, SiteAuthCredentialDto,
-    SiteAuthDeleteParams, SiteAuthEntryDto, SiteAuthGetParams, SiteAuthMatchParams,
-    SiteAuthSaveRequest, StatsResponse, StorageProbeDto, StorageProbeFailure, StorageProbeRole,
-    StorageProbeTarget, SystemProxyDto, TaskDto, TokenResponse, TrackerSubRefreshResponse,
-    UpdateQueueRequest, WebhookDeliveriesResponse, WebhookDeliveryDto, WebhookPresetDto,
-    WebhookSimulateResponse, WebhookTestRequest, WebhookTestResponse, WsClientMsg, WsServerMsg,
+    MarketEntryDto, MarketInstallRequest, MigrationAckParams, MoveQueueRequest,
+    PluginAuditClearParams, PluginAuditEntryDto, PluginAuditListDto, PluginAuditListParams,
+    PluginAuditRecordEntry, PluginAuditRecordParams, PluginAuthRequest, PluginAuthResponse,
+    PluginCommandDeclDto, PluginConsentParams, PluginContributionsDto, PluginDesktopEntryDto,
+    PluginDto, PluginSniffRulesDto, PluginViewDeclDto, PreviewItemDto, PreviewVariantDto,
+    ProxyTestRequest, ProxyTestResponse, QueueDto, QueuePositionDto, QueueScheduleRequest,
+    RenameTaskRequest, ReorderQueueRequest, RequestBody, ResolvePreviewRequest,
+    ResolvePreviewResponse, ResolveVariantOptionDto, ResultMessage, RssItemActionRequest,
+    RssItemDto, RssSourceDto, RssValidateRequest, RssValidateResponse, SegmentDetailDto,
+    SelectionKind, SelectionOutcome, SelectionRequestDto, SelectionResolutionDto,
+    SetPluginEnabledRequest, SetTaskSegmentsParams, SettingFieldDto, SettingOptionDto,
+    SetupRequest, SetupStatusResponse, SiteAuthCredentialDto, SiteAuthDeleteParams,
+    SiteAuthEntryDto, SiteAuthGetParams, SiteAuthMatchParams, SiteAuthSaveRequest, StatsResponse,
+    StorageProbeDto, StorageProbeFailure, StorageProbeRole, StorageProbeTarget, SystemProxyDto,
+    TaskDto, TokenResponse, TrackerSubRefreshResponse, UpdateQueueRequest,
+    WebhookDeliveriesResponse, WebhookDeliveryDto, WebhookPresetDto, WebhookSimulateResponse,
+    WebhookTestRequest, WebhookTestResponse, WsClientMsg, WsServerMsg,
 };
 pub use daemon_config::{
     BT_MSE_MODES, BT_SEED_LIMIT_OPERATORS, BT_SEED_THEN_ACTIONS, BT_SEED_TIME_UNITS,
@@ -104,6 +109,14 @@ pub use event::{
     AgentEvent, AgentSnapshot, DaemonEvent, DaemonSnapshot, EventFrame, ServiceEvent, Snapshot,
     SnapshotBody, WEBHOOK_DELIVERY_LIMIT, accepted_runtime_status, apply_agent_event,
     apply_daemon_event, merge_webhook_deliveries,
+};
+pub use plugin_view::{
+    PluginCommandParams, PluginInvokeParams, PluginViewEventParams, PluginViewFrameDto,
+    PluginViewKeepaliveParams, PluginViewOpenParams, PluginViewOpenedDto, PluginViewSessionParams,
+    PluginViewSnapshotDto, VIEW_ERROR_PROP, VIEW_ROOT_ID, VIEW_SCHEMA_JSON, VIEW_TONES_JSON,
+    ViewError, ViewEventDto, ViewEventPayloadType, ViewEventSpec, ViewItemSpec, ViewKindSpec,
+    ViewLimits, ViewNode, ViewOp, ViewPropFormat, ViewPropSpec, ViewPropType, ViewSchema,
+    apply_view_ops, diff_view, normalize_view, view_schema,
 };
 pub use rpc::{
     APP_VERSION, CLOSE_REASON_SERVICE_QUIT, CLOSE_REASON_SERVICE_RESTART, ClientHello,

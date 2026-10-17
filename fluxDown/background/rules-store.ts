@@ -10,7 +10,7 @@ import type { CompiledRules } from "@/rules/engine";
 import type { RevocationDoc, RuleOverrides, RulePack, SniffRuleV1 } from "@/rules/schema";
 import { RULE_ENGINE_VERSION } from "@/rules/schema";
 import { validatePack } from "@/rules/validate";
-import { fetchSniffRules, getCapabilities } from "./host";
+import { fetchSniffRules, getCapabilities, onCapabilities } from "./host";
 import type { RuleDocSummary, RuleSyncStatus, StoredRulePacks } from "./protocol";
 import { getCachedSettings } from "./settings-cache";
 
@@ -74,6 +74,7 @@ async function compileFromStorage(): Promise<CompiledRules> {
   const packs: RulePack[] = [BUILTIN_PACK];
   if (stored.official) packs.push(stored.official);
   if (stored.community) packs.push(stored.community);
+  if (stored.plugin) packs.push(stored.plugin);
   if (localRules.length > 0) packs.push(localPack(localRules));
 
   return compileRules({
@@ -126,6 +127,7 @@ export async function getRuleSyncStatus(): Promise<RuleSyncStatus> {
     communityEnabled: settings.communityRulesEnabled,
     official: summarize(stored.official),
     community: summarize(stored.community),
+    plugin: summarize(stored.plugin),
     revocations: summarize(stored.revocations),
     lastSyncAt: stored.lastSyncAt ?? null,
     lastError: stored.lastError ?? null,
@@ -154,6 +156,7 @@ export async function syncRemotePacks(): Promise<RuleSyncStatus> {
   const reply = await fetchSniffRules({
     official: stored.official?.sequence,
     community: stored.community?.sequence,
+    plugin: stored.plugin?.sequence,
     revocations: stored.revocations?.sequence,
   });
   if (!reply) {
@@ -164,7 +167,7 @@ export async function syncRemotePacks(): Promise<RuleSyncStatus> {
 
   const next: StoredRulePacks = { ...stored, lastSyncAt: Date.now(), lastError: undefined };
   const problems: string[] = [];
-  for (const tier of ["official", "community"] as const) {
+  for (const tier of ["official", "community", "plugin"] as const) {
     const incoming = reply[tier];
     if (!incoming) continue;
     try {
@@ -214,6 +217,14 @@ export function installRulesStore(): void {
   browser.alarms
     .create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN })
     .catch(() => {});
+  onCapabilities((caps) => {
+    if (!caps.connected || caps.pluginRulesSequence <= 0) return;
+    void loadStored().then((stored) => {
+      if (caps.pluginRulesSequence > (stored.plugin?.sequence ?? 0)) {
+        syncRemotePacks().catch((e) => console.warn("[FluxDown] plugin rule sync failed:", e));
+      }
+    });
+  });
   void rebuildEngine();
   setTimeout(() => {
     syncRemotePacks().catch((e) => console.warn("[FluxDown] rule sync failed:", e));

@@ -9,14 +9,15 @@ export type { ResourceType };
 
 export const RULE_ENGINE_VERSION = 1;
 
-export type RuleTier = "builtin" | "official" | "community" | "local";
+export type RuleTier = "builtin" | "official" | "plugin" | "community" | "local";
 
 /** 层级优先级：数值越小越先求值（本地最先，内置最后）。 */
 export const TIER_RANK: Record<RuleTier, number> = {
   local: 0,
   official: 1,
-  community: 2,
-  builtin: 3,
+  plugin: 2,
+  community: 3,
+  builtin: 4,
 };
 
 /**

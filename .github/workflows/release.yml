@@ -302,6 +302,9 @@ jobs:
                 website-v2/src/lib/gpui-theme/*) SERVER=true ;;
                 assets/icon-packs/*) APP=true; SERVER=true ;;
                 website/*)  ;;
+                # 插件 SDK 走独立的 plugin-sdk-release.yml，不触发桌面/服务器重建
+                packages/*) ;;
+                .github/workflows/plugin-sdk-release.yml) ;;
                 docs/*|*.md) ;;
                 *)          APP=true ;;
               esac
@@ -402,6 +405,7 @@ jobs:
         run: |
           cargo check --locked -p fluxdown_engine
           cargo test --locked -p fluxdown_engine
+          cargo test --locked -p fluxdown_engine --features plugins,components plugin
           cargo fmt --check
 
   # ── 并行 Job 1: GPUI 桌面客户端 Windows（x64 + ARM64）：Inno 安装器 + 便携 zip ──

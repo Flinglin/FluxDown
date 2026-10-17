@@ -7,12 +7,14 @@ order: 1
 
 FluxDown plugins are small JavaScript programs that hook into the download pipeline. A plugin is a folder containing a `manifest.json` plus one or two `.js` files — no build step, no npm, no framework.
 
-Plugins can do exactly two things:
+At its core a plugin does two things:
 
 1. **Resolve URLs** — rewrite a task's URL before the download starts. This is how you turn a share-page link (a video page, a file-hosting page) into the actual direct download link. Declared under `resolvers` in the manifest; the script exports a global `resolve(ctx)` function.
 2. **React to task events** — get notified when a task starts, finishes, fails, or has its metadata probed. Declared under `hooks`; the script exports global `onStart` / `onDone` / `onError` / `onMetaProbed` functions.
 
-Plugins **cannot** create tasks, read arbitrary files, or touch the UI. They talk to the outside world only through the `flux.*` API (HTTP fetch, key-value storage, logging, retry requests) — see the [API reference](/docs/en/plugins/api-reference/).
+Plugins can also contribute **UI and commands**: pages in the activity bar, a settings tab, task-detail tabs, command-palette and task-menu commands, and browser-extension sniff rules. A resident `main` script in the daemon returns data trees that the desktop app and the Web UI render with native controls — see [Views](/docs/en/plugins/views/).
+
+The base sandbox **cannot** create tasks or read arbitrary files. It talks to the outside world through the `flux.*` API (HTTP fetch, key-value storage, scratch files, logging, retry requests) — see the [API reference](/docs/en/plugins/api-reference/). Anything beyond that — running ffmpeg or yt-dlp, creating tasks, running in the background, native desktop scripts — is a permission the plugin declares, you approve, and FluxDown records in an audit log; see [Permissions](/docs/en/plugins/permissions/).
 
 ## How resolvers run
 
@@ -63,3 +65,6 @@ Installed plugins live under `<data dir>/plugins/<identity>/`. New installs are 
 - [Manifest reference](/docs/en/plugins/manifest/) — every `manifest.json` field and validation rule.
 - [API reference](/docs/en/plugins/api-reference/) — hook signatures and the full `flux.*` API.
 - [Packaging & market](/docs/en/plugins/packaging/) — shipping a `.fxplug` and publishing to the index.
+- [Views, commands & the UI API](/docs/en/plugins/views/) — pages, settings tabs, task-detail tabs and commands rendered natively on desktop and Web.
+- [Plugin SDK & CLI](/docs/en/plugins/sdk/) — TypeScript types, JSX and a bundler/packager.
+- [Permissions, consent & audit](/docs/en/plugins/permissions/) — what plugins may do and how it is approved and recorded.

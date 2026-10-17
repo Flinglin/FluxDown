@@ -82,6 +82,7 @@ describe("handoffFor", () => {
     protocol: 2,
     pluginsSupported: true,
     connected: true,
+    pluginRulesSequence: 0,
     resolvers: [
       { identity: "fluxdown@ytdlp", name: "yt-dlp", enabled: true, loaded: true, urls: ["*://www.youtube.com/*"] },
       { identity: "x@off", name: "Off", enabled: false, loaded: true, urls: ["*://example.com/*"] },

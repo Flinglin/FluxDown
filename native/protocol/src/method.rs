@@ -81,6 +81,7 @@ pub const DAEMON_RSS_VALIDATE: &str = "daemon.rss.validate";
 pub const DAEMON_LINK_PROBE: &str = "daemon.link.probe";
 
 pub const DAEMON_PLUGIN_LIST: &str = "daemon.plugin.list";
+pub const DAEMON_PLUGIN_SNIFF_RULES: &str = "daemon.plugin.sniffRules";
 pub const DAEMON_PLUGIN_AUTH: &str = "daemon.plugin.auth";
 pub const DAEMON_PLUGIN_SET_ENABLED: &str = "daemon.plugin.setEnabled";
 pub const DAEMON_PLUGIN_UPDATE_SETTINGS: &str = "daemon.plugin.updateSettings";
@@ -92,6 +93,28 @@ pub const DAEMON_PLUGIN_UNINSTALL: &str = "daemon.plugin.uninstall";
 pub const DAEMON_PLUGIN_MARKET_LIST: &str = "daemon.plugin.marketList";
 pub const DAEMON_PLUGIN_MARKET_INSTALL: &str = "daemon.plugin.marketInstall";
 pub const DAEMON_PLUGIN_IGNORE_RETRY: &str = "daemon.plugin.ignoreRetry";
+/// 授权插件请求的全部能力（`{identity, permissions, networkHosts}`，集合须与请求完全一致）。
+pub const DAEMON_PLUGIN_CONSENT: &str = "daemon.plugin.consent";
+/// 分页读取插件审计（`{identity?, beforeId?, limit?}`）。
+pub const DAEMON_PLUGIN_AUDIT_LIST: &str = "daemon.plugin.audit.list";
+/// 清空插件审计（`{identity?}`）。
+pub const DAEMON_PLUGIN_AUDIT_CLEAR: &str = "daemon.plugin.audit.clear";
+/// 客户端上报桌面脚本的审计记录（`{entries}`，origin 强制 desktop）。
+pub const DAEMON_PLUGIN_AUDIT_RECORD: &str = "daemon.plugin.audit.record";
+/// 打开可移植视图会话（`PluginViewOpenParams` → `PluginViewOpenedDto`）。慢方法：可能激活宿主。
+pub const DAEMON_PLUGIN_VIEW_OPEN: &str = "daemon.plugin.view.open";
+/// 投递视图事件（`PluginViewEventParams`）；入队即返回，处理结果经 `PluginViewFrame` 事件送出。
+pub const DAEMON_PLUGIN_VIEW_EVENT: &str = "daemon.plugin.view.event";
+/// 关闭视图会话（`{session}`）。
+pub const DAEMON_PLUGIN_VIEW_CLOSE: &str = "daemon.plugin.view.close";
+/// 取会话当前 `{seq, tree}`（序号断档 / 重连后重新同步）。
+pub const DAEMON_PLUGIN_VIEW_SNAPSHOT: &str = "daemon.plugin.view.snapshot";
+/// 会话续期（`{sessions: [...]}`）；90 s 无续期的会话会被关闭。
+pub const DAEMON_PLUGIN_VIEW_KEEPALIVE: &str = "daemon.plugin.view.keepalive";
+/// 执行插件命令（`{identity, command, taskIds}`）。慢方法：可能激活宿主。
+pub const DAEMON_PLUGIN_COMMAND: &str = "daemon.plugin.command";
+/// 调用插件 `flux.rpc.handle` 注册的处理器（`{identity, name, args}`）。慢方法。
+pub const DAEMON_PLUGIN_INVOKE: &str = "daemon.plugin.invoke";
 pub const DAEMON_COMPONENT_GET: &str = "daemon.component.get";
 pub const DAEMON_COMPONENT_LIST_VERSIONS: &str = "daemon.component.listVersions";
 pub const DAEMON_COMPONENT_INSTALL: &str = "daemon.component.install";
@@ -355,6 +378,7 @@ pub const ALL_METHODS: &[&str] = &[
     DAEMON_RSS_VALIDATE,
     DAEMON_LINK_PROBE,
     DAEMON_PLUGIN_LIST,
+    DAEMON_PLUGIN_SNIFF_RULES,
     DAEMON_PLUGIN_AUTH,
     DAEMON_PLUGIN_SET_ENABLED,
     DAEMON_PLUGIN_UPDATE_SETTINGS,
@@ -365,6 +389,17 @@ pub const ALL_METHODS: &[&str] = &[
     DAEMON_PLUGIN_MARKET_LIST,
     DAEMON_PLUGIN_MARKET_INSTALL,
     DAEMON_PLUGIN_IGNORE_RETRY,
+    DAEMON_PLUGIN_CONSENT,
+    DAEMON_PLUGIN_AUDIT_LIST,
+    DAEMON_PLUGIN_AUDIT_CLEAR,
+    DAEMON_PLUGIN_AUDIT_RECORD,
+    DAEMON_PLUGIN_VIEW_OPEN,
+    DAEMON_PLUGIN_VIEW_EVENT,
+    DAEMON_PLUGIN_VIEW_CLOSE,
+    DAEMON_PLUGIN_VIEW_SNAPSHOT,
+    DAEMON_PLUGIN_VIEW_KEEPALIVE,
+    DAEMON_PLUGIN_COMMAND,
+    DAEMON_PLUGIN_INVOKE,
     DAEMON_COMPONENT_GET,
     DAEMON_COMPONENT_LIST_VERSIONS,
     DAEMON_COMPONENT_INSTALL,
@@ -499,6 +534,9 @@ pub const SLOW_DAEMON_METHODS: &[&str] = &[
     DAEMON_PLUGIN_INSTALL_DEV,
     DAEMON_PLUGIN_MARKET_LIST,
     DAEMON_PLUGIN_MARKET_INSTALL,
+    DAEMON_PLUGIN_VIEW_OPEN,
+    DAEMON_PLUGIN_COMMAND,
+    DAEMON_PLUGIN_INVOKE,
     DAEMON_GROUP_RESOLVE_PREVIEW,
     DAEMON_RSS_VALIDATE,
     DAEMON_LINK_PROBE,

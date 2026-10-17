@@ -104,12 +104,15 @@ export interface HostCapabilities {
   pluginsSupported: boolean;
   resolvers: ResolverInfo[];
   connected: boolean;
+  /** 桌面端插件规则包当前序号；从未有过插件规则为 0。 */
+  pluginRulesSequence: number;
 }
 
 /** 本地已存的规则包（storage.local `fluxdown_rule_packs`）。 */
 export interface StoredRulePacks {
   official?: RulePack;
   community?: RulePack;
+  plugin?: RulePack;
   revocations?: RevocationDoc;
   lastSyncAt?: number;
   lastError?: string;
@@ -126,6 +129,7 @@ export interface RuleSyncStatus {
   communityEnabled: boolean;
   official: RuleDocSummary | null;
   community: RuleDocSummary | null;
+  plugin: RuleDocSummary | null;
   revocations: RuleDocSummary | null;
   lastSyncAt: number | null;
   lastError: string | null;
