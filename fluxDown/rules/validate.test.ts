@@ -163,6 +163,23 @@ describe("validatePack 单条剔除", () => {
     expect(r.rejected.length).toBe(2);
   });
 
+  test("dom 规则模板只能引用 value / text / page", () => {
+    const dom = (id: string, url: string): SniffRuleV1 =>
+      rule({
+        id,
+        tier: "plugin",
+        stage: "dom",
+        match: { pageHost: ["v.example.com"] },
+        action: { kind: "dom", selector: "video", attr: "src", emit: { mode: "resource", url, type: "video" } },
+      });
+    const r = validatePack(
+      pack("plugin", [dom("plugin.a.page", "${page}"), dom("plugin.a.value", "${value}#${text}"), dom("plugin.a.bad", "${u}")]),
+      "plugin",
+    );
+    expect(r.pack.rules.map((x) => x.id)).toEqual(["plugin.a.page", "plugin.a.value"]);
+    expect(r.rejected).toEqual([{ id: "plugin.a.bad", reason: "模板引用了未定义字段: u" }]);
+  });
+
   test("社区全局 strip-params 被剔除", () => {
     const r = validatePack(
       pack("community", [

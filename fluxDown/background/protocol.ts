@@ -54,7 +54,7 @@ export interface CandidateRow {
   candidate: MediaCandidate;
   elementKey: string | null;
   playingVariantId: string | null;
-  binding: "exact" | "temporal" | "inferred" | "none";
+  binding: "exact" | "temporal" | "declared" | "inferred" | "none";
   ruleIds: string[];
 }
 
@@ -188,7 +188,7 @@ export interface MessageMap {
   };
   /** sensor 执行 PageConfig.dom 规则的命中；background 用 engine.renderDomEmit 渲染后入库。 */
   domObserved: {
-    req: { pageUrl: string; hits: { ruleId: string; value: string; text: string }[] };
+    req: { pageUrl: string; hits: { ruleId: string; value: string; text: string; elementKey?: string }[] };
     res: { emitted: number };
   };
   /** 侧边栏诊断「导出资源调试日志」：按 tab 生成已脱敏的嗅探状态快照。 */

@@ -193,7 +193,7 @@ function checkRule(rule: SniffRuleV1, expectedTier: RuleTier): string | null {
       const sel = checkSelector(a.selector);
       if (sel) return sel;
       if (typeof a.attr !== "string") return "attr 缺失";
-      const err = checkEmit(a.emit, new Set(["value", "text"]), rule.tier);
+      const err = checkEmit(a.emit, new Set(["value", "text", "page"]), rule.tier);
       if (err) return err;
       break;
     }

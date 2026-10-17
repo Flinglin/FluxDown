@@ -257,8 +257,9 @@ export default defineContentScript({
         if (!config || !sniffActive() || config.dom.length === 0) return;
         const fresh: DomRuleHit[] = [];
         for (const rule of config.dom) {
-          for (const hit of runDomRule(rule)) {
-            const key = `${hit.ruleId}\0${hit.value}`;
+          for (const hit of runDomRule(rule, scanCtx.keyOf)) {
+            // 元素晚于首次扫描才被跟踪时，带上元素归属再报一次（background 合并补齐 elementKey）。
+            const key = `${hit.ruleId}\0${hit.value}\0${hit.elementKey ?? ""}`;
             if (seenDomHits.has(key)) continue;
             seenDomHits.add(key);
             fresh.push(hit);

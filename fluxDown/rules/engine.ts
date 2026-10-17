@@ -135,7 +135,7 @@ export interface CompiledRules {
   renderDomEmit(
     rule: RuleRef,
     emit: EmitSpec,
-    fields: { value: string; text: string },
+    fields: { value: string; text: string; page: string },
   ): Emitted | null;
   listRules(): RuleListEntry[];
   /** 所有生效 resource 规则 match.ext 的并集（含 image），供 UI / 其它模块使用 */
@@ -728,7 +728,7 @@ export function compileRules(input: CompileInput): CompiledRules {
     },
 
     renderDomEmit(_rule, emit, fields) {
-      return emitOne(emit, { value: fields.value, text: fields.text });
+      return emitOne(emit, { value: fields.value, text: fields.text, page: fields.page });
     },
 
     listRules() {
