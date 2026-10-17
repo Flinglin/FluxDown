@@ -641,13 +641,15 @@ fn apply_preferences(values: &BTreeMap<String, serde_json::Value>, cx: &mut App)
     }
 }
 
-/// 偏好快照/事件 → 活动栏可选入口可见性（条目与偏好键见 `activity` 注册表）。
+/// 偏好快照/事件 → 活动栏可选入口可见性与 chrome 布局（条目与偏好键见 `activity` /
+/// `chrome_layout`）。
 fn apply_activity_bar_preferences(values: &BTreeMap<String, serde_json::Value>, cx: &mut App) {
     let Some(shell) = Desktop::global(cx).main_shell.clone() else {
         return;
     };
     if let Err(error) = shell.update(cx, |shell, cx| {
         crate::activity::apply_visibility(shell, values, cx);
+        crate::chrome_layout::apply(shell, values, cx);
     }) {
         log::debug!("view or window released before lifecycle update: {error:#}");
     }
