@@ -258,7 +258,7 @@ describe('runImport', () => {
     expect(report.failed).toBe(0)
   })
 
-  test('非安全上下文（明文 HTTP 访问，无 crypto.randomUUID）仍能生成 batchId（#895）', async () => {
+  test('非安全上下文（明文 HTTP 访问，无 crypto.randomUUID）仍能生成 batchId', async () => {
     // 浏览器只在安全上下文暴露 randomUUID；getRandomValues 不受限制。
     const own = Object.getOwnPropertyDescriptor(crypto, 'randomUUID')
     Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true, writable: true })
