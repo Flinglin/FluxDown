@@ -190,6 +190,8 @@ export interface MessageMap {
   /** 侧边栏诊断「导出资源调试日志」：按 tab 生成已脱敏的嗅探状态快照。 */
   getDebugLog: { req: { tabId: number }; res: ResourceDebugLog };
   preemptDownload: { req: { url: string }; res: { ok: boolean } };
+  /** 帧所在源注册的 Service Worker 作用域；background 校验同源后登记。 */
+  serviceWorkerScope: { req: { scope: string }; res: { ok: boolean } };
   pageUrlChanged: { req: { pageUrl: string; kind: "push" | "replace" | "pop" }; res: { ok: boolean } };
   mediaElementState: {
     req: { elements: Omit<ElementState, "frameId">[]; removed: string[] };

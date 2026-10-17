@@ -424,6 +424,11 @@ export default defineContentScript({
             tracker.setBlobSource(detail.blobUrl, detail.url);
           }
           return;
+        case "swScope":
+          if (typeof detail.scope === "string" && isHttpUrl(detail.scope)) {
+            swallow(sendAction({ action: "serviceWorkerScope", scope: detail.scope }));
+          }
+          return;
         case "hls": {
           const playlist = normalizeHlsPlaylist(detail.playlist);
           if (!isHttpUrl(detail.url) || !playlist) return;

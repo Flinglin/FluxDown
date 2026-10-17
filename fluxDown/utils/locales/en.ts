@@ -31,7 +31,7 @@ const en: Record<MessageKey, string> = {
   "settings.hintSmart": "Smart detection based on filename, type, and size",
   "settings.hintAll": "Intercept all downloads (except excluded domains)",
   "settings.localDownloadHint":
-    "Locally generated blob:/data: files are not supported and use the browser download",
+    "Files generated inside the browser (blob:/data: links, service-worker streamed downloads) can't be taken over and use the browser download",
   "settings.minFileSize": "Min File Size",
   "settings.sizeNoLimit": "No limit",
   "settings.interceptMagnet": "Take Over Magnet Links",
@@ -456,7 +456,7 @@ const en: Record<MessageKey, string> = {
   "options.intercept.modeAll": "Intercept All",
   "options.intercept.hintSmart": "Decide using file name, type and size together",
   "options.intercept.hintAll": "Intercept every download (except sites set to \"Don't intercept\")",
-  "options.intercept.localDownloadHint": "Locally generated blob:/data: files are not supported and use the browser download",
+  "options.intercept.localDownloadHint": "Files generated inside the browser (blob:/data: links, service-worker streamed downloads) can't be taken over and use the browser download",
   "options.intercept.magnet": "Take Over Magnet Links",
   "options.intercept.magnetHint": "When off, magnet links go to the system default handler (e.g. qBittorrent)",
   "options.intercept.minSize": "Min File Size",

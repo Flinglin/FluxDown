@@ -29,7 +29,7 @@ const zhCN = {
   "settings.hintSmart": "综合文件名、类型、大小智能判断",
   "settings.hintAll": "拦截所有下载（除排除域名外）",
   "settings.localDownloadHint":
-    "网页本地生成的 blob:/data: 文件不支持接管，将由浏览器下载",
+    "网页在浏览器内生成的文件（blob:/data: 链接、Service Worker 流式下载）无法接管，将由浏览器下载",
   "settings.minFileSize": "最小文件大小",
   "settings.sizeNoLimit": "不限",
   "settings.interceptMagnet": "接管磁力链接",
@@ -443,7 +443,7 @@ const zhCN = {
   "options.intercept.modeAll": "拦截所有",
   "options.intercept.hintSmart": "综合文件名、类型、大小智能判断",
   "options.intercept.hintAll": "拦截所有下载（站点配置为「不接管」的站点除外）",
-  "options.intercept.localDownloadHint": "网页本地生成的 blob:/data: 文件不支持接管，将由浏览器下载",
+  "options.intercept.localDownloadHint": "网页在浏览器内生成的文件（blob:/data: 链接、Service Worker 流式下载）无法接管，将由浏览器下载",
   "options.intercept.magnet": "接管磁力链接",
   "options.intercept.magnetHint": "关闭后点击磁力链接交给系统默认程序（如 qBittorrent）",
   "options.intercept.minSize": "最小文件大小",

@@ -964,4 +964,47 @@ export function start(): void {
         return orig.apply(this, args);
       });
   }
+
+  // ===== Service Worker 作用域：识别 SW 合成的下载 =====
+  // 流式保存、网盘、网页 IM 等下载可由页面 SW 在浏览器内合成 http(s) 响应，引擎按 URL
+  // 重放只会拿到 404 / 网页。上报本源 SW 作用域，background 据此要求作用域内的下载必须
+  // 有真实网络请求才接管。与嗅探开关无关：它服务于下载拦截的正确性。
+  const reportedScopes = new Set<string>();
+  function reportScopes(result: unknown): void {
+    for (const reg of Array.isArray(result) ? result : [result]) {
+      const scope = (reg as { scope?: unknown } | null | undefined)?.scope;
+      if (typeof scope !== "string" || !isHttpUrl(scope) || reportedScopes.has(scope)) continue;
+      reportedScopes.add(scope);
+      dispatchReport({ t: "swScope", scope });
+    }
+  }
+  if (typeof ServiceWorkerContainer !== "undefined") {
+    for (const key of ["register", "getRegistration", "getRegistrations"]) {
+      wrapMethod(ServiceWorkerContainer.prototype, key, (orig) =>
+        function (this: ServiceWorkerContainer, ...args: unknown[]) {
+          const p = orig.apply(this, args);
+          if (!(p instanceof Promise)) return p;
+          // 返回镜像原结果的派生 Promise：成功值与拒绝原因不变，页面未处理的拒绝照旧上抛
+          return p.then((result: unknown) => {
+            try {
+              reportScopes(result);
+            } catch {
+              /* ignore */
+            }
+            return result;
+          });
+        });
+    }
+    try {
+      // 已受控的文档（常见于再次访问：页面不会再调 register）：主动查一次本文档的注册
+      const container = navigator.serviceWorker;
+      if (container?.controller) {
+        container.getRegistration().then(reportScopes, () => {
+          /* 查询失败：不上报 */
+        });
+      }
+    } catch {
+      /* 沙箱 iframe 读取 navigator.serviceWorker 会抛 SecurityError */
+    }
+  }
 }

@@ -28,7 +28,9 @@ export type ReportDetail =
   | { t: "pageUrl"; kind: "push" | "replace" | "pop"; from: string }
   | { t: "hls"; url: string; playlist: HlsPlaylistInfo }
   /** `URL.createObjectURL(blob)` 的 blob 来自某个响应（来源标记唯一）：blob URL ↔ 原始地址。 */
-  | { t: "blob"; blobUrl: string; url: string };
+  | { t: "blob"; blobUrl: string; url: string }
+  /** 本源已注册的 Service Worker 作用域（识别 SW 合成的下载，见 utils/download-source.ts）。 */
+  | { t: "swScope"; scope: string };
 
 export interface SourceBufferBinding {
   sbId: number;

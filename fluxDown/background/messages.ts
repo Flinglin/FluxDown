@@ -33,6 +33,8 @@ import {
 } from "./downloads";
 import { getCapabilities, invalidateCapabilities } from "./host";
 import { markPreempted } from "./intercept";
+import { rememberServiceWorkerScope } from "./sw-scopes";
+import { scopeBelongsTo } from "@/utils/download-source";
 import type { PageConfig } from "@/page/bridge";
 import type {
   HostStatus,
@@ -268,6 +270,14 @@ const handlers: { [A in MessageAction]: Handler<A> } = {
     if (!req.url || typeof req.url !== "string") return { ok: false };
     // 蓝奏云等网站的 CDN URL 实际是 HTML 中转页：不发送给 FluxDown，仅记录 URL 防重复。
     markPreempted(req.url);
+    return { ok: true };
+  },
+
+  async serviceWorkerScope(req, sender) {
+    // SW 只能注册在同源路径下：以浏览器给出的帧来源为准，跨源上报直接拒绝
+    const frameOrigin = sender.origin ?? sender.url ?? "";
+    if (typeof req.scope !== "string" || !scopeBelongsTo(req.scope, frameOrigin)) return { ok: false };
+    rememberServiceWorkerScope(req.scope);
     return { ok: true };
   },
 

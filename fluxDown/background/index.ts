@@ -30,6 +30,7 @@ import {
   onSettingsChanged,
 } from "./settings-cache";
 import { installSniff } from "./sniff";
+import { loadServiceWorkerScopes } from "./sw-scopes";
 import { allFrames, installTabState } from "./tab-state";
 import { installTaskListeners } from "./tasks";
 import { updateIcon } from "./toolbar";
@@ -77,6 +78,8 @@ export function startBackground(): void {
   installMessages();
   installPorts();
   restoreBreakerState();
+  // 拦截同步路径需要 SW 作用域登记表就绪，启动即恢复
+  void loadServiceWorkerScopes();
 
   onSettingsChanged(applyInterceptState);
   onSettingsChanged(broadcastPageConfigChanged);
