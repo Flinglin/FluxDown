@@ -481,7 +481,9 @@ pub(crate) async fn ffmpeg_copy_to_mp4(
         }
     }
 
-    let copy_args = ["-c", "copy", "-movflags", "+faststart", "-f", "mp4"];
+    // 不加 `+faststart`:它会在封装完成后把整份 mp4 再重写一遍(搬移 moov),
+    // 本地播放不需要,只徒增一倍写盘。
+    let copy_args = ["-c", "copy", "-f", "mp4"];
     let first_result =
         run_ffmpeg_mux_step(ffmpeg, video, audio, output, &copy_args, cancel_token).await?;
 
@@ -510,18 +512,7 @@ pub(crate) async fn ffmpeg_copy_to_mp4(
             output.display()
         );
 
-        let aac_fallback_args = [
-            "-c:v",
-            "copy",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-movflags",
-            "+faststart",
-            "-f",
-            "mp4",
-        ];
+        let aac_fallback_args = ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-f", "mp4"];
 
         let retry_result = run_ffmpeg_mux_step(
             ffmpeg,
