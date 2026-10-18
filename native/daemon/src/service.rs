@@ -752,11 +752,14 @@ impl DaemonService {
             method::DAEMON_PLUGIN_SNIFF_RULES => {
                 let manager = self.plugin_manager()?;
                 let plugins = manager.list().await;
-                let (sequence, pack) =
-                    fluxdown_engine::plugin::sniff_pack::query(&plugins, &self.db)
-                        .await
-                        .map_err(|error| internal_error(format!("{error:#}")))?;
-                to_value(fluxdown_protocol::PluginSniffRulesDto { sequence, pack })
+                let result = fluxdown_engine::plugin::sniff_pack::query(&plugins, &self.db)
+                    .await
+                    .map_err(|error| internal_error(format!("{error:#}")))?;
+                to_value(fluxdown_protocol::PluginSniffRulesDto {
+                    sequence: result.sequence,
+                    epoch: result.epoch,
+                    pack: result.pack,
+                })
             }
             #[cfg(feature = "plugins")]
             method::DAEMON_PLUGIN_AUTH => {

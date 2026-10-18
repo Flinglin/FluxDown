@@ -770,11 +770,15 @@ pub struct SettingFieldDto {
 
 /// plugin 层嗅探规则包（`daemon.plugin.sniffRules`）：`pack` 为 `null` 表示从未有过插件规则
 /// （此时 `sequence == 0`）。`pack` 的形状即浏览器扩展的 `RulePack` JSON。
+/// `epoch` 是随序号持久化的实例标识：数据库重置后序号重新计数，`epoch` 必变，
+/// 浏览器扩展据此丢弃旧序号而不是把倒退当作回滚。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PluginSniffRulesDto {
     pub sequence: u64,
+    #[serde(default)]
+    pub epoch: String,
     #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
     pub pack: Option<Value>,
 }
