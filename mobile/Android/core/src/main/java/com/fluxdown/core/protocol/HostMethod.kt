@@ -191,6 +191,8 @@ object HostMethod {
     const val agentLinkApprove = "agent.link.approve"
     /** `LinkDeviceParams`：解除配对。 */
     const val agentLinkRemove = "agent.link.remove"
+    /** `LinkRenameParams` → `LinkDeviceInfo`：设置 / 清除已配对设备的本机备注名（省略 / 空白 = 清除）。 */
+    const val agentLinkRename = "agent.link.rename"
     /** 探测全部已配对设备在线状态 → `Vec<LinkDeviceInfo>`（同时推送 `LinkedDevicesChanged`）。 */
     const val agentLinkRefresh = "agent.link.refresh"
     /** `LinkDispatchParams` → `LinkDispatchResult`：下发下载到已配对设备。 */

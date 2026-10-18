@@ -498,26 +498,13 @@ pub(crate) fn apply_extra_headers(
         return req;
     }
 
-    /// Headers that must never be forwarded from the browser extension.
-    /// Compared case-insensitively via `HeaderName` (which lowercases).
-    const BLOCKED_HEADERS: &[&str] = &[
-        "accept-encoding",
-        "content-encoding",
-        "transfer-encoding",
-        "host",
-        "content-length",
-        "connection",
-        "range",
-        "if-range",
-    ];
-
     let mut map = reqwest::header::HeaderMap::with_capacity(extra_headers.len());
     for (name, value) in extra_headers {
         if let (Ok(header_name), Ok(header_value)) = (
             reqwest::header::HeaderName::from_bytes(name.as_bytes()),
             reqwest::header::HeaderValue::from_str(value),
         ) {
-            if BLOCKED_HEADERS
+            if BLOCKED_REQUEST_HEADERS
                 .iter()
                 .any(|&blocked| header_name.as_str() == blocked)
             {
@@ -533,6 +520,52 @@ pub(crate) fn apply_extra_headers(
     // req.headers(map) 内部用 insert 逐个替换同名头，
     // 确保浏览器的真实 User-Agent 等值覆盖 build_client 设的默认值。
     req.headers(map)
+}
+
+/// 永不从外部输入（扩展捕获 / 插件改写）转发的请求头，由 HTTP 栈或下载引擎独占管理。
+/// 按小写比较（`HeaderName` 恒为小写）。
+pub(crate) const BLOCKED_REQUEST_HEADERS: [&str; 8] = [
+    "accept-encoding",
+    "content-encoding",
+    "transfer-encoding",
+    "host",
+    "content-length",
+    "connection",
+    "range",
+    "if-range",
+];
+
+/// 一条按站点附加的请求头规则：只对 [`crate::auth::site_key`] 等于 `origin` 的请求生效。
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OriginHeaders {
+    pub origin: String,
+    pub headers: std::collections::HashMap<String, String>,
+}
+
+/// 对 `url` 所属站点附加 `rules` 中匹配的请求头（过滤规则同 [`apply_extra_headers`]）。
+pub(crate) fn apply_origin_headers(
+    mut req: reqwest::RequestBuilder,
+    url: &str,
+    rules: &[OriginHeaders],
+) -> reqwest::RequestBuilder {
+    if rules.is_empty() {
+        return req;
+    }
+    let Some(site) = crate::auth::site_key(url) else {
+        return req;
+    };
+    for rule in rules.iter().filter(|r| r.origin == site) {
+        req = apply_extra_headers(req, &rule.headers);
+    }
+    req
+}
+
+/// 插件显式指定、引擎自适应逻辑不得改动的请求身份字段。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RequestPins {
+    pub user_agent: bool,
+    pub referrer: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -572,20 +605,25 @@ pub enum RequestBodyDecoded {
 ///   - `extra_headers`：扩展捕获的其他请求头（UA/Accept/Sec-Fetch-* 等），
 ///     由 `apply_extra_headers` 过滤危险头后注入
 ///   - `body`：仅非 GET 有意义；GET 请求即使携带也会被忽略（见 build_request）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RequestSpec {
     pub method: reqwest::Method,
     pub cookies: String,
     pub referrer: String,
     pub extra_headers: std::collections::HashMap<String, String>,
     pub body: Option<RequestBodyDecoded>,
+    /// 插件锁定的 UA / Referer：自适应改写（换 UA、补 Referer、质询脱困）跳过被锁字段。
+    pub pins: RequestPins,
+    /// 按站点附加的请求头（插件下发，不落库）。
+    pub origin_headers: Vec<OriginHeaders>,
 }
 
 /// 浏览器扩展/Native Messaging 捕获的原始请求体——引擎侧的传输无关表示。
 /// 捕获请求的宿主从 Native Messaging wire 格式转换为此类型后再调用
 /// [`RequestSpec::from_captured`]，使得 `downloader` / `download_manager`
 /// 不直接依赖 Native Messaging 协议。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CapturedRequestBody {
     FormData {
         fields: std::collections::HashMap<String, Vec<String>>,
@@ -595,22 +633,70 @@ pub enum CapturedRequestBody {
     },
     /// `bytes_b64`：base64 编码的原始字节(XHR/fetch 直接发送 ArrayBuffer 场景)。
     Raw {
+        #[serde(rename = "bytesB64")]
         bytes_b64: String,
+        #[serde(rename = "contentType", default)]
         content_type: Option<String>,
     },
+}
+
+/// 把传输表示的请求体解码为可直接发送的形式。base64 非法时返回错误文案。
+pub(crate) fn decode_captured_body(
+    body: CapturedRequestBody,
+) -> Result<RequestBodyDecoded, String> {
+    use base64::Engine;
+    match body {
+        CapturedRequestBody::FormData { fields } => {
+            let mut pairs: Vec<(String, String)> = Vec::new();
+            for (k, vs) in fields {
+                for v in vs {
+                    pairs.push((k.clone(), v));
+                }
+            }
+            Ok(RequestBodyDecoded::Form(pairs))
+        }
+        CapturedRequestBody::Urlencoded { raw } => Ok(RequestBodyDecoded::Urlencoded(raw)),
+        CapturedRequestBody::Raw {
+            bytes_b64,
+            content_type,
+        } => base64::engine::general_purpose::STANDARD
+            .decode(&bytes_b64)
+            .map(|bytes| RequestBodyDecoded::Raw {
+                bytes,
+                content_type,
+            })
+            .map_err(|e| format!("请求体 base64 解码失败: {e}")),
+    }
+}
+
+/// [`decode_captured_body`] 的逆：表单按 key 聚合（同 key 的值保持出现顺序）。
+pub(crate) fn encode_decoded_body(body: &RequestBodyDecoded) -> CapturedRequestBody {
+    use base64::Engine;
+    match body {
+        RequestBodyDecoded::Form(pairs) => {
+            let mut fields: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            for (k, v) in pairs {
+                fields.entry(k.clone()).or_default().push(v.clone());
+            }
+            CapturedRequestBody::FormData { fields }
+        }
+        RequestBodyDecoded::Urlencoded(raw) => CapturedRequestBody::Urlencoded { raw: raw.clone() },
+        RequestBodyDecoded::Raw {
+            bytes,
+            content_type,
+        } => CapturedRequestBody::Raw {
+            bytes_b64: base64::engine::general_purpose::STANDARD.encode(bytes),
+            content_type: content_type.clone(),
+        },
+    }
 }
 
 impl RequestSpec {
     /// 默认 GET、无 cookies/headers/body——用于 download_manager 内部的"裸"
     /// HTTP 请求场景(如 BT/HLS 元数据获取,无浏览器会话上下文)。
     pub fn empty_get() -> Self {
-        Self {
-            method: reqwest::Method::GET,
-            cookies: String::new(),
-            referrer: String::new(),
-            extra_headers: std::collections::HashMap::new(),
-            body: None,
-        }
+        Self::default()
     }
 
     /// GET / HEAD 请求——可以多段下载、可以做 HEAD probe。
@@ -639,8 +725,6 @@ impl RequestSpec {
         extra_headers: std::collections::HashMap<String, String>,
         body: Option<CapturedRequestBody>,
     ) -> Self {
-        use base64::Engine;
-
         let method = method
             .and_then(|s| {
                 let upper = s.trim().to_ascii_uppercase();
@@ -659,30 +743,12 @@ impl RequestSpec {
             })
             .unwrap_or(reqwest::Method::GET);
 
-        let body = body.and_then(|b| match b {
-            CapturedRequestBody::FormData { fields } => {
-                let mut pairs: Vec<(String, String)> = Vec::new();
-                for (k, vs) in fields {
-                    for v in vs {
-                        pairs.push((k.clone(), v.clone()));
-                    }
-                }
-                Some(RequestBodyDecoded::Form(pairs))
+        let body = body.and_then(|b| match decode_captured_body(b) {
+            Ok(decoded) => Some(decoded),
+            Err(e) => {
+                log_info!("[request-spec] {}", e);
+                None
             }
-            CapturedRequestBody::Urlencoded { raw } => Some(RequestBodyDecoded::Urlencoded(raw)),
-            CapturedRequestBody::Raw {
-                bytes_b64,
-                content_type,
-            } => match base64::engine::general_purpose::STANDARD.decode(&bytes_b64) {
-                Ok(bytes) => Some(RequestBodyDecoded::Raw {
-                    bytes,
-                    content_type,
-                }),
-                Err(e) => {
-                    log_info!("[request-spec] failed to base64-decode raw body: {}", e);
-                    None
-                }
-            },
         });
 
         Self {
@@ -691,6 +757,7 @@ impl RequestSpec {
             referrer,
             extra_headers,
             body,
+            ..Self::default()
         }
     }
 }

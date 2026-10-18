@@ -35,7 +35,7 @@ use crate::jsonrpc::handle_jsonrpc;
 use crate::jsonrpc_ws::run_session;
 use crate::mcp::handle_mcp;
 use crate::routes;
-use crate::service::{ApiError, ApiHost, UNKNOWN_ENDPOINT_MESSAGE};
+use crate::service::{ApiError, ApiHost, LinkAuthReason, UNKNOWN_ENDPOINT_MESSAGE};
 use crate::takeover::parse_batch;
 use fluxdown_protocol::daemon::{
     CreateGroupRequest, CreateGroupResponse, CreateTaskRequest, CreatedTask, DownloadRequest,
@@ -48,6 +48,12 @@ use fluxdown_protocol::daemon::{
 
 /// 请求体大小上限：4 MB（足够容纳批量 URL 列表）。
 const MAX_BODY_SIZE: usize = 4 * 1024 * 1024;
+/// 配对握手三步（hello / reveal / confirm）的请求体上限：16 KiB。这些端点无鉴权，任何能连上
+/// 的主机都能打到，不该让它们为一份只有几百字节的 JSON 去缓冲 4 MB。
+const LINK_PAIR_BODY_LIMIT: usize = 16 * 1024;
+/// 数据面响应头：方案版本。与 `fluxdown_link::LINK_ENC_V2` 一致。
+const LINK_ENC_HEADER: &str = "x-fluxlink-enc";
+const LINK_ENC_V2: &str = "v2";
 /// 端口重绑重试次数（热重启时旧 listener 释放存在竞态窗口）。
 const BIND_RETRIES: u32 = 20;
 /// 每次重绑重试间隔。
@@ -370,11 +376,21 @@ fn register_core(state: AppState) -> Router<AppState> {
     // P2P 设备互联端点：**无 token 鉴权**（配对由一次性码 + SAS 守卫；数据面由
     // 每对独立链路 HMAC 守卫），故与 /ping 同级恒注册，不进 management 分组。
     router = router
-        .route(routes::API_LINK_PAIR_HELLO, post(api_link_pair_hello))
-        .route(routes::API_LINK_PAIR_REVEAL, post(api_link_pair_reveal))
-        .route(routes::API_LINK_PAIR_CONFIRM, post(api_link_pair_confirm))
+        .route(
+            routes::API_LINK_PAIR_HELLO,
+            post(api_link_pair_hello).layer(DefaultBodyLimit::max(LINK_PAIR_BODY_LIMIT)),
+        )
+        .route(
+            routes::API_LINK_PAIR_REVEAL,
+            post(api_link_pair_reveal).layer(DefaultBodyLimit::max(LINK_PAIR_BODY_LIMIT)),
+        )
+        .route(
+            routes::API_LINK_PAIR_CONFIRM,
+            post(api_link_pair_confirm).layer(DefaultBodyLimit::max(LINK_PAIR_BODY_LIMIT)),
+        )
         .route(routes::API_LINK_TASKS, post(api_link_create_task))
-        .route(routes::API_LINK_INFO, post(api_link_info));
+        .route(routes::API_LINK_INFO, post(api_link_info))
+        .route(routes::API_LINK_UNPAIR, post(api_link_unpair));
     if state.config.route_registered(RouteGroup::Management) {
         router = router
             .route(routes::API_INFO, get(api_info))
@@ -673,6 +689,7 @@ async fn route_group_guard(
                 | routes::API_LINK_PAIR_CONFIRM
                 | routes::API_LINK_TASKS
                 | routes::API_LINK_INFO
+                | routes::API_LINK_UNPAIR
         )
     {
         Some(RouteGroup::Management)
@@ -707,12 +724,15 @@ fn result_response(status: StatusCode, success: bool, message: &str) -> Response
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let ApiError::LinkAuth(reason) = &self {
+            return link_auth_failure(*reason);
+        }
         let status = match &self {
             ApiError::NotFound => StatusCode::NOT_FOUND,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-            ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
+            ApiError::Unauthorized | ApiError::LinkAuth(_) => StatusCode::UNAUTHORIZED,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         match &self {
@@ -725,10 +745,45 @@ impl IntoResponse for ApiError {
             ApiError::NotFound
             | ApiError::BadRequest(_)
             | ApiError::Conflict(_)
-            | ApiError::Unauthorized => {}
+            | ApiError::Unauthorized
+            | ApiError::LinkAuth(_) => {}
         }
         result_response(status, false, &self.to_string())
     }
+}
+
+/// 数据面链路鉴权失败的 401 响应。**未认证**：`reason`（`notPaired` / `clockSkew` /
+/// `unauthorized`）与 `serverTime`（本机当前 Unix 秒）只供排错——例如提示「设备时间差异过大」——
+/// 接收方不得据此持久化任何状态。同时保留 `{"success":false,"message":…}` 的通用错误体形状。
+fn link_auth_failure(reason: LinkAuthReason) -> Response {
+    let server_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({
+            "success": false,
+            "message": "unauthorized",
+            "reason": reason.as_str(),
+            "serverTime": server_time,
+        })),
+    )
+        .into_response()
+}
+
+/// 数据面成功响应：已封装的二进制密文 + `X-FluxLink-Enc: v2`。
+fn sealed_link_response(sealed: Vec<u8>) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CACHE_CONTROL, "no-store"),
+            (HeaderName::from_static(LINK_ENC_HEADER), LINK_ENC_V2),
+        ],
+        sealed,
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -754,6 +809,7 @@ pub(crate) async fn ping(State(state): State<AppState>) -> Response {
     if let Some(info) = state.host.link_ping_info().await {
         body["linkFingerprint"] = json!(info.fingerprint);
         body["linkName"] = json!(info.name);
+        body["linkProtocol"] = json!(info.link_protocol);
         if !info.platform.is_empty() {
             body["linkPlatform"] = json!(info.platform);
         }
@@ -867,14 +923,31 @@ pub(crate) async fn api_link_pair_confirm(State(state): State<AppState>, body: B
     }
 }
 
+/// 数据面请求的共同骨架：从 `X-FluxLink-*` 头取鉴权凭据（缺失 → 401）→ 交给宿主校验并处理
+/// → 成功时回封装好的密文。传**原始 body 字节**给宿主：MAC 覆盖了 body 摘要，宿主须用收到的
+/// 原始字节校验后再解密，不能先解析（重序列化字节可能与签名不一致）。
+async fn link_data_plane<F, Fut>(headers: &HeaderMap, body: Bytes, call: F) -> Response
+where
+    F: FnOnce(LinkAuth, Vec<u8>) -> Fut,
+    Fut: Future<Output = Result<Vec<u8>, ApiError>>,
+{
+    let Some(auth) = link_auth_from_headers(headers) else {
+        return link_auth_failure(LinkAuthReason::Unauthorized);
+    };
+    match call(auth, body.to_vec()).await {
+        Ok(sealed) => sealed_link_response(sealed),
+        Err(e) => e.into_response(),
+    }
+}
+
 /// 已配对设备下发下载任务：从 `X-FluxLink-*` 头取鉴权凭据 → 校验 → 建任务。
 #[utoipa::path(post, path = "/api/v1/link/tasks", tag = "link",
-    description = "数据面：已配对设备下发下载任务。**无 management token**，鉴权靠 `X-FluxLink-Device`/`X-FluxLink-Ts`/`X-FluxLink-Nonce`/`X-FluxLink-Auth` 头做每对设备独立密钥的 HMAC 校验。\n\n\
-请求体是对明文 JSON 任务描述做 AEAD 加密后的**二进制密文**（`Content-Type: application/octet-stream`），非普通 JSON；宿主校验鉴权头后解密再反序列化。",
+    description = "数据面（v2）：已配对设备下发下载任务（一次性投递）。**无 management token**，鉴权靠 `X-FluxLink-Device`/`X-FluxLink-Ts`/`X-FluxLink-Nonce`/`X-FluxLink-Tag`/`X-FluxLink-Enc: v2` 头：Tag 是每对设备独立密钥对 `fluxlink-v2\\n{METHOD}\\n{path}\\n{ts}\\n{nonce}\\n{sender_fp}\\n{receiver_fp}\\n{hex(sha256(密文 body))}` 的 HMAC-SHA256（绑定收发双方指纹）。\n\n\
+请求体是对明文 JSON 任务描述做 ChaCha20-Poly1305 加密后的**二进制密文**（`Content-Type: application/octet-stream`，AAD 绑定方向、方法、路径、收发双方指纹与 nonce），非普通 JSON。**成功响应同样是封装后的二进制密文**（响应头 `X-FluxLink-Enc: v2`，AAD 绑定方向与请求 nonce，明文为 `{\"taskId\":…}`），发起方解封失败按鉴权失败处理。`Enc` 缺失或不是 `v2`（含旧的 `v1`）一律 401。",
     responses(
-        (status = 200, description = "创建成功", body = fluxdown_protocol::daemon::CreatedTask),
+        (status = 200, description = "创建成功：封装后的 `{\"taskId\":…}`（二进制）"),
         (status = 400, description = "载荷非法（含解密失败）", body = fluxdown_protocol::daemon::ResultMessage),
-        (status = 401, description = "缺少/无效链路鉴权头", body = fluxdown_protocol::daemon::ResultMessage),
+        (status = 401, description = "鉴权失败。JSON `{\"reason\":\"notPaired\"|\"clockSkew\"|\"unauthorized\",\"serverTime\":秒}`，未认证、仅作诊断", body = fluxdown_protocol::daemon::ResultMessage),
     )
 )]
 pub(crate) async fn api_link_create_task(
@@ -882,23 +955,10 @@ pub(crate) async fn api_link_create_task(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let h = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let auth = LinkAuth {
-        device: h("x-fluxlink-device").to_string(),
-        ts: h("x-fluxlink-ts").parse::<i64>().unwrap_or(0),
-        nonce: h("x-fluxlink-nonce").to_string(),
-        tag: h("x-fluxlink-auth").to_string(),
-        enc: h("x-fluxlink-enc").to_string(),
-    };
-    if auth.device.is_empty() || auth.tag.is_empty() {
-        return result_response(StatusCode::UNAUTHORIZED, false, "missing link auth headers");
-    }
-    // 传原始 body 字节给宿主：HMAC 覆盖了 body 摘要，宿主须用**收到的原始字节**
-    // 校验后再反序列化，不能先解析（重序列化字节可能与签名不一致）。
-    match state.host.link_create_task(auth, body.to_vec()).await {
-        Ok(task_id) => Json(CreatedTask { task_id }).into_response(),
-        Err(e) => e.into_response(),
-    }
+    link_data_plane(&headers, body, |auth, body| {
+        state.host.link_create_task(auth, body)
+    })
+    .await
 }
 
 /// 从 `X-FluxLink-*` 头取链路鉴权凭据；缺少设备指纹或标签返回 `None`。
@@ -908,8 +968,8 @@ fn link_auth_from_headers(headers: &HeaderMap) -> Option<LinkAuth> {
         device: h("x-fluxlink-device").to_string(),
         ts: h("x-fluxlink-ts").parse::<i64>().unwrap_or(0),
         nonce: h("x-fluxlink-nonce").to_string(),
-        tag: h("x-fluxlink-auth").to_string(),
-        enc: h("x-fluxlink-enc").to_string(),
+        tag: h("x-fluxlink-tag").to_string(),
+        enc: h(LINK_ENC_HEADER).to_string(),
     };
     if auth.device.is_empty() || auth.tag.is_empty() {
         None
@@ -918,12 +978,12 @@ fn link_auth_from_headers(headers: &HeaderMap) -> Option<LinkAuth> {
     }
 }
 
-/// 已配对设备经已认证链路交换设备信息（默认下载目录 / 路径风格）。
+/// 已配对设备经已认证链路双向交换设备信息。
 #[utoipa::path(post, path = "/api/v1/link/info", tag = "link",
-    description = "数据面：已配对设备交换设备信息（默认下载目录 / 路径风格）。**无 management token**，鉴权靠 `X-FluxLink-*` 头（同 `/api/v1/link/tasks`）。请求体与响应体都是 AEAD 密文（`application/octet-stream`）；旧版对端没有该端点（404）。",
+    description = "数据面（v2）：已配对设备双向交换设备信息（名称 / 平台 / 版本 / 回连地址 ≤4 / 云设备 ID / 默认下载目录 / 路径风格）。**无 management token**，鉴权与封装规则同 `/api/v1/link/tasks`。请求体与成功响应体都是 AEAD 密文（`application/octet-stream`，响应头 `X-FluxLink-Enc: v2`）。",
     responses(
-        (status = 200, description = "用链路密钥加密的本机信息（二进制）"),
-        (status = 401, description = "缺少/无效链路鉴权头", body = fluxdown_protocol::daemon::ResultMessage),
+        (status = 200, description = "用链路密钥封装的本机信息（二进制）"),
+        (status = 401, description = "鉴权失败。JSON `{\"reason\":\"notPaired\"|\"clockSkew\"|\"unauthorized\",\"serverTime\":秒}`，未认证、仅作诊断", body = fluxdown_protocol::daemon::ResultMessage),
     )
 )]
 pub(crate) async fn api_link_info(
@@ -931,20 +991,29 @@ pub(crate) async fn api_link_info(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Some(auth) = link_auth_from_headers(&headers) else {
-        return result_response(StatusCode::UNAUTHORIZED, false, "missing link auth headers");
-    };
-    match state.host.link_peer_info(auth, body.to_vec()).await {
-        Ok(sealed) => (
-            [
-                (header::CONTENT_TYPE, "application/octet-stream"),
-                (header::CACHE_CONTROL, "no-store"),
-            ],
-            sealed,
-        )
-            .into_response(),
-        Err(e) => e.into_response(),
-    }
+    link_data_plane(&headers, body, |auth, body| {
+        state.host.link_peer_info(auth, body)
+    })
+    .await
+}
+
+/// 已配对设备通知本机「我已解除与你的配对」。
+#[utoipa::path(post, path = "/api/v1/link/unpair", tag = "link",
+    description = "数据面（v2）：已配对设备通知本机它已解除与本机的配对。**无 management token**，鉴权与封装规则同 `/api/v1/link/tasks`。收到后本机把该设备记录标记为已撤销（拒绝其入站请求、不再向它下发），幂等；请求与成功响应体都是 AEAD 密文（`application/octet-stream`，响应头 `X-FluxLink-Enc: v2`）。",
+    responses(
+        (status = 200, description = "用链路密钥封装的确认（二进制）"),
+        (status = 401, description = "鉴权失败。JSON `{\"reason\":\"notPaired\"|\"clockSkew\"|\"unauthorized\",\"serverTime\":秒}`，未认证、仅作诊断", body = fluxdown_protocol::daemon::ResultMessage),
+    )
+)]
+pub(crate) async fn api_link_unpair(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    link_data_plane(&headers, body, |auth, body| {
+        state.host.link_unpair(auth, body)
+    })
+    .await
 }
 
 /// 配对 `hello` 的节流来源：默认是 TCP 层对端地址；对端被 `trusted` 判定为反向代理时，

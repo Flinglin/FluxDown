@@ -174,6 +174,7 @@ export const METHOD = {
   AGENT_LINK_PAIR_FINISH: 'agent.link.pairFinish',
   AGENT_LINK_APPROVE: 'agent.link.approve',
   AGENT_LINK_REMOVE: 'agent.link.remove',
+  AGENT_LINK_RENAME: 'agent.link.rename',
   AGENT_LINK_REFRESH: 'agent.link.refresh',
   AGENT_LINK_DISPATCH: 'agent.link.dispatch',
   AGENT_CLOUD_ENDPOINT_GET: 'agent.cloud.endpointGet',
