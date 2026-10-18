@@ -64,18 +64,20 @@ export function SyncCard(props: SyncCardProps): JSX.Element | null {
         <thead>
           <tr>
             <th>{t("rules.sync.colPack")}</th>
-            <th>{t("rules.sync.colSequence")}</th>
+            <th>{t("rules.sync.colCount")}</th>
             <th>{t("rules.sync.colIssued")}</th>
             <th>{t("rules.sync.colExpires")}</th>
+            <th>{t("rules.sync.colSequence")}</th>
           </tr>
         </thead>
         <tbody>
           {docs.map(([label, doc]) => (
             <tr key={label}>
               <td>{label}</td>
-              <td class="opt-cell-mono">{doc ? doc.sequence : "—"}</td>
+              <td class="opt-cell-mono">{doc ? doc.count : "—"}</td>
               <td>{doc ? formatIso(doc.issuedAt) : t("rules.sync.none")}</td>
               <td>{doc ? formatIso(doc.expiresAt) : "—"}</td>
+              <td class="opt-cell-mono">{doc ? doc.sequence : "—"}</td>
             </tr>
           ))}
         </tbody>

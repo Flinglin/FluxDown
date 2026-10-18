@@ -376,6 +376,11 @@ const zhTW = {
   "list.type.torrent": "種子",
   "list.type.magnet": "磁力",
   "list.type.other": "其他",
+  "list.probe.recovering": "正在恢復頁面偵測…",
+  "list.probe.degraded": "擴充功能更新前頁面已開始播放，目前影片無法關聯到下載位址。重新整理頁面即可完整識別",
+  "list.probe.unavailable": "此頁面不允許擴充功能注入，無法關聯到播放器",
+  "list.probe.reload": "重新整理頁面",
+  "list.probe.reloadFailed": "重新整理頁面失敗",
 
   // 桌面端解析交接（ExtUI）
   "handoff.title": "交給桌面端解析",
@@ -574,7 +579,8 @@ const zhTW = {
   "rules.sync.done": "規則已同步",
   "rules.sync.failed": "規則同步失敗",
   "rules.sync.colPack": "規則包",
-  "rules.sync.colSequence": "序號",
+  "rules.sync.colSequence": "版本",
+  "rules.sync.colCount": "數量",
   "rules.sync.colIssued": "簽發時間",
   "rules.sync.colExpires": "到期時間",
   "rules.sync.official": "官方包",

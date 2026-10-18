@@ -374,6 +374,11 @@ const zhCN = {
   "list.type.torrent": "种子",
   "list.type.magnet": "磁力",
   "list.type.other": "其他",
+  "list.probe.recovering": "正在恢复页面探测…",
+  "list.probe.degraded": "扩展更新前页面已开始播放，当前视频无法关联到下载地址。刷新页面即可完整识别",
+  "list.probe.unavailable": "此页面不允许扩展注入，无法关联到播放器",
+  "list.probe.reload": "刷新页面",
+  "list.probe.reloadFailed": "刷新页面失败",
 
   // 桌面端解析交接（ExtUI）
   "handoff.title": "交给桌面端解析",
@@ -572,7 +577,8 @@ const zhCN = {
   "rules.sync.done": "规则已同步",
   "rules.sync.failed": "规则同步失败",
   "rules.sync.colPack": "规则包",
-  "rules.sync.colSequence": "序号",
+  "rules.sync.colSequence": "版本",
+  "rules.sync.colCount": "数量",
   "rules.sync.colIssued": "签发时间",
   "rules.sync.colExpires": "过期时间",
   "rules.sync.official": "官方包",

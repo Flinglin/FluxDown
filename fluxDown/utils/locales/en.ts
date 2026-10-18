@@ -387,6 +387,11 @@ const en: Record<MessageKey, string> = {
   "list.type.torrent": "Torrents",
   "list.type.magnet": "Magnet",
   "list.type.other": "Other",
+  "list.probe.recovering": "Restoring page detection…",
+  "list.probe.degraded": "This page started playing before the extension was updated, so the current video can't be linked to its download address. Reload the page to detect it fully",
+  "list.probe.unavailable": "This page doesn't allow extension scripts, so players can't be linked",
+  "list.probe.reload": "Reload page",
+  "list.probe.reloadFailed": "Failed to reload the page",
 
   // Desktop handoff (ExtUI)
   "handoff.title": "Hand off to desktop",
@@ -587,7 +592,8 @@ const en: Record<MessageKey, string> = {
   "rules.sync.done": "Rules synced",
   "rules.sync.failed": "Rule sync failed",
   "rules.sync.colPack": "Pack",
-  "rules.sync.colSequence": "Sequence",
+  "rules.sync.colSequence": "Version",
+  "rules.sync.colCount": "Rules",
   "rules.sync.colIssued": "Issued",
   "rules.sync.colExpires": "Expires",
   "rules.sync.official": "Official pack",

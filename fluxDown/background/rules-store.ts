@@ -115,8 +115,12 @@ export function rebuildEngine(): Promise<void> {
   return building;
 }
 
-function summarize(doc: { sequence: number; issuedAt: string; expiresAt?: string } | undefined): RuleDocSummary | null {
-  return doc ? { sequence: doc.sequence, issuedAt: doc.issuedAt, expiresAt: doc.expiresAt } : null;
+function summarize(
+  doc: { sequence: number; issuedAt: string; expiresAt?: string; rules?: unknown[]; entries?: unknown[] } | undefined,
+): RuleDocSummary | null {
+  if (!doc) return null;
+  const count = (doc.rules ?? doc.entries ?? []).length;
+  return { sequence: doc.sequence, issuedAt: doc.issuedAt, expiresAt: doc.expiresAt, count };
 }
 
 /** 规则同步状态（options `#rules` 与诊断页展示）。 */
