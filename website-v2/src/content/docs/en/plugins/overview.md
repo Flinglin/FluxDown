@@ -24,6 +24,7 @@ Every row links to the tutorial for that capability and to the reference that li
 |---|---|---|---|---|
 | **Resolve URLs** — share link → direct link | `resolvers` | none | [Your first plugin](/docs/en/plugins/your-first-plugin/) | [API reference](/docs/en/plugins/api-reference/) |
 | **React to task events**, run ffmpeg / ffprobe / yt-dlp on finished files | `hooks` | `ffmpeg`, `ytdlp` (only for those tools) | [Hooks guide](/docs/en/plugins/hooks-guide/) | [API reference](/docs/en/plugins/api-reference/) |
+| **Intercept downloads** — read and change a task's request (URL, headers, cookies, body), connection count, streaming segments, credentials mid-run, and the finished file; decide whether a failed task is retried | `interceptors` | `intercept` | [Interceptors guide](/docs/en/plugins/interceptors-guide/) | [API reference](/docs/en/plugins/api-reference/) |
 | **Account login** (QR code, verification code, …) and authenticated requests | `auth` | `auth` | [Auth guide](/docs/en/plugins/auth-guide/) | [API reference](/docs/en/plugins/api-reference/) |
 | **Subscription provider** | `subscriptions` | none | [Subscription guide](/docs/en/plugins/subscription-guide/) | [API reference](/docs/en/plugins/api-reference/) |
 | **Portable UI** — pages, settings tab, task-detail tabs, commands, timers; the same code renders on desktop and Web | `main`, `contributes.views`, `contributes.commands`, `settings` | `tasks` to manage tasks, `background` to stay resident | [UI guide](/docs/en/plugins/ui-guide/) | [Views](/docs/en/plugins/views/) |
@@ -55,16 +56,16 @@ FluxDown has two execution models. Which one you get depends on the entry.
 
 | | Stateless entries | Resident `main` |
 |---|---|---|
-| Entries | `resolvers[].entry`, `hooks.entry`, `auth.entry`, `subscriptions[].entry` | `main.entry` |
+| Entries | `resolvers[].entry`, `hooks.entry`, `interceptors.entry`, `auth.entry`, `subscriptions[].entry` | `main.entry` |
 | Lifetime | a **fresh** JavaScript context (QuickJS) for every call; nothing survives, use `flux.storage` to persist | **one long-lived context per plugin**; global variables survive between calls |
-| Called by | downloads (resolve, hooks), the login dialog, subscription refresh | views, commands, timers, `flux.events` subscriptions |
+| Called by | downloads (resolve, hooks, interceptors), the login dialog, subscription refresh | views, commands, timers, `flux.events` subscriptions |
 | Started | on demand, per call | on demand when a view opens or an event arrives; reclaimed after 5 minutes without sessions, timers or running calls, unless `main.background` is `true` (needs the `background` permission) |
 | Concurrency | calls run independently | calls of one plugin run **one at a time**: a slow `await` delays every other view, command and timer of that plugin |
 | Extra API | `flux.*` core | the core plus `flux.ui`, `flux.commands`, `flux.rpc`, `flux.events`, `flux.timers`, and `flux.tasks` with the `tasks` permission |
 
 Scripts are loaded as classic scripts, not ES modules. Entry functions must end up on `globalThis` (a top-level `function resolve(ctx) {...}` does that; with the SDK, `defineResolver` and friends do it for you).
 
-> **Keep top-level code free of `flux.*`.** When a plugin is installed or reloaded, FluxDown evaluates each resolver, hooks, auth and subscription script once in a bare JavaScript context to check that it compiles. `flux` and `console` do not exist there, so a top-level `flux.logger.info(...)` makes the install fail with a `脚本编译失败: …` (“script compile failed”) error. Do your work inside the entry function.
+> **Keep top-level code free of `flux.*`.** When a plugin is installed or reloaded, FluxDown evaluates each resolver, hooks, interceptors, auth and subscription script once in a bare JavaScript context to check that it compiles. `flux` and `console` do not exist there, so a top-level `flux.logger.info(...)` makes the install fail with a `脚本编译失败: …` (“script compile failed”) error. Do your work inside the entry function.
 
 ### Resolvers
 
@@ -86,16 +87,21 @@ Hooks are fire-and-forget notifications:
 
 See the [Hooks guide](/docs/en/plugins/hooks-guide/).
 
+### Interceptors
+
+An interceptor is one `intercept(ctx)` entry that FluxDown calls at the stages the manifest lists (`prepare`, `refresh`, `probed`, `selectVariant`, `selectPeriod`, `segments`, `liveSegments`, `finalize`, `failed`). It runs on the daemon for tasks whose URL matches `interceptors.match.urls`, needs the `intercept` permission, and re-runs on every start, resume and retry. A failing call is either skipped with a note in the task's activity log or fails the task, depending on `onFailure`. See the [Interceptors guide](/docs/en/plugins/interceptors-guide/).
+
 ### Limits
 
 | Limit | Value |
 |---|---|
 | Resolve / subscription timeout | 10 s default; the entry's `timeoutMs` can lower or raise it, hard ceiling 30 s |
 | Auth timeout | 30 s default; `auth.timeoutMs` can change it, hard ceiling 30 s |
-| Resolve, auth and subscription memory | 64 MB |
+| Interceptor timeout | 5 s default; `interceptors.timeoutMs` can change it, hard ceiling 30 s. `liveSegments` is capped at 2 s and `refresh` at 5 s. `finalize` of a plugin with the `ffmpeg` or `ytdlp` permission gets the long external-tool budget, like hooks |
+| Resolve, auth, subscription and interceptor memory | 64 MB |
 | Hook timeout / memory | 5 s / 32 MB; a hook with the `ffmpeg` (on `onDone`) or `ytdlp` permission gets a much longer wall-clock budget, see the [Hooks guide](/docs/en/plugins/hooks-guide/) |
 | `main` call | 30 s wall clock, 2 s CPU, 64 MB per call |
-| Circuit breaker | 3 consecutive timeouts or out-of-memory errors in a **resolver, subscription or `main`** call → plugin auto-disabled; any other outcome resets the count. Hooks and `authenticate` calls do not count. |
+| Circuit breaker | 3 consecutive timeouts or out-of-memory errors in a **resolver, interceptor, subscription or `main`** call → plugin auto-disabled; any other outcome resets the count. Hooks and `authenticate` calls do not count. |
 
 An auto-disabled plugin shows a notice in the app and an **Auto-disabled** badge. Re-enable it from **Settings → Extensions → Plugins** after fixing the script (installing an update re-enables it automatically). For every limit and error, see the [API reference](/docs/en/plugins/api-reference/) and [Debugging](/docs/en/plugins/debugging/).
 
@@ -115,7 +121,7 @@ Installed (non-dev) plugins live under `<data dir>/plugins/<identity>/`. New ins
 
 | You changed | Do |
 |---|---|
-| a resolver, hooks, auth or subscription script | nothing — dev plugins re-read these on every call |
+| a resolver, hooks, interceptors, auth or subscription script | nothing — dev plugins re-read these on every call |
 | `main` script, `manifest.json`, or a new entry | press **Reload** on the plugin row (tooltip: "Reload (re-read manifest and scripts)") — it re-reads the manifest and every script and re-checks them like an install; on failure the dev registration is kept and the error is shown |
 | desktop UI script (`desktop.entry`) | **Reload**, then reopen the view |
 
@@ -127,7 +133,7 @@ Plugin logic always runs in FluxDown's background service (daemon). Clients diff
 
 | | Desktop app | Web UI | Mobile apps |
 |---|---|---|---|
-| Resolvers, hooks, auth, subscriptions | run in the daemon for every client | same | same |
+| Resolvers, hooks, interceptors, auth, subscriptions | run in the daemon for every client | same | same |
 | Install: zip, market, directory (dev) | yes | yes — directory path is on the host | zip and market on a connected host; no directory install |
 | Portable views and commands (`main`) | yes | yes | not rendered |
 | Native desktop views (`desktop`) | yes | not shown | not shown |
@@ -140,6 +146,6 @@ A view that has both a `desktop` entry and `"portable": true` uses the native on
 
 1. [Your first plugin](/docs/en/plugins/your-first-plugin/) — a working resolver in plain JavaScript.
 2. [TypeScript project](/docs/en/plugins/typescript-project/) — resolver, hook, view and settings with the SDK, up to a packed `.fxplug`.
-3. Guides: [Hooks](/docs/en/plugins/hooks-guide/), [Auth](/docs/en/plugins/auth-guide/), [Subscriptions](/docs/en/plugins/subscription-guide/), [Portable UI](/docs/en/plugins/ui-guide/), [Desktop UI](/docs/en/plugins/desktop-ui-guide/).
+3. Guides: [Hooks](/docs/en/plugins/hooks-guide/), [Interceptors](/docs/en/plugins/interceptors-guide/), [Auth](/docs/en/plugins/auth-guide/), [Subscriptions](/docs/en/plugins/subscription-guide/), [Portable UI](/docs/en/plugins/ui-guide/), [Desktop UI](/docs/en/plugins/desktop-ui-guide/).
 4. [Debugging](/docs/en/plugins/debugging/) — logs, reload semantics, error messages and fixes.
 5. Reference: [Manifest](/docs/en/plugins/manifest/), [API](/docs/en/plugins/api-reference/), [Views](/docs/en/plugins/views/), [SDK & CLI](/docs/en/plugins/sdk/), [Permissions](/docs/en/plugins/permissions/), [Packaging & market](/docs/en/plugins/packaging/).

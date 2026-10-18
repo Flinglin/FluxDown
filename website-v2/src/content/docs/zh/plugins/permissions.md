@@ -3,7 +3,7 @@ title: 权限、授权与审计
 description: 各插件权限授予什么、风险等级与授权如何运作（界面与无界面两种方式）、市场如何校验插件包、哪些操作会被审计，以及「完全信任」的含义。
 section: plugins
 order: 14
-sourceHash: "471bcb5472fd"
+sourceHash: "b7dbe4ca42f2"
 ---
 
 插件并非被沙箱限制到毫无用处：它可以申请很强的能力。FluxDown 的规则是：每项能力都必须在 manifest 里**声明**，在生效之前**展示给你并由你批准**，并**记入**审计日志。
@@ -21,7 +21,7 @@ sourceHash: "471bcb5472fd"
 | `tasks` | `flux.tasks.*`：列出、创建、暂停、继续、删除下载任务。 |
 | `browserRules` | 向浏览器扩展贡献规则（`contributes.sniffRules`）。 |
 | `background` | 让 `main` 脚本随 daemon 常驻。 |
-| `intercept` | 拦截器：读取并修改匹配任务的链接、请求头、Cookie 与请求体，控制连接数，过滤流媒体分片，并在完成前处理下载文件。见[拦截器指南](/docs/zh/plugins/interceptors-guide/)。 |
+| `intercept` | 拦截器：读取并修改匹配任务的链接、请求头、Cookie 与请求体，控制连接数，跳过探测，在下载中途换发凭据，改写或过滤流媒体分片，选择画质或 DASH Period，在完成前处理下载文件，并在任务失败后请求重试。见[拦截器指南](/docs/zh/plugins/interceptors-guide/)。 |
 | `desktop` | 以**完全信任**运行桌面原生脚本（见下文）。 |
 
 订阅 provider、hooks、resolver 与可移植视图本身不需要额外权限。

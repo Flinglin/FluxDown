@@ -3,7 +3,7 @@ title: 插件系统概览
 description: FluxDown 插件能做什么、如何选择开发路线（纯 JavaScript 或 TypeScript SDK）、怎么运行、怎么安装，以及各客户端的支持情况。
 section: plugins
 order: 1
-sourceHash: "ccb345dc4053"
+sourceHash: "469c2260b730"
 ---
 
 FluxDown 插件是一个文件夹（或这个文件夹打成的 `.fxplug` zip 包），里面有一份 `manifest.json` 和若干 JavaScript 文件。manifest 声明插件贡献了什么，脚本则由 FluxDown 在后台服务的沙箱里，于合适的时机调用。
@@ -25,6 +25,7 @@ FluxDown 插件是一个文件夹（或这个文件夹打成的 `.fxplug` zip �
 |---|---|---|---|---|
 | **解析 URL**——分享链接 → 直链 | `resolvers` | 无 | [写第一个插件](/docs/zh/plugins/your-first-plugin/) | [API 参考](/docs/zh/plugins/api-reference/) |
 | **响应任务事件**，对完成的文件运行 ffmpeg / ffprobe / yt-dlp | `hooks` | `ffmpeg`、`ytdlp`（仅用到这些工具时） | [事件钩子指南](/docs/zh/plugins/hooks-guide/) | [API 参考](/docs/zh/plugins/api-reference/) |
+| **拦截下载**——读取并修改任务的请求（URL、请求头、Cookie、请求体）、连接数、流媒体分片、下载中途的凭据以及完成后的文件；决定失败任务是否重试 | `interceptors` | `intercept` | [拦截器指南](/docs/zh/plugins/interceptors-guide/) | [API 参考](/docs/zh/plugins/api-reference/) |
 | **账号登录**（扫码、验证码等）与带凭据的请求 | `auth` | `auth` | [账号登录与认证指南](/docs/zh/plugins/auth-guide/) | [API 参考](/docs/zh/plugins/api-reference/) |
 | **订阅源 provider** | `subscriptions` | 无 | [订阅源指南](/docs/zh/plugins/subscription-guide/) | [API 参考](/docs/zh/plugins/api-reference/) |
 | **可移植界面**——页面、设置页签、任务详情页签、命令、定时器；同一份代码在桌面端和 Web 端都能渲染 | `main`、`contributes.views`、`contributes.commands`、`settings` | 管理任务用 `tasks`，常驻用 `background` | [可移植界面指南](/docs/zh/plugins/ui-guide/) | [视图](/docs/zh/plugins/views/) |
@@ -56,16 +57,16 @@ FluxDown 有两种执行模型，取决于入口类型。
 
 | | 无状态入口 | 常驻 `main` |
 |---|---|---|
-| 入口 | `resolvers[].entry`、`hooks.entry`、`auth.entry`、`subscriptions[].entry` | `main.entry` |
+| 入口 | `resolvers[].entry`、`hooks.entry`、`interceptors.entry`、`auth.entry`、`subscriptions[].entry` | `main.entry` |
 | 生命周期 | 每次调用都是**全新的** JavaScript 上下文（QuickJS），调用之间什么都不保留，要持久化请用 `flux.storage` | **每个插件一个长期存活的上下文**，全局变量在调用之间保留 |
-| 由谁调用 | 下载（resolve、hooks）、登录对话框、订阅刷新 | 视图、命令、定时器、`flux.events` 订阅 |
+| 由谁调用 | 下载（resolve、hooks、interceptors）、登录对话框、订阅刷新 | 视图、命令、定时器、`flux.events` 订阅 |
 | 何时启动 | 每次调用按需启动 | 打开视图或收到事件时按需启动；没有会话、定时器和进行中调用满 5 分钟后回收，除非 `main.background` 为 `true`（需要 `background` 权限） |
 | 并发 | 各次调用互相独立 | 同一插件的调用**逐个串行**：一个慢 `await` 会拖住该插件所有视图、命令和定时器 |
 | 额外接口 | `flux.*` 核心接口 | 核心接口，加上 `flux.ui`、`flux.commands`、`flux.rpc`、`flux.events`、`flux.timers`，以及声明 `tasks` 权限后的 `flux.tasks` |
 
 脚本按经典脚本（classic script）加载，不是 ES 模块。入口函数必须落在 `globalThis` 上（顶层的 `function resolve(ctx) {...}` 天然满足；用 SDK 时由 `defineResolver` 等辅助函数代劳）。
 
-> **顶层代码不要碰 `flux.*`。** 安装或重新加载插件时，FluxDown 会在一个空白的 JavaScript 上下文里把每个 resolver、hooks、auth、subscription 脚本求值一次，以检查它能否编译。那里没有 `flux` 和 `console`，所以顶层写 `flux.logger.info(...)` 会让安装失败，报 `脚本编译失败: …`。请把逻辑放进入口函数里。
+> **顶层代码不要碰 `flux.*`。** 安装或重新加载插件时，FluxDown 会在一个空白的 JavaScript 上下文里把每个 resolver、hooks、interceptors、auth、subscription 脚本求值一次，以检查它能否编译。那里没有 `flux` 和 `console`，所以顶层写 `flux.logger.info(...)` 会让安装失败，报 `脚本编译失败: …`。请把逻辑放进入口函数里。
 
 ### resolver
 
@@ -87,16 +88,21 @@ hooks 是发出即不管的通知：
 
 详见[事件钩子指南](/docs/zh/plugins/hooks-guide/)。
 
+### interceptors
+
+拦截器是一个 `intercept(ctx)` 入口，FluxDown 在 manifest 列出的阶段调用它（`prepare`、`refresh`、`probed`、`selectVariant`、`selectPeriod`、`segments`、`liveSegments`、`finalize`、`failed`）。它在 daemon 上运行，针对 URL 命中 `interceptors.match.urls` 的任务，需要 `intercept` 权限，并在每次开始、恢复和重试时重新执行。调用失败时，按 `onFailure` 的设置，要么跳过并在任务活动日志里留一条记录，要么让任务失败。详见[拦截器指南](/docs/zh/plugins/interceptors-guide/)。
+
 ### 限制
 
 | 限制 | 值 |
 |---|---|
 | resolve / 订阅超时 | 默认 10 秒；入口上的 `timeoutMs` 可调整，硬顶 30 秒 |
 | auth 超时 | 默认 30 秒；`auth.timeoutMs` 可调整，硬顶 30 秒 |
-| resolve、auth、订阅内存 | 64 MB |
+| 拦截器超时 | 默认 5 秒；`interceptors.timeoutMs` 可调整，硬顶 30 秒。`liveSegments` 上限 2 秒，`refresh` 上限 5 秒。带 `ffmpeg` 或 `ytdlp` 权限的插件，其 `finalize` 使用与 hooks 相同的外部工具长预算 |
+| resolve、auth、订阅、拦截器内存 | 64 MB |
 | hook 超时 / 内存 | 5 秒 / 32 MB；带 `ffmpeg`（在 `onDone` 中）或 `ytdlp` 权限的 hook 墙钟预算长得多，见[事件钩子指南](/docs/zh/plugins/hooks-guide/) |
 | `main` 单次调用 | 墙钟 30 秒、CPU 2 秒、内存 64 MB |
-| 熔断器 | **resolver、订阅或 `main`** 的调用连续 3 次超时或内存超限 → 插件自动禁用；出现其他结果即清零。hooks 与 `authenticate` 调用不计入 |
+| 熔断器 | **resolver、拦截器、订阅或 `main`** 的调用连续 3 次超时或内存超限 → 插件自动禁用；出现其他结果即清零。hooks 与 `authenticate` 调用不计入 |
 
 被自动禁用的插件会在应用里弹出提示，并显示**已自动禁用**徽标。修好脚本后，在**设置 → 扩展 → 插件**中手动重新启用即可（安装新版本也会自动重新启用）。各项限制与报错详见 [API 参考](/docs/zh/plugins/api-reference/)和[调试与排错](/docs/zh/plugins/debugging/)。
 
@@ -116,7 +122,7 @@ hooks 是发出即不管的通知：
 
 | 你改了 | 操作 |
 |---|---|
-| resolver、hooks、auth、订阅脚本 | 什么都不用做——开发模式插件每次调用都重新读这些文件 |
+| resolver、hooks、interceptors、auth、订阅脚本 | 什么都不用做——开发模式插件每次调用都重新读这些文件 |
 | `main` 脚本、`manifest.json`，或新增入口 | 点插件行上的**重新加载**（提示文字为「重新加载（重读 manifest 与脚本）」）——它会重读 manifest 和全部脚本，并像安装时一样重新检查；失败时保留开发模式登记并显示错误 |
 | 桌面界面脚本（`desktop.entry`） | **重新加载**，然后重新打开视图 |
 
@@ -128,7 +134,7 @@ hooks 是发出即不管的通知：
 
 | | 桌面应用 | Web 端 | 移动端 |
 |---|---|---|---|
-| resolver、hooks、auth、订阅 | 在 daemon 中运行，对所有客户端生效 | 同左 | 同左 |
+| resolver、hooks、interceptors、auth、订阅 | 在 daemon 中运行，对所有客户端生效 | 同左 | 同左 |
 | 安装：zip、市场、目录（开发模式） | 支持 | 支持——目录路径是宿主上的路径 | 在已连接的宿主上支持 zip 与市场；不支持目录安装 |
 | 可移植视图与命令（`main`） | 支持 | 支持 | 不渲染 |
 | 桌面原生视图（`desktop`） | 支持 | 不显示 | 不显示 |
@@ -141,6 +147,6 @@ hooks 是发出即不管的通知：
 
 1. [写第一个插件](/docs/zh/plugins/your-first-plugin/)——用纯 JavaScript 写出能跑的 resolver。
 2. [TypeScript 项目](/docs/zh/plugins/typescript-project/)——用 SDK 写 resolver、hook、视图和设置，直到打出 `.fxplug`。
-3. 指南：[事件钩子](/docs/zh/plugins/hooks-guide/)、[账号登录与认证](/docs/zh/plugins/auth-guide/)、[订阅源](/docs/zh/plugins/subscription-guide/)、[可移植界面](/docs/zh/plugins/ui-guide/)、[桌面原生界面](/docs/zh/plugins/desktop-ui-guide/)。
+3. 指南：[事件钩子](/docs/zh/plugins/hooks-guide/)、[拦截器](/docs/zh/plugins/interceptors-guide/)、[账号登录与认证](/docs/zh/plugins/auth-guide/)、[订阅源](/docs/zh/plugins/subscription-guide/)、[可移植界面](/docs/zh/plugins/ui-guide/)、[桌面原生界面](/docs/zh/plugins/desktop-ui-guide/)。
 4. [调试与排错](/docs/zh/plugins/debugging/)——日志、重新加载语义、报错信息与解决办法。
 5. 参考：[Manifest](/docs/zh/plugins/manifest/)、[API](/docs/zh/plugins/api-reference/)、[视图](/docs/zh/plugins/views/)、[SDK 与 CLI](/docs/zh/plugins/sdk/)、[权限](/docs/zh/plugins/permissions/)、[打包与市场](/docs/zh/plugins/packaging/)。

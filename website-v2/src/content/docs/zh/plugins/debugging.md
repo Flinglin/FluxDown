@@ -3,7 +3,7 @@ title: 调试与排错
 description: 插件日志在哪、怎么搜；每种改动之后该做什么；以及你会遇到的报错信息、原因与解决办法对照表。
 section: plugins
 order: 9
-sourceHash: "c89603c5b8e7"
+sourceHash: "09147b657889"
 ---
 
 这一页写给「出问题了」的时刻：去哪里看、插件的各种状态是什么意思、某个改动需要什么操作，以及最有用的——**报错信息**与它们的原因。
@@ -17,7 +17,7 @@ sourceHash: "c89603c5b8e7"
 1. **加载了吗？** 在**设置 → 扩展 → 插件**里，这一行必须显示**已加载**。**加载失败**表示 FluxDown 读不了它；点开错误（「插件加载错误」，带复制按钮），见[安装与校验报错](#安装与校验报错)。
 2. **启用了吗？** 看名称旁边有没有**已禁用**、**已自动禁用**、**已被市场撤回**或**需要授权**，见[插件状态](#插件状态)。
 3. **重新加载了吗？** manifest 和 `main` 的改动要点**重新加载**才生效，见[开发循环](#开发循环)。
-4. **URL 匹配吗？** resolver 和 hook 的规则是对完整 URL 匹配的，见 [resolver 问题](#resolver-问题)里的检查项。
+4. **URL 匹配吗？** resolver、hook 和拦截器的规则是对完整 URL 匹配的，见 [resolver 问题](#resolver-问题)和[拦截器问题](#拦截器问题)里的检查项。
 5. **日志怎么说？** 搜索 `[plugin:<你的 identity>]`，见[日志](#日志)。
 
 ## 日志
@@ -78,7 +78,7 @@ Web 端没有可打开的文件夹，请用**导出日志**。（旧版服务端
 
 | 你改了什么 | 该怎么做 |
 |---|---|
-| resolver、hooks、auth 或订阅脚本 | 什么都不用做——开发模式插件**每次调用**都会读这些文件。SDK 项目要重建（`npm run dev` 会在保存时自动重建）。 |
+| resolver、hooks、interceptors、auth 或订阅脚本 | 什么都不用做——开发模式插件**每次调用**都会读这些文件。SDK 项目要重建（`npm run dev` 会在保存时自动重建）。 |
 | `main` 脚本 | **重新加载。** `main` 是一个长期存活的上下文，只在启动时读取；打开着的视图会话会结束（显示「视图会话已结束」和**重新打开**按钮），重新打开后运行的是新代码。 |
 | `manifest.json`（任何内容：匹配规则、入口、设置项、视图、命令、权限、版本） | **重新加载。** manifest 只在加载插件时解析。 |
 | 新增了权限或网络主机的 manifest 改动 | **重新加载**，然后在对话框里批准（见[插件状态](#插件状态)）。 |
@@ -107,7 +107,7 @@ Web 端没有可打开的文件夹，请用**导出日志**。（旧版服务端
 
 ### 熔断器
 
-resolver、订阅 provider 或 `main` 调用中，**连续** 3 次超时或内存超限，会让插件被自动禁用（出现其他结果即清零；hooks 和 `authenticate` 不计入）。你会收到提示（「插件「…」已因连续失败被自动禁用，可在「设置 → 扩展 → 插件」中重新启用」），日志里有 `[plugin] <identity> 连续超时，已自动熔断禁用`，需要这个插件的任务会失败，报 `插件 <identity> 已被熔断自动禁用；重新启用插件，或选择「忽略插件重试」按原始链接下载`。常见原因：`flux.fetch` 在等一个永远不回应的主机、死循环、把巨大的响应读进内存。可以在 manifest 里调低 `timeoutMs` 来比默认的 10 秒更快失败，给 `flux.fetch` 加上错误处理，然后重新启用。
+resolver、拦截器、订阅 provider 或 `main` 调用中，**连续** 3 次超时或内存超限，会让插件被自动禁用（出现其他结果即清零；hooks 和 `authenticate` 不计入）。你会收到提示（「插件「…」已因连续失败被自动禁用，可在「设置 → 扩展 → 插件」中重新启用」），日志里有 `[plugin] <identity> 连续超时，已自动熔断禁用`，需要这个插件的任务会失败，报 `插件 <identity> 已被熔断自动禁用；重新启用插件，或选择「忽略插件重试」按原始链接下载`。常见原因：`flux.fetch` 在等一个永远不回应的主机、死循环、把巨大的响应读进内存。可以在 manifest 里调低 `timeoutMs` 来比默认值（resolver 10 秒，拦截器 5 秒）更快失败，给 `flux.fetch` 加上错误处理，然后重新启用。
 
 ## 安装与校验报错
 
@@ -126,10 +126,17 @@ resolver、订阅 provider 或 `main` 调用中，**连续** 3 次超时或内�
 | `v1 每插件至多一个 resolver` / `v1 每插件至多一个 subscription provider` | `resolvers` / `subscriptions` 里有多个条目。 | 只保留一个。 |
 | `resolver entry 路径 '…' 非法`（`hooks entry`、`auth entry`、`subscription entry`、`main entry`、`icon`、`sniffRules` 同理） | 绝对路径、盘符、`..`、空段或控制字符。 | 使用包内的相对路径，例如 `resolve.js`。 |
 | `resolver match.urls 不可为空` / `hooks match.urls 不可为空` | 规则列表为空。 | 添加一条规则，或者干脆不写 `hooks.match`。 |
+| `interceptors entry 路径 '…' 非法` | 路径规则与其他入口相同。 | 使用包内的相对路径，例如 `intercept.js`。 |
+| `interceptors.stages 不可为空` | `interceptors.stages` 是空列表。 | 至少列出一个阶段。 |
+| `未知拦截阶段 '…'，合法：[…]` | 阶段名不存在。 | 使用信息里列出的名称之一（`prepare`、`refresh`、`probed` 等）。 |
+| `interceptors.stages 重复：'…'` | 同一个阶段列了两次。 | 删掉重复项。 |
+| `interceptors match.urls 不可为空` | 规则列表为空。 | 至少添加一条规则；`interceptors.match` 必填。 |
+| `interceptors timeoutMs 不可为 0` | `timeoutMs` 为 `0`。 | 用正整数，实际生效最多 30000。 |
+| `声明 interceptors 时 permissions 必须包含 intercept` | 声明了 `interceptors` 却没有 `intercept` 权限。 | 把 `"intercept"` 加进 `permissions`。 |
 | `resolver timeoutMs 不可为 0` | `timeoutMs` 为 `0`（`auth` 与 `subscription` 同样会检查）。 | 用正整数，实际生效最多 30000。 |
 | `hooks.events 不可为空` | `hooks` 没有事件。 | 至少列出一个事件。 |
 | `未知事件 '…'，合法：[…]` | 不是 `onStart`、`onError`、`onDone`、`onMetaProbed`、`onCancel` 之一。 | 改正名称（`main.events` 同样适用，其信息为 `main.events 未知事件 '…'，合法：[…]`）。 |
-| `未知权限 '…'，合法：[…]` | 权限名不存在。 | 使用 `ffmpeg`、`ytdlp`、`auth`、`tasks`、`browserRules`、`desktop`、`background` 之一。 |
+| `未知权限 '…'，合法：[…]` | 权限名不存在。 | 使用 `ffmpeg`、`ytdlp`、`auth`、`tasks`、`browserRules`、`desktop`、`background`、`intercept` 之一。 |
 | `声明 auth.entry 时 permissions 必须包含 auth` | 声明了 `auth` 却没有 `auth` 权限。 | 把 `"auth"` 加进 `permissions`。 |
 | `声明 sniffRules 时 permissions 必须包含 browserRules` | 有嗅探规则却没有对应权限。 | 加上 `"browserRules"`。 |
 | `main.background 为 true 时 permissions 必须包含 background` | `main.background` 为 `true` 却没有 `background` 权限。 | 加上 `"background"`。 |
@@ -143,12 +150,12 @@ resolver、订阅 provider 或 `main` 调用中，**连续** 3 次超时或内�
 | `setting key 不可为空` | 设置项的 key 为空。 | 填上。 |
 | `setting '<key>': …` | 某个设置项有问题——widget 与类型不匹配、`select` 没有 `options`、`default` 不在选项里、`min` > `max`、数字或布尔的默认值不对。 | 见 [Manifest 参考](/docs/zh/plugins/manifest/)。 |
 | `setting '<key>': pattern 非法（JS RegExp 编译失败）` | `pattern` 不是合法的 JavaScript 正则表达式。 | 修正正则。 |
-| `包内缺少文件 '…'` | manifest 声明的某个文件不在文件夹或 zip 里：`main`、`resolvers`、`hooks`、`auth` 或 `subscriptions` 的入口，某个 `desktop` 入口，或 `sniffRules`。信息里的路径与 `manifest.json` 中的写法一致。`dist/` 被清空或从未构建的开发模式插件，在安装和**重新加载**时就会这样报错（该行显示**加载失败**），而不是等到任务调用 resolver 时才发现。SDK 校验还会检查 `icon`。 | 创建该文件，或改对路径。SDK 项目要检查：脚本是否列在 `fluxdown-plugin.config.json` 的 `entries` 里，输出名是否一致。重新构建后点**重新加载**。 |
+| `包内缺少文件 '…'` | manifest 声明的某个文件不在文件夹或 zip 里：`main`、`resolvers`、`hooks`、`interceptors`、`auth` 或 `subscriptions` 的入口，某个 `desktop` 入口，或 `sniffRules`。信息里的路径与 `manifest.json` 中的写法一致。`dist/` 被清空或从未构建的开发模式插件，在安装和**重新加载**时就会这样报错（该行显示**加载失败**），而不是等到任务调用 resolver 时才发现。SDK 校验还会检查 `icon`。 | 创建该文件，或改对路径。SDK 项目要检查：脚本是否列在 `fluxdown-plugin.config.json` 的 `entries` 里，输出名是否一致。重新构建后点**重新加载**。 |
 | `读取入口文件 '…' 失败: …` | 入口文件存在但读不出来（没有权限、路径是个目录，或文件不是合法的 UTF-8）；冒号之后是系统错误。出现的场合同上。 | 修好权限或文件（UTF-8 文本），然后**重新加载**。 |
 | `main entry '…' 扩展名须为 .js` | `main` 不是 `.js` 文件。 | 改名。 |
 | `sniffRules '…' 扩展名须为 .json` / `sniffRules format 须为 fluxdown-sniff-pack` / `sniffRules 至多 500 条规则` / `sniffRules 文件超过 262144 字节` | 嗅探规则包有问题。 | 见 [Manifest 参考](/docs/zh/plugins/manifest/)。 |
 | `需要 App ≥ X，当前 Y` | `minAppVersion` 比你的应用新。 | 升级 FluxDown，或降低 `minAppVersion`。 |
-| `脚本编译失败: …` | resolver、hooks、auth 或订阅脚本有语法错误——**或者在顶层就抛了异常**。检查时会在一个没有 `flux` 和 `console` 的空白上下文里把脚本求值一次。 | 修正语法；把所有 `flux.*` / `console.*` 调用挪进入口函数。TypeScript 项目请运行 `npm run typecheck`，并确认产物已重新构建。 |
+| `脚本编译失败: …` | resolver、hooks、interceptors、auth 或订阅脚本有语法错误——**或者在顶层就抛了异常**。检查时会在一个没有 `flux` 和 `console` 的空白上下文里把脚本求值一次。 | 修正语法；把所有 `flux.*` / `console.*` 调用挪进入口函数。TypeScript 项目请运行 `npm run typecheck`，并确认产物已重新构建。 |
 | `安装后未能加载插件（校验失败或版本门槛不满足）` | 上面这些检查在安装过程中失败了；如果有旧版本，已经被恢复。 | 看日志里更早的几行，找到真正的原因。 |
 | `读取 manifest 失败: …` / `读取 manifest.json 失败: …` | 你选的文件夹里没有 `manifest.json`。 | 选**直接包含** `manifest.json` 的那个文件夹——SDK 项目是 `dist/`，不是项目根目录。 |
 | `zip 内未找到根 manifest.json` | zip 根目录（或它唯一的顶层文件夹）里没有 `manifest.json`。 | 压缩 `dist/` 的*内容*；`npm run pack` 会正确处理。 |
@@ -231,6 +238,52 @@ hook 没法让任务失败，所以它们的错误只出现在日志里，形如
 | `外部工具钩子排队已满，本次钩子被丢弃` | 使用 ffmpeg / yt-dlp 的 hook 的同类情况。 |
 
 请记住：同一个插件里的 resolver 与 `onMetaProbed` 不能共存——带 resolver 的任务会跳过元数据探测，加载日志会警告 `同时声明 resolver 与 onMetaProbed；带 resolver 的任务跳过探测，该钩子不会触发`。另外，hook 只对**已启用**、且 `hooks.match`（如果有）匹配任务 URL 的插件运行。ffmpeg 与重试见[事件钩子指南](/docs/zh/plugins/hooks-guide/)。
+
+## 拦截器问题
+
+拦截器能改动任务，所以它的影响体现在三个地方：任务的活动日志、任务的错误信息和审计日志。
+
+### 活动记录
+
+打开任务详情的**日志**页：类型为**插件**的条目由拦截器写入。条目只写字段名、阶段和文件名——绝不写请求头的值、Cookie 或请求体。
+
+| 条目 | 含义 |
+|---|---|
+| `插件 <identity> 改写了请求：<字段>` | 应用了 `prepare`（或 resolver `request`）补丁；列出被改的字段，例如 `请求头`、`Cookie`、`线程数`。 |
+| `插件 <identity> 的文件名改写已忽略（任务已开始下载）` | `fileName` 只在任务首次运行时生效；恢复和重试会忽略它。 |
+| `插件 <identity> 调整了并发：…` | `probed` 的结果改变了 `segments` 或 `maxConnections`。 |
+| `插件 <identity> 刷新了凭据（HTTP <状态码>）：<字段>` | `refresh` 在请求被 401 / 403 / 410 拒绝后换发了新凭据。 |
+| `插件 <identity> 选择了第 N 个画质` / `…个Period` | `selectVariant` / `selectPeriod` 选中了某一项（从 1 开始计数）。 |
+| `插件 <identity> 过滤了 N 个视频分片` / `…音频分片` | `segments` 或 `liveSegments` 丢弃了分片。 |
+| `插件 <identity> 改写了 N 个…分片地址` | `segments` 的 `rewrite` 替换了分片 URI。 |
+| `插件 <identity> 请求在 N 毫秒后重试` | `failed` 调用请求了重试。 |
+| `插件 <identity> 的 <阶段> 阶段出错，已忽略：<信息>` | 调用抛异常、超时、返回了非法内容或非法补丁，且 `onFailure` 为 `continue`。任务不带这项改动继续进行。 |
+| `正在执行插件下载后处理` / `插件后处理已跳过：找不到下载文件` / `插件后处理已跳过：读取任务信息失败` | `finalize` 正在执行，或因读不到文件或任务记录而被跳过。 |
+| `插件后处理已取消，任务按原文件完成` | `finalize` 期间任务被暂停或取消。 |
+| `插件 <identity> 将下载文件替换为 <文件名>` | `finalize` 返回了 `replaceWith`。 |
+
+### 失败信息
+
+`onFailure` 为 `fail`，或某个阶段本身就是无条件中止（`probed` 与 `finalize` 的 `fail`、被拒绝的 resolver 补丁）时，任务进入**下载失败**，信息为
+
+```
+[插件] <identity>（<stage>）：<message>
+```
+
+resolver 补丁被拒绝时则是 `[插件] <identity>: <message>`。`<message>` 是插件自己的 `fail` 文本，或引擎给出的原因，例如 `请求头 '<name>' 由引擎管理，不可设置`、`仅 HTTP 任务可声明 ephemeral`、`url 只能在同一主机内改写（跨站改写请使用 resolver）`、`url 不能改变下载协议类别`。补丁是全有或全无的：只要有一个字段不合法，整个补丁都不会生效。
+
+### 审计事件
+
+每次调用都会写一条审计记录 `intercept.<stage>`（如 `intercept.prepare`），目标为任务 id，结果为 `ok` 或 `error`，详情里是错误文本。见[权限](/docs/zh/plugins/permissions/#审计日志)。
+
+### 常见误区
+
+- **根本没有被调用。** 插件没有已批准的 `intercept` 权限（该行显示**需要授权**）、被禁用，或者 `interceptors.match.urls` 既没匹配任务的原始 URL，也没匹配 resolver 产出的 URL。规则写法见 [resolver 问题](#resolver-问题)：用 `*://example.com/*`，而不是 `example.com/*`。BitTorrent 与 eD2K 任务从不被拦截。
+- **阶段没列出来。** 只有 `interceptors.stages` 里列出的阶段才会被调用。
+- **`fileName` 没有效果。** 它只在任务首次运行时生效；找一找 `文件名改写已忽略` 这条记录。
+- **`ephemeral` 被拒绝。** 只有 HTTP 任务能跳过探测；`totalBytes` 与 `rangeSupported` 只能和 `ephemeral: true` 一起使用。
+- **某个请求头被拒绝。** 引擎自己管理的请求头（如 `Range`）不可设置，错误信息会指出是哪一个。
+- **重启后改动消失。** 补丁从不落库，每次运行都会重新应用，所以插件每次都必须重新返回它们。
 
 ## 视图、命令与 `main`
 

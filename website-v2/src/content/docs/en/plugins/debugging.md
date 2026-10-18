@@ -16,7 +16,7 @@ Work through this in order when a plugin "does nothing":
 1. **Is it loaded?** In **Settings → Extensions → Plugins** the row must say **Loaded**. **Load failed** means FluxDown could not read it; open the error (“Plugin load error”, with a copy button) — see [Install and validation errors](#install-and-validation-errors).
 2. **Is it enabled?** Look for **Disabled**, **Auto-disabled**, **Revoked by marketplace** or **Authorization required** next to the name; see [Plugin states](#plugin-states).
 3. **Did you reload?** Manifest and `main` changes only take effect after **Reload**; see [The dev loop](#the-dev-loop).
-4. **Does the URL match?** Resolver and hook patterns are compared with the whole URL; see the checks in [Resolver problems](#resolver-problems).
+4. **Does the URL match?** Resolver, hook and interceptor patterns are compared with the whole URL; see the checks in [Resolver problems](#resolver-problems) and [Interceptor problems](#interceptor-problems).
 5. **What does the log say?** Search for `[plugin:<your identity>]`; see [Logs](#logs).
 
 ## Logs
@@ -77,7 +77,7 @@ Install your plugin from a directory (**Install from directory (dev mode)**) to 
 
 | What you changed | What to do |
 |---|---|
-| A resolver, hooks, auth or subscription script | Nothing — dev plugins read these files on **every call**. For SDK projects, rebuild (`npm run dev` does it on save). |
+| A resolver, hooks, interceptors, auth or subscription script | Nothing — dev plugins read these files on **every call**. For SDK projects, rebuild (`npm run dev` does it on save). |
 | The `main` script | **Reload.** `main` is one long-lived context that is read when it starts; open view sessions end (“The view session has ended” with a **Reopen** button) and the reopened view runs the new code. |
 | `manifest.json` (anything: patterns, entries, settings, views, commands, permissions, version) | **Reload.** The manifest is only parsed when plugins are loaded. |
 | A manifest change that adds permissions or network hosts | **Reload**, then approve the dialog (see [Plugin states](#plugin-states)). |
@@ -106,7 +106,7 @@ A dev registration takes precedence over a normally installed copy of the same i
 
 ### The circuit breaker
 
-Three **consecutive** timeouts or out-of-memory errors in a resolver, a subscription provider or a `main` call disable the plugin automatically (any other outcome resets the count; hooks and `authenticate` do not count). You get a notice (“Plugin “…” was auto-disabled after repeated failures”), the log has `[plugin] <identity> 连续超时，已自动熔断禁用`, and a task that needs the plugin fails with `插件 <identity> 已被熔断自动禁用；重新启用插件，或选择「忽略插件重试」按原始链接下载` (“…was disabled by the circuit breaker; re-enable the plugin or choose “Ignore plugin retry”…”). Typical causes: a `flux.fetch` waiting on a host that never answers, an endless loop, or loading huge responses into memory. Lower `timeoutMs` in the manifest to fail faster than the default 10 s, add error handling around `flux.fetch`, then re-enable.
+Three **consecutive** timeouts or out-of-memory errors in a resolver, an interceptor, a subscription provider or a `main` call disable the plugin automatically (any other outcome resets the count; hooks and `authenticate` do not count). You get a notice (“Plugin “…” was auto-disabled after repeated failures”), the log has `[plugin] <identity> 连续超时，已自动熔断禁用`, and a task that needs the plugin fails with `插件 <identity> 已被熔断自动禁用；重新启用插件，或选择「忽略插件重试」按原始链接下载` (“…was disabled by the circuit breaker; re-enable the plugin or choose “Ignore plugin retry”…”). Typical causes: a `flux.fetch` waiting on a host that never answers, an endless loop, or loading huge responses into memory. Lower `timeoutMs` in the manifest to fail faster than the default (10 s for resolvers, 5 s for interceptors), add error handling around `flux.fetch`, then re-enable.
 
 ## Install and validation errors
 
@@ -125,10 +125,17 @@ The engine reports these with the prefix `manifest 非法: ` (“manifest invali
 | `v1 每插件至多一个 resolver` / `v1 每插件至多一个 subscription provider` | More than one entry in `resolvers` / `subscriptions`. | Keep one. |
 | `resolver entry 路径 '…' 非法` (and the same for `hooks entry`, `auth entry`, `subscription entry`, `main entry`, `icon`, `sniffRules`) | Absolute path, drive letter, `..`, empty segment or control character. | Use a relative path inside the package, e.g. `resolve.js`. |
 | `resolver match.urls 不可为空` / `hooks match.urls 不可为空` | An empty pattern list. | Add a pattern, or omit `hooks.match`. |
+| `interceptors entry 路径 '…' 非法` | Same path rule as the other entries. | Use a relative path inside the package, e.g. `intercept.js`. |
+| `interceptors.stages 不可为空` (“stages must not be empty”) | `interceptors.stages` is an empty list. | List at least one stage. |
+| `未知拦截阶段 '…'，合法：[…]` (“unknown interception stage”) | A stage name that does not exist. | Use one of the names the message lists (`prepare`, `refresh`, `probed`, …). |
+| `interceptors.stages 重复：'…'` (“duplicate stage”) | The same stage is listed twice. | Remove the duplicate. |
+| `interceptors match.urls 不可为空` | An empty pattern list. | Add at least one pattern; `interceptors.match` is required. |
+| `interceptors timeoutMs 不可为 0` | `timeoutMs` is `0`. | Use a positive integer, at most 30000 effective. |
+| `声明 interceptors 时 permissions 必须包含 intercept` | `interceptors` without the `intercept` permission. | Add `"intercept"` to `permissions`. |
 | `resolver timeoutMs 不可为 0` | `timeoutMs` is `0` (also checked for `auth` and `subscription`). | Use a positive integer, at most 30000 effective. |
 | `hooks.events 不可为空` | `hooks` without events. | List at least one event. |
 | `未知事件 '…'，合法：[…]` | Not one of `onStart`, `onError`, `onDone`, `onMetaProbed`, `onCancel`. | Fix the name (also applies to `main.events`). |
-| `未知权限 '…'，合法：[…]` | A permission name that does not exist. | Use one of `ffmpeg`, `ytdlp`, `auth`, `tasks`, `browserRules`, `desktop`, `background`. |
+| `未知权限 '…'，合法：[…]` | A permission name that does not exist. | Use one of `ffmpeg`, `ytdlp`, `auth`, `tasks`, `browserRules`, `desktop`, `background`, `intercept`. |
 | `声明 auth.entry 时 permissions 必须包含 auth` | `auth` without the `auth` permission. | Add `"auth"` to `permissions`. |
 | `声明 sniffRules 时 permissions 必须包含 browserRules` | Sniff rules without the permission. | Add `"browserRules"`. |
 | `main.background 为 true 时 permissions 必须包含 background` | `main.background` is `true` without the `background` permission. | Add `"background"`. |
@@ -142,12 +149,12 @@ The engine reports these with the prefix `manifest 非法: ` (“manifest invali
 | `setting key 不可为空` | Empty setting key. | Set it. |
 | `setting '<key>': …` | A setting field is wrong — widget and type do not fit, `select` without `options`, `default` not among the options, `min` > `max`, wrong default for a number or boolean. | See the [manifest reference](/docs/en/plugins/manifest/#settings). |
 | `setting '<key>': pattern 非法（JS RegExp 编译失败）` | `pattern` is not a valid JavaScript regular expression. | Fix the regex. |
-| `包内缺少文件 '…'` (“file missing in the package”) | A file the manifest declares is not in the folder or zip: a `main`, `resolvers`, `hooks`, `auth` or `subscriptions` entry, a `desktop` entry, or `sniffRules`. The message names the path as written in `manifest.json`. A dev plugin whose `dist/` was wiped or never built is reported like this at install and **Reload** (the row shows **Load failed**) — not later, when a task calls the resolver. SDK validation also checks `icon`. | Create the file, or fix the path. For SDK projects: is the script listed under `entries` in `fluxdown-plugin.config.json`, and does the output name match? Rebuild, then **Reload**. |
+| `包内缺少文件 '…'` (“file missing in the package”) | A file the manifest declares is not in the folder or zip: a `main`, `resolvers`, `hooks`, `interceptors`, `auth` or `subscriptions` entry, a `desktop` entry, or `sniffRules`. The message names the path as written in `manifest.json`. A dev plugin whose `dist/` was wiped or never built is reported like this at install and **Reload** (the row shows **Load failed**) — not later, when a task calls the resolver. SDK validation also checks `icon`. | Create the file, or fix the path. For SDK projects: is the script listed under `entries` in `fluxdown-plugin.config.json`, and does the output name match? Rebuild, then **Reload**. |
 | `读取入口文件 '…' 失败: …` (“failed to read entry file '…'”) | The entry file exists but cannot be read (no permission, the path is a directory, or the file is not valid UTF-8); the text after the colon is the OS error. Same places as above. | Fix the permissions or the file (UTF-8 text), then **Reload**. |
 | `main entry '…' 扩展名须为 .js` | `main` is not a `.js` file. | Rename. |
 | `sniffRules '…' 扩展名须为 .json` / `sniffRules format 须为 fluxdown-sniff-pack` / `sniffRules 至多 500 条规则` / `sniffRules 文件超过 262144 字节` | Bad sniff rule pack. | See the [manifest reference](/docs/en/plugins/manifest/). |
 | `需要 App ≥ X，当前 Y` (“requires app ≥ X, current Y”) | `minAppVersion` is newer than your app. | Update FluxDown or lower `minAppVersion`. |
-| `脚本编译失败: …` (“script compile failed”) | A resolver, hooks, auth or subscription script has a syntax error — **or throws at top level**. The check evaluates the script once in a bare context where `flux` and `console` do not exist. | Fix the syntax; move every `flux.*` / `console.*` call into an entry function. For TypeScript projects, run `npm run typecheck` and check that the bundle was rebuilt. |
+| `脚本编译失败: …` (“script compile failed”) | A resolver, hooks, interceptors, auth or subscription script has a syntax error — **or throws at top level**. The check evaluates the script once in a bare context where `flux` and `console` do not exist. | Fix the syntax; move every `flux.*` / `console.*` call into an entry function. For TypeScript projects, run `npm run typecheck` and check that the bundle was rebuilt. |
 | `安装后未能加载插件（校验失败或版本门槛不满足）` (“the plugin could not be loaded after install (validation failed or version gate not met)”) | The checks above failed during install; the previous version, if any, was restored. | Read the earlier lines in the log for the actual reason. |
 | `读取 manifest 失败: …` / `读取 manifest.json 失败: …` | `manifest.json` is not in the folder you picked. | Pick the folder that **directly** contains `manifest.json` — for SDK projects `dist/`, not the project root. |
 | `zip 内未找到根 manifest.json` | The zip has no `manifest.json` at its root (or in its single top-level folder). | Zip the *contents* of `dist/`; `npm run pack` does this correctly. |
@@ -230,6 +237,52 @@ Hooks cannot fail a task, so their errors only show in the log, as lines of `[pl
 | `外部工具钩子排队已满，本次钩子被丢弃` (“external-tool hook queue full…”) | Same for hooks that use ffmpeg / yt-dlp. |
 
 Remember: a resolver and `onMetaProbed` on the same plugin do not mix — tasks handled by a resolver skip the metadata probe, and the load log warns `同时声明 resolver 与 onMetaProbed；带 resolver 的任务跳过探测，该钩子不会触发`. And hooks only run for **enabled** plugins whose `hooks.match` (if any) matches the task URL. See the [Hooks guide](/docs/en/plugins/hooks-guide/) for ffmpeg and retries.
+
+## Interceptor problems
+
+An interceptor can change a task, so its effects are visible in three places: the task's activity log, the task's error message, and the audit log.
+
+### Activity entries
+
+Open the task details and the **Log** tab: entries of kind **Plugin** are written by interceptors. They name fields, stages and file names only — never header values, cookies or request bodies.
+
+| Entry | Meaning |
+|---|---|
+| `插件 <identity> 改写了请求：<fields>` (“plugin … changed the request”) | A `prepare` (or resolver `request`) patch was applied; the fields are listed, e.g. `请求头`, `Cookie`, `线程数`. |
+| `插件 <identity> 的文件名改写已忽略（任务已开始下载）` (“file name change ignored, the task already started”) | `fileName` only takes effect on the first run of a task; resumes and retries ignore it. |
+| `插件 <identity> 调整了并发：…` (“changed concurrency”) | A `probed` result changed `segments` or `maxConnections`. |
+| `插件 <identity> 刷新了凭据（HTTP <status>）：<fields>` (“refreshed credentials”) | A `refresh` call answered a 401 / 403 / 410 with new credentials. |
+| `插件 <identity> 选择了第 N 个画质` / `…个Period` (“selected variant / Period N”) | `selectVariant` / `selectPeriod` picked an entry (counted from 1). |
+| `插件 <identity> 过滤了 N 个视频分片` / `…音频分片` (“dropped N video / audio segments”) | `segments` or `liveSegments` dropped segments. |
+| `插件 <identity> 改写了 N 个…分片地址` (“rewrote N segment addresses”) | `segments` `rewrite` replaced segment URIs. |
+| `插件 <identity> 请求在 N 毫秒后重试` (“requested a retry after N ms”) | A `failed` call asked for a retry. |
+| `插件 <identity> 的 <stage> 阶段出错，已忽略：<message>` (“stage failed, ignored”) | The call threw, timed out, returned something invalid or an invalid patch, and `onFailure` is `continue`. The task carries on without that change. |
+| `正在执行插件下载后处理` / `插件后处理已跳过：找不到下载文件` / `插件后处理已跳过：读取任务信息失败` | `finalize` is running, or was skipped because the file or the task record could not be read. |
+| `插件后处理已取消，任务按原文件完成` (“post-processing cancelled, the task completes with the original file”) | The task was paused or cancelled during `finalize`. |
+| `插件 <identity> 将下载文件替换为 <name>` (“replaced the downloaded file with …”) | `finalize` returned `replaceWith`. |
+
+### Failure messages
+
+When `onFailure` is `fail`, or a stage always aborts (`fail` from `probed`, `finalize`, or a rejected resolver patch), the task goes to **Download Failed** with
+
+```
+[插件] <identity>（<stage>）：<message>
+```
+
+(“[plugin] identity (stage): message”). A rejected patch from a resolver reads `[插件] <identity>: <message>`. The `<message>` is the plugin's own `fail` text, or the engine's reason, for example `请求头 '<name>' 由引擎管理，不可设置` (“header '<name>' is managed by the engine”), `仅 HTTP 任务可声明 ephemeral` (“only HTTP tasks can declare ephemeral”), `url 只能在同一主机内改写（跨站改写请使用 resolver）` (“url can only be rewritten within the same host”) or `url 不能改变下载协议类别`. A patch is applied all-or-nothing: if one field is invalid, none of it is applied.
+
+### Audit events
+
+Every call writes an audit row `intercept.<stage>` (for example `intercept.prepare`) with the task id as target and outcome `ok` or `error`; the detail holds the error text. See [Permissions](/docs/en/plugins/permissions/#audit-log).
+
+### Common mistakes
+
+- **Nothing is called.** The plugin lacks the approved `intercept` permission (row shows **Authorization required**), is disabled, or `interceptors.match.urls` matches neither the task's original URL nor the URL a resolver produced. Patterns work as described in [Resolver problems](#resolver-problems): `*://example.com/*`, not `example.com/*`. BitTorrent and eD2K tasks are never intercepted.
+- **A stage is not listed.** Only stages in `interceptors.stages` are called.
+- **`fileName` has no effect.** It applies on a task's first run only; look for the `文件名改写已忽略` entry.
+- **`ephemeral` is rejected.** Only HTTP tasks can skip the probe; `totalBytes` and `rangeSupported` are only accepted together with `ephemeral: true`.
+- **A header is rejected.** Headers the engine manages itself (such as `Range`) cannot be set; the error names the header.
+- **A change disappears after a restart.** Patches are never stored; they are re-applied on every run, so the plugin must return them again each time.
 
 ## Views, commands and `main`
 

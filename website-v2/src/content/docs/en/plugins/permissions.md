@@ -20,7 +20,7 @@ This page covers the user-facing model and the rules a plugin author needs to kn
 | `tasks` | `flux.tasks.*`: list, create, pause, resume and delete download tasks. |
 | `browserRules` | Contribute rules to the browser extension (`contributes.sniffRules`). |
 | `background` | Keep the `main` script running with the daemon. |
-| `intercept` | Interceptors: read and change the URL, request headers, cookies and body of matching tasks, control their connection count, filter streaming segments and process the file before completion. See the [Interceptors guide](/docs/en/plugins/interceptors-guide/). |
+| `intercept` | Interceptors: read and change the URL, request headers, cookies and body of matching tasks, control their connection count, skip the probe, swap credentials mid-download, rewrite or filter streaming segments, choose the quality or DASH Period, process the file before completion, and ask for a retry after a task fails. See the [Interceptors guide](/docs/en/plugins/interceptors-guide/). |
 | `desktop` | Run native desktop scripts with **full trust** (see below). |
 
 Subscription providers, hooks, resolvers and portable views need no permission of their own.
