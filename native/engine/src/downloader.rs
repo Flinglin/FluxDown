@@ -303,6 +303,10 @@ pub struct ProgressUpdate {
     /// Restored/truncated counter before body reads. Unlike an ordinary lower
     /// progress sample, this explicitly resets host traffic measurement.
     pub download_baseline: Option<i64>,
+    /// 本次运行从网络读到的 body 字节累计（单调，含随后被重试丢弃的部分）。
+    /// `Some` 时测速与宿主流量统计都以它为准，`downloaded_bytes` 只表示进度：
+    /// 先整段缓冲、再按序写盘的协议（HLS）落盘计数只能按段跳变，拿它测速会锯齿。
+    pub transfer_bytes: Option<i64>,
     pub total_bytes: i64,
     pub status: i32,
     pub error_message: String,

@@ -9,15 +9,21 @@
 //! Architecture:
 //! - Master playlist → auto-select highest bandwidth variant
 //! - Media playlist → bounded-concurrency segment download with cancellation.
-//!   Each segment downloads + decrypts on its own task (permit-gated by a
-//!   `Semaphore`); a single writer drains finished segments in `seg_idx` order
-//!   so the on-disk byte stream matches the sequential implementation exactly.
+//!   Each segment downloads + decrypts on its own task; its connection permit
+//!   (`Semaphore`) is returned as soon as the body is in memory, so a slow head
+//!   segment never idles the other connections. Finished segments wait in a
+//!   bounded reorder window (`ReorderWindow`: segments ahead + buffered bytes)
+//!   and a single writer appends them in `seg_idx` order — one sequential write
+//!   into one temp file, no per-segment part files and no merge pass.
 //! - EXT-X-MAP (fMP4/CMAF) init segments are prefetched once per distinct
 //!   `(uri, byte_range)` and prepended by the writer whenever the sticky map
 //!   in effect changes (see `should_write_init`)
 //! - AES-128-CBC decryption with shared key caching
-//! - Progress reporting via ProgressUpdate channel (writer-side, so byte counts
-//!   never double-count under concurrency)
+//! - Progress = written bytes (writer side, never double-counted); speed and
+//!   host traffic = body bytes as received (`SegmentMeter`), so the display
+//!   follows the network instead of segment-sized write bursts. The speed
+//!   limiter throttles those reads, not the writes.
+//! - Resume checkpoints are throttled to `CHECKPOINT_INTERVAL` and topped up on exit
 //! - Per-segment retry with exponential backoff
 //! - 变体 AUDIO 组带独立 URI(EXT-X-MEDIA)时并行下载音轨,收尾用 ffmpeg 流复制
 //!   与视频 mux;ffmpeg 不可用时只出视频并记录 warning 活动
@@ -36,7 +42,7 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{Mutex, OnceCell, OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::sync::{Mutex, OnceCell, Semaphore, mpsc, watch};
 
 use crate::dash_downloader::{
     build_audio_path, effective_ffmpeg, ffmpeg_copy_to_mp4, ffmpeg_usable,
@@ -73,6 +79,79 @@ fn hls_runtime(task_id: &str, tracker: &TransferTracker, limit: u32) -> TaskRunt
         segments: Vec::new(),
         source_bytes: None,
     }
+}
+
+/// 一次运行内所有分片请求共享的传输计量与限速(视频、音轨、init 段共用一份)。
+///
+/// `received` 在 body 读到时即累加(含随后被重试丢弃的字节),是测速与宿主流量
+/// 统计的来源;落盘字节只表示进度。限速同样作用在读取侧:写盘侧限速会让乱序
+/// 窗口先以全速灌满,网络实际速率超出设定值。
+#[derive(Clone)]
+struct SegmentMeter {
+    tracker: TransferTracker,
+    received: Arc<AtomicI64>,
+    limiter: crate::speed_limiter::SpeedLimiter,
+}
+
+impl SegmentMeter {
+    fn new(limiter: crate::speed_limiter::SpeedLimiter) -> Self {
+        Self {
+            tracker: TransferTracker::new(),
+            received: Arc::new(AtomicI64::new(0)),
+            limiter,
+        }
+    }
+
+    fn received(&self) -> i64 {
+        self.received.load(Ordering::Relaxed)
+    }
+
+    /// 记下刚读到的一块 body,再按全局限速放行;取消时立即返回。
+    async fn admit_body(
+        &self,
+        bytes: usize,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<(), DownloadError> {
+        self.received
+            .fetch_add(i64::try_from(bytes).unwrap_or(i64::MAX), Ordering::Relaxed);
+        let mut left = bytes as u64;
+        while left > 0 {
+            let granted = tokio::select! {
+                _ = cancel.cancelled() => return Err(DownloadError::Cancelled),
+                granted = self.limiter.consume(left) => granted.min(left),
+            };
+            if granted == 0 {
+                tokio::task::yield_now().await;
+            }
+            left -= granted;
+        }
+        Ok(())
+    }
+}
+
+/// 点播 / 直播共用的进度帧:落盘字节表示进度,接收字节用于测速,附活跃连接采样。
+fn hls_progress(task_id: &str, meter: &SegmentMeter, written: i64, limit: u32) -> ProgressUpdate {
+    ProgressUpdate {
+        task_id: task_id.to_owned(),
+        downloaded_bytes: written,
+        transfer_bytes: Some(meter.received()),
+        total_bytes: 0,
+        status: 1,
+        runtime: Some(hls_runtime(task_id, &meter.tracker, limit)),
+        ..Default::default()
+    }
+}
+
+/// 写续传检查点:先 flush,保证文件里已有检查点声明的全部字节。
+async fn save_checkpoint(
+    file: &mut File,
+    db: &crate::db::Db,
+    key: &str,
+    value: &str,
+) -> Result<(), DownloadError> {
+    file.flush().await?;
+    db.set_config(key, value).await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +397,18 @@ const MAX_HLS_CONCURRENCY: usize = 16;
 /// (`segment_count <= 0`). Conservative enough to help every playlist without
 /// hammering small CDNs.
 const DEFAULT_HLS_CONCURRENCY: usize = 8;
+
+/// 乱序窗口:派发位置最多领先写盘位置 `并发数 × 该值` 段。队首段慢时其余连接最多
+/// 先跑这么远;更大只会让暂停 / 出错时丢弃的内存缓冲变多。
+const REORDER_AHEAD_PER_CONNECTION: usize = 8;
+
+/// 乱序缓冲字节上限:已下载、待按序写盘的分段达到它后暂停派发(队首段永远放行)。
+/// 在途分段不计入,内存峰值约为它加上并发数 × 单段大小。
+const REORDER_BUFFER_BYTES: u64 = 32 * 1024 * 1024;
+
+/// 续传检查点节流间隔。检查点只声明"已完整落盘的连续前缀",落后不影响正确性
+/// (续传时截断到检查点、重下其后的段),退出时另行补写最新前缀。
+const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(DB_SAVE_INTERVAL_SECS);
 
 /// Pick the number of segments to download in parallel.
 ///
@@ -1983,23 +2074,25 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
 
     let key_cache: KeyCache = Arc::new(Mutex::new(HashMap::new()));
     let mut last_report = std::time::Instant::now();
-    let mut last_db_save = std::time::Instant::now();
 
     // -----------------------------------------------------------------------
     // Bounded-concurrency segment download.
     //
-    // Each remaining segment downloads + decrypts on its own task, gated by a
-    // `Semaphore` so at most `concurrency` are in flight (and at most that many
-    // decrypted buffers are buffered waiting to be written). A single writer —
-    // this function — drains finished segments **strictly in `seg_idx` order**
-    // via a `BTreeMap`, then runs the *same* speed-limit / write / rollback /
-    // checkpoint / progress code the sequential implementation used. Keeping
-    // all writes on one task guarantees:
-    //   • the on-disk byte order is identical to the sequential version,
+    // Each remaining segment downloads + decrypts on its own task. Its
+    // connection permit (`Semaphore`, `concurrency` permits) is returned as
+    // soon as the body is in memory; the buffer then waits in the reorder
+    // window (`ReorderWindow`: bounded both in segments ahead of the writer
+    // and in buffered bytes), so a slow head segment no longer idles the other
+    // connections. A single writer — this function — drains finished segments
+    // **strictly in `seg_idx` order** via a `BTreeMap`. Keeping all writes on
+    // one task guarantees:
+    //   • one sequential append into one temp file — no per-segment part
+    //     files and no merge pass; byte order identical to a sequential run,
     //   • `downloaded_bytes` is accumulated exactly once per segment (no
     //     double-counting / loss under concurrency),
-    //   • the speed limiter is consulted on the single write path,
     //   • the resume checkpoint advances monotonically by completed prefix.
+    // Speed is measured from received body bytes (`SegmentMeter`), and the
+    // speed limiter throttles those reads rather than the writes.
     // Each task computes its IV from its own `seg_idx`, so AES-128-CBC
     // decryption stays correct regardless of completion order.
     // -----------------------------------------------------------------------
@@ -2032,7 +2125,7 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
     // 复用 `download_segment_with_retry`(与媒体段完全相同的重试/退避/
     // Range 请求路径),`seg_idx` 传 `usize::MAX` 仅用于失败时的日志诊断,
     // 不代表真实段序号。
-    let tracker = TransferTracker::new();
+    let meter = SegmentMeter::new(p.speed_limiter.clone());
     // Segments can stay in the body for longer than a completed writer chunk.
     // Sample independently, including while no byte geometry is available.
     let reported_bytes = Arc::new(AtomicI64::new(downloaded_bytes));
@@ -2041,7 +2134,7 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
     let mut sampler = spawn_progress_sampler(
         p.progress_tx.clone(),
         p.task_id.clone(),
-        tracker.clone(),
+        meter.clone(),
         Arc::clone(&reported_bytes),
         Arc::clone(&audio_written),
         concurrency as u32,
@@ -2059,7 +2152,7 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
             &seg_ctx,
             &p.cancel_token,
             &p.task_id,
-            &tracker,
+            &meter,
             &p.db,
             p.sink.as_ref(),
         )
@@ -2088,9 +2181,8 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
                 task_id: p.task_id.clone(),
                 db: p.db.clone(),
                 sink: p.sink.clone(),
-                speed_limiter: p.speed_limiter.clone(),
                 key_cache: key_cache.clone(),
-                tracker: tracker.clone(),
+                meter: meter.clone(),
                 written: Arc::clone(&audio_written),
                 segment_limit: p.segment_count,
                 connection_cap: p.connection_cap,
@@ -2109,12 +2201,9 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
         });
 
     let semaphore = Arc::new(Semaphore::new(concurrency));
-    // 许可由 dispatcher 按 seg_idx 顺序获取,并随下载结果一起送回 writer,写盘后
-    // 才释放。因此"在途 + 已下载待写"的段总数 ≤ concurrency,队首段慢时乱序
-    // 缓冲不会无界增长;又因为许可严格按 idx 递增发放,最小的未写段一定已持有
-    // 许可,不会出现许可被后续段占满、队首段拿不到许可的死锁。
-    // Channel 容量 == concurrency:未释放的许可数不超过它,结果入队从不阻塞。
-    let (result_tx, mut result_rx) = mpsc::channel::<SegmentOutcome>(concurrency.max(1));
+    let window = Arc::new(ReorderWindow::new(first_idx, concurrency));
+    // 已派发未写盘的段数不超过窗口段数上限,结果入队从不阻塞。
+    let (result_tx, mut result_rx) = mpsc::channel::<SegmentOutcome>(window.max_ahead);
 
     let jobs: Vec<SegmentJob> = segment_jobs(&segments, first_idx);
     let shared = Arc::new(SegmentShared {
@@ -2125,18 +2214,27 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
         cancel: p.cancel_token.clone(),
         task_id: p.task_id.clone(),
         key_cache: key_cache.clone(),
-        tracker: tracker.clone(),
+        meter: meter.clone(),
         db: p.db.clone(),
         sink: p.sink.clone(),
     });
     // dispatcher 持有唯一的发送端;它与其子任务全部结束后 channel 关闭,
     // writer 的 recv 循环才不会在末尾挂起。
-    let dispatcher = tokio::spawn(dispatch_segments(jobs, shared, semaphore, result_tx));
+    let dispatcher = tokio::spawn(dispatch_segments(
+        jobs,
+        shared,
+        semaphore,
+        Arc::clone(&window),
+        result_tx,
+    ));
 
     // In-order writer: buffer out-of-order completions and flush the contiguous
     // prefix starting at `next_to_write`.
-    let mut pending: BTreeMap<usize, (Vec<u8>, OwnedSemaphorePermit)> = BTreeMap::new();
+    let mut pending: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
     let mut next_to_write = first_idx;
+    // 最近一次落库的检查点覆盖到的段序号(不含)。
+    let mut checkpointed = first_idx;
+    let mut last_checkpoint = std::time::Instant::now();
     let mut fatal_error: Option<DownloadError> = None;
     // EXT-X-MAP(#682):跟踪"磁盘上最后一次写入的 init 段"(uri, byte_range)。
     // 全新下载(first_idx==0)时磁盘上还没有任何 init 段 → `None`。断点续传
@@ -2165,10 +2263,10 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
         // If the next segment isn't buffered yet, wait for more completions.
         while !pending.contains_key(&next_to_write) {
             match result_rx.recv().await {
-                Some((idx, Ok(data), permit)) => {
-                    pending.insert(idx, (data, permit));
+                Some((idx, Ok(data))) => {
+                    pending.insert(idx, data);
                 }
-                Some((idx, Err(e), _permit)) => {
+                Some((idx, Err(e))) => {
                     // A segment failed permanently. Cancel siblings and stop;
                     // the partial prefix already on disk is kept for resume.
                     log_info!(
@@ -2203,7 +2301,7 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
         }
 
         // Flush every contiguous segment we already have, in order.
-        while let Some((output_data, _permit)) = pending.remove(&next_to_write) {
+        while let Some(output_data) = pending.remove(&next_to_write) {
             let seg_idx = next_to_write;
 
             // Stop flushing promptly on cancellation. Segments already written
@@ -2245,8 +2343,8 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
                     None
                 };
 
-            // Apply speed limiter and write to file (init chunk, if any, then
-            // the media segment bytes).
+            // Write to file (init chunk, if any, then the media segment bytes).
+            // 限速已在读取 body 时生效,这里整块追加。
             //
             // seg_start_pos 是本次写入前文件的逻辑长度。resume 时文件已被
             // truncate 到恰好 safe_size(== 初始 downloaded_bytes),此后每次
@@ -2255,20 +2353,13 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
             let seg_start_pos = downloaded_bytes;
             let mut written_len: i64 = 0;
             let mut write_result: Result<(), std::io::Error> = Ok(());
-            'chunks: for chunk in init_chunk
+            for chunk in init_chunk
                 .into_iter()
                 .chain(std::iter::once(output_data.as_slice()))
             {
-                let mut offset = 0usize;
-                while offset < chunk.len() {
-                    let remaining_bytes = (chunk.len() - offset) as u64;
-                    let allowed = p.speed_limiter.consume(remaining_bytes).await;
-                    let end = offset + allowed as usize;
-                    if let Err(e) = file.write_all(&chunk[offset..end]).await {
-                        write_result = Err(e);
-                        break 'chunks;
-                    }
-                    offset = end;
+                if let Err(e) = file.write_all(chunk).await {
+                    write_result = Err(e);
+                    break;
                 }
                 written_len += chunk.len() as i64;
             }
@@ -2299,16 +2390,19 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
             downloaded_bytes += written_len;
             reported_bytes.store(downloaded_bytes, Ordering::Relaxed);
             next_to_write += 1;
+            window.written(next_to_write, output_data.len());
 
             // Save resume checkpoint for HLS resume support.
             // Format: "next_seg_idx:total_bytes_written:media_sequence" — on resume
             // we truncate to this byte offset to discard any partially-written
             // segment data,并比对 media_sequence 以保证续传段的 IV 计算与首次一致。
             // 因为按 seg_idx 顺序写盘,next_to_write 即"已完整落盘的连续前缀
-            // 长度",检查点始终对应一段完整、可安全续传的字节边界。
-            let checkpoint_result = async {
-                file.flush().await?;
-                p.db.set_config(
+            // 长度",检查点始终对应一段完整、可安全续传的字节边界。按
+            // CHECKPOINT_INTERVAL 节流(落后只让续传多截掉几段重下),退出时补写。
+            if last_checkpoint.elapsed() >= CHECKPOINT_INTERVAL {
+                if let Err(error) = save_checkpoint(
+                    &mut file,
+                    &p.db,
                     &resume_seg_key,
                     &format_resume_checkpoint(
                         next_to_write,
@@ -2317,30 +2411,25 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
                         variant_tag.as_deref(),
                     ),
                 )
-                .await?;
-                Ok::<(), DownloadError>(())
-            }
-            .await;
-            if let Err(error) = checkpoint_result {
-                fatal_error = Some(error);
-                p.cancel_token.cancel();
-                break 'writer;
+                .await
+                {
+                    fatal_error = Some(error);
+                    p.cancel_token.cancel();
+                    break 'writer;
+                }
+                checkpointed = next_to_write;
+                last_checkpoint = std::time::Instant::now();
             }
 
             // Progress reporting (every 200ms)
             if last_report.elapsed().as_millis() >= 200 {
                 if p.progress_tx
-                    .send(ProgressUpdate {
-                        task_id: p.task_id.clone(),
-                        downloaded_bytes: downloaded_bytes + audio_written.load(Ordering::Relaxed),
-                        total_bytes: 0, // unknown for HLS
-                        status: 1,
-                        error_message: String::new(),
-                        file_name: String::new(),
-                        segment_details: None,
-                        runtime: Some(hls_runtime(&p.task_id, &tracker, concurrency as u32)),
-                        ..Default::default()
-                    })
+                    .send(hls_progress(
+                        &p.task_id,
+                        &meter,
+                        downloaded_bytes + audio_written.load(Ordering::Relaxed),
+                        concurrency as u32,
+                    ))
                     .await
                     .is_err()
                 {
@@ -2350,22 +2439,6 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
                     break 'writer;
                 }
                 last_report = std::time::Instant::now();
-            }
-
-            // DB persistence (every DB_SAVE_INTERVAL_SECS)
-            if last_db_save.elapsed().as_secs() >= DB_SAVE_INTERVAL_SECS {
-                if let Err(error) =
-                    p.db.update_task_progress(
-                        &p.task_id,
-                        downloaded_bytes + audio_written.load(Ordering::Relaxed),
-                    )
-                    .await
-                {
-                    fatal_error = Some(DownloadError::Db(error));
-                    p.cancel_token.cancel();
-                    break 'writer;
-                }
-                last_db_save = std::time::Instant::now();
             }
 
             log_info!(
@@ -2459,14 +2532,34 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
         None => {}
     }
 
+    let checkpoint = format_resume_checkpoint(
+        next_to_write,
+        downloaded_bytes,
+        media_sequence,
+        variant_tag.as_deref(),
+    );
     if let Some(err) = fatal_error {
         // Persist whatever fully-written prefix we have so a later resume can
-        // continue from there (matches the sequential cancel path).
-        if let Err(error) = file.flush().await {
-            if matches!(err, DownloadError::Cancelled) {
-                return Err(write_failure(error));
+        // continue from there (matches the sequential cancel path). 检查点只在
+        // flush 成功后补写:文件里必须已有检查点声明的全部字节。
+        match file.flush().await {
+            Err(error) => {
+                if matches!(err, DownloadError::Cancelled) {
+                    return Err(write_failure(error));
+                }
+                crate::logger::report_warning("hls-download", "flush_failed_download", &error);
             }
-            crate::logger::report_warning("hls-download", "flush_failed_download", &error);
+            Ok(()) => {
+                if next_to_write > checkpointed
+                    && let Err(error) = p.db.set_config(&resume_seg_key, &checkpoint).await
+                {
+                    crate::logger::report_warning(
+                        "hls-download",
+                        "persist_resume_checkpoint",
+                        &error,
+                    );
+                }
+            }
         }
         if let Err(error) =
             p.db.update_task_progress(
@@ -2481,6 +2574,10 @@ async fn run_hls_download_inner(p: &DownloadParams) -> Result<i64, DownloadError
     }
 
     file.flush().await?;
+    // 收尾(改名 / remux)失败时以完整检查点续传,不必重下尾部分段。
+    if next_to_write > checkpointed {
+        p.db.set_config(&resume_seg_key, &checkpoint).await?;
+    }
     drop(file);
 
     finalize_recording(
@@ -3236,7 +3333,7 @@ async fn prefetch_init_segments(
     ctx: &HlsRequestCtx<'_>,
     cancel: &tokio_util::sync::CancellationToken,
     task_id: &str,
-    tracker: &TransferTracker,
+    meter: &SegmentMeter,
     db: &crate::db::Db,
     sink: &dyn EventSink,
 ) -> Result<HashMap<MapKey, Vec<u8>>, DownloadError> {
@@ -3255,7 +3352,7 @@ async fn prefetch_init_segments(
             cancel,
             task_id,
             usize::MAX,
-            tracker,
+            meter,
             db,
             sink,
         )
@@ -3301,9 +3398,9 @@ struct AudioRun {
     task_id: String,
     db: crate::db::Db,
     sink: Arc<dyn EventSink>,
-    speed_limiter: crate::speed_limiter::SpeedLimiter,
     key_cache: KeyCache,
-    tracker: TransferTracker,
+    /// 与视频共享的传输计量(测速与限速)。
+    meter: SegmentMeter,
     /// 音轨已落盘字节数(含续传前缀),调用方据此汇总任务进度。
     written: Arc<AtomicI64>,
     segment_limit: i32,
@@ -3314,7 +3411,7 @@ struct AudioRun {
 
 /// 下载并落盘一条独立音轨,返回音轨总字节数。
 ///
-/// 与视频共用段下载 / 解密 / 重试 / 限速路径;单一有序 writer 保证落盘顺序,
+/// 与视频共用段下载 / 解密 / 重试 / 限速 / 乱序窗口路径;单一有序 writer 保证落盘顺序,
 /// 检查点按已完整落盘的连续前缀推进,因此暂停 / 重启后可从同一字节边界续传。
 async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
     let AudioRun {
@@ -3326,9 +3423,8 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
         task_id,
         db,
         sink,
-        speed_limiter,
         key_cache,
-        tracker,
+        meter,
         written,
         segment_limit,
         connection_cap,
@@ -3433,14 +3529,15 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
         &seg_ctx,
         &cancel,
         &task_id,
-        &tracker,
+        &meter,
         &db,
         sink.as_ref(),
     )
     .await?;
 
     let semaphore = Arc::new(Semaphore::new(concurrency));
-    let (result_tx, mut result_rx) = mpsc::channel::<SegmentOutcome>(concurrency);
+    let window = Arc::new(ReorderWindow::new(first_idx, concurrency));
+    let (result_tx, mut result_rx) = mpsc::channel::<SegmentOutcome>(window.max_ahead);
     let shared = Arc::new(SegmentShared {
         client: client.clone(),
         spec: Arc::clone(&spec),
@@ -3449,7 +3546,7 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
         cancel: cancel.clone(),
         task_id: task_id.clone(),
         key_cache,
-        tracker: tracker.clone(),
+        meter,
         db: db.clone(),
         sink: sink.clone(),
     });
@@ -3457,11 +3554,14 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
         segment_jobs(&track.segments, first_idx),
         shared,
         semaphore,
+        Arc::clone(&window),
         result_tx,
     ));
 
-    let mut pending: BTreeMap<usize, (Vec<u8>, OwnedSemaphorePermit)> = BTreeMap::new();
+    let mut pending: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
     let mut next_to_write = first_idx;
+    let mut checkpointed = first_idx;
+    let mut last_checkpoint = std::time::Instant::now();
     let mut fatal: Option<DownloadError> = None;
     let mut last_written_map: Option<MapKey> = if first_idx == 0 {
         None
@@ -3480,10 +3580,10 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
         }
         while !pending.contains_key(&next_to_write) {
             match result_rx.recv().await {
-                Some((idx, Ok(data), permit)) => {
-                    pending.insert(idx, (data, permit));
+                Some((idx, Ok(data))) => {
+                    pending.insert(idx, data);
                 }
-                Some((idx, Err(e), _permit)) => {
+                Some((idx, Err(e))) => {
                     log_info!(
                         "[hls-download] task {} audio segment {} failed: {}",
                         task_id,
@@ -3508,7 +3608,7 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
             }
         }
 
-        while let Some((data, _permit)) = pending.remove(&next_to_write) {
+        while let Some(data) = pending.remove(&next_to_write) {
             let seg_idx = next_to_write;
             if cancel.is_cancelled() {
                 fatal = Some(DownloadError::Cancelled);
@@ -3539,19 +3639,13 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
             let start_pos = written_bytes;
             let mut chunk_total: i64 = 0;
             let mut write_result: Result<(), std::io::Error> = Ok(());
-            'chunks: for chunk in init_chunk
+            for chunk in init_chunk
                 .into_iter()
                 .chain(std::iter::once(data.as_slice()))
             {
-                let mut offset = 0usize;
-                while offset < chunk.len() {
-                    let allowed = speed_limiter.consume((chunk.len() - offset) as u64).await;
-                    let end = offset + allowed as usize;
-                    if let Err(e) = file.write_all(&chunk[offset..end]).await {
-                        write_result = Err(e);
-                        break 'chunks;
-                    }
-                    offset = end;
+                if let Err(e) = file.write_all(chunk).await {
+                    write_result = Err(e);
+                    break;
                 }
                 chunk_total += chunk.len() as i64;
             }
@@ -3576,9 +3670,11 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
             written_bytes += chunk_total;
             written.store(written_bytes, Ordering::Relaxed);
             next_to_write += 1;
-            let checkpoint_result = async {
-                file.flush().await?;
-                db.set_config(
+            window.written(next_to_write, data.len());
+            if last_checkpoint.elapsed() >= CHECKPOINT_INTERVAL {
+                if let Err(error) = save_checkpoint(
+                    &mut file,
+                    &db,
                     &track.resume_key,
                     &format_resume_checkpoint(
                         next_to_write,
@@ -3587,14 +3683,14 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
                         Some(&track.tag),
                     ),
                 )
-                .await?;
-                Ok::<(), DownloadError>(())
-            }
-            .await;
-            if let Err(error) = checkpoint_result {
-                fatal = Some(error);
-                cancel.cancel();
-                break 'writer;
+                .await
+                {
+                    fatal = Some(error);
+                    cancel.cancel();
+                    break 'writer;
+                }
+                checkpointed = next_to_write;
+                last_checkpoint = std::time::Instant::now();
             }
         }
     }
@@ -3626,18 +3722,41 @@ async fn run_audio_track(run: AudioRun) -> Result<i64, DownloadError> {
             }
         }
     }
+    let checkpoint = format_resume_checkpoint(
+        next_to_write,
+        written_bytes,
+        track.media_sequence,
+        Some(&track.tag),
+    );
     match fatal {
         Some(e) => {
-            if let Err(error) = file.flush().await {
-                if matches!(e, DownloadError::Cancelled) {
-                    return Err(write_failure(error));
+            // 与视频相同:flush 成功才补写最新前缀的检查点。
+            match file.flush().await {
+                Err(error) => {
+                    if matches!(e, DownloadError::Cancelled) {
+                        return Err(write_failure(error));
+                    }
+                    crate::logger::report_warning("hls-download", "flush_failed_audio", &error);
                 }
-                crate::logger::report_warning("hls-download", "flush_failed_audio", &error);
+                Ok(()) => {
+                    if next_to_write > checkpointed
+                        && let Err(error) = db.set_config(&track.resume_key, &checkpoint).await
+                    {
+                        crate::logger::report_warning(
+                            "hls-download",
+                            "persist_audio_checkpoint",
+                            &error,
+                        );
+                    }
+                }
             }
             Err(e)
         }
         None => {
             file.flush().await?;
+            if next_to_write > checkpointed {
+                db.set_config(&track.resume_key, &checkpoint).await?;
+            }
             Ok(written_bytes)
         }
     }
@@ -4043,9 +4162,9 @@ struct LiveRun {
     task_id: String,
     db: crate::db::Db,
     sink: Arc<dyn EventSink>,
-    speed_limiter: crate::speed_limiter::SpeedLimiter,
     key_cache: KeyCache,
-    tracker: TransferTracker,
+    /// 本次录制所有轨道共享的传输计量(测速与限速)。
+    meter: SegmentMeter,
     /// 本轨已落盘字节数,供进度采样器汇总。
     written: Arc<AtomicI64>,
     concurrency: usize,
@@ -4077,26 +4196,19 @@ struct LiveOutcome {
 }
 
 /// 追加写入(可选 init 段 + 媒体段),返回写入字节数;任一步失败都回退到写入前的长度。
+/// 限速已在读取 body 时生效,这里整块追加。
 async fn append_live_chunks(
     file: &mut File,
-    limiter: &crate::speed_limiter::SpeedLimiter,
     init: Option<&[u8]>,
     data: &[u8],
     start_pos: i64,
 ) -> Result<i64, DownloadError> {
     let mut written = 0i64;
     let mut write_result: Result<(), std::io::Error> = Ok(());
-    'chunks: for chunk in init.into_iter().chain(std::iter::once(data)) {
-        let mut offset = 0usize;
-        while offset < chunk.len() {
-            let remaining = (chunk.len() - offset) as u64;
-            let allowed = limiter.consume(remaining).await.min(remaining);
-            let end = offset + allowed as usize;
-            if let Err(e) = file.write_all(&chunk[offset..end]).await {
-                write_result = Err(e);
-                break 'chunks;
-            }
-            offset = end;
+    for chunk in init.into_iter().chain(std::iter::once(data)) {
+        if let Err(e) = file.write_all(chunk).await {
+            write_result = Err(e);
+            break;
         }
         written += chunk.len() as i64;
     }
@@ -4137,7 +4249,7 @@ async fn ensure_live_init(
         &shared.cancel,
         &shared.task_id,
         usize::MAX,
-        &shared.tracker,
+        &shared.meter,
         &shared.db,
         shared.sink.as_ref(),
     )
@@ -4227,9 +4339,8 @@ async fn run_live_track(run: LiveRun) -> Result<LiveOutcome, DownloadError> {
         task_id,
         db,
         sink,
-        speed_limiter,
         key_cache,
-        tracker,
+        meter,
         written,
         concurrency,
         temp,
@@ -4263,7 +4374,7 @@ async fn run_live_track(run: LiveRun) -> Result<LiveOutcome, DownloadError> {
         cancel: cancel.clone(),
         task_id: task_id.clone(),
         key_cache,
-        tracker,
+        meter,
         db: db.clone(),
         sink: Arc::clone(&sink),
     });
@@ -4437,8 +4548,7 @@ async fn run_live_track(run: LiveRun) -> Result<LiveOutcome, DownloadError> {
             } else {
                 None
             };
-            let chunk_len =
-                append_live_chunks(&mut file, &speed_limiter, init, &data, written_bytes).await?;
+            let chunk_len = append_live_chunks(&mut file, init, &data, written_bytes).await?;
             if init.is_some() {
                 last_map = current_map;
             }
@@ -4513,12 +4623,13 @@ async fn run_live_track(run: LiveRun) -> Result<LiveOutcome, DownloadError> {
     })
 }
 
-/// 视频(及可选独立音轨)进度采样器:每 200ms 汇总两轨已落盘字节上报一次。
+/// 视频(及可选独立音轨)进度采样器:每 200ms 上报一次两轨已落盘字节(进度)与本次
+/// 运行的接收字节(测速)。
 /// 直播总大小未知,`total_bytes` 恒为 0(与点播同一"未知"语义)。
 fn spawn_progress_sampler(
     tx: mpsc::Sender<ProgressUpdate>,
     task_id: String,
-    tracker: TransferTracker,
+    meter: SegmentMeter,
     video_bytes: Arc<AtomicI64>,
     audio_bytes: Arc<AtomicI64>,
     limit: u32,
@@ -4527,16 +4638,9 @@ fn spawn_progress_sampler(
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
         loop {
             ticker.tick().await;
+            let written = video_bytes.load(Ordering::Relaxed) + audio_bytes.load(Ordering::Relaxed);
             if tx
-                .send(ProgressUpdate {
-                    task_id: task_id.clone(),
-                    downloaded_bytes: video_bytes.load(Ordering::Relaxed)
-                        + audio_bytes.load(Ordering::Relaxed),
-                    total_bytes: 0,
-                    status: 1,
-                    runtime: Some(hls_runtime(&task_id, &tracker, limit)),
-                    ..Default::default()
-                })
+                .send(hls_progress(&task_id, &meter, written, limit))
                 .await
                 .is_err()
             {
@@ -4650,13 +4754,13 @@ async fn run_live_recording(p: &DownloadParams, rec: LiveRecording) -> Result<i6
     let audio_temp_path = audio_parts.as_ref().map(|(t, _)| t.temp_path.clone());
 
     let key_cache: KeyCache = Arc::new(Mutex::new(HashMap::new()));
-    let tracker = TransferTracker::new();
+    let meter = SegmentMeter::new(p.speed_limiter.clone());
     let video_written = Arc::new(AtomicI64::new(video_temp.bytes));
     let audio_written = Arc::new(AtomicI64::new(0));
     let mut sampler = spawn_progress_sampler(
         p.progress_tx.clone(),
         p.task_id.clone(),
-        tracker.clone(),
+        meter.clone(),
         Arc::clone(&video_written),
         Arc::clone(&audio_written),
         concurrency as u32,
@@ -4684,9 +4788,8 @@ async fn run_live_recording(p: &DownloadParams, rec: LiveRecording) -> Result<i6
             task_id: p.task_id.clone(),
             db: p.db.clone(),
             sink: p.sink.clone(),
-            speed_limiter: p.speed_limiter.clone(),
             key_cache: key_cache.clone(),
-            tracker: tracker.clone(),
+            meter: meter.clone(),
             written: Arc::clone(&audio_written),
             concurrency: concurrency.min(AUDIO_TRACK_MAX_CONCURRENCY),
             temp,
@@ -4725,9 +4828,8 @@ async fn run_live_recording(p: &DownloadParams, rec: LiveRecording) -> Result<i6
         task_id: p.task_id.clone(),
         db: p.db.clone(),
         sink: p.sink.clone(),
-        speed_limiter: p.speed_limiter.clone(),
         key_cache,
-        tracker,
+        meter,
         written: Arc::clone(&video_written),
         concurrency,
         temp: video_temp,
@@ -4897,8 +4999,8 @@ async fn run_live_recording(p: &DownloadParams, rec: LiveRecording) -> Result<i6
 // Per-segment download + decrypt (concurrency unit)
 // ---------------------------------------------------------------------------
 
-/// (seg_idx, 下载+解密结果, 并发许可)。许可随结果送回 writer,写盘后才释放。
-type SegmentOutcome = (usize, Result<Vec<u8>, DownloadError>, OwnedSemaphorePermit);
+/// (seg_idx, 下载+解密结果)。连接许可在下载结束时已归还,数据留在乱序窗口里直到写盘。
+type SegmentOutcome = (usize, Result<Vec<u8>, DownloadError>);
 
 struct SegmentJob {
     idx: usize,
@@ -4919,7 +5021,7 @@ struct SegmentShared {
     cancel: tokio_util::sync::CancellationToken,
     task_id: String,
     key_cache: KeyCache,
-    tracker: TransferTracker,
+    meter: SegmentMeter,
     db: crate::db::Db,
     sink: Arc<dyn EventSink>,
 }
@@ -4934,18 +5036,105 @@ impl SegmentShared {
     }
 }
 
-/// 按 seg_idx 顺序获取许可并派发段任务。必须由单一任务顺序 `acquire`:
-/// 若各段任务自行抢许可,首次 poll 顺序不保证等于 idx 顺序,许可可能全被
-/// 后续段占住而队首段拿不到,writer 永远等不到它。
+/// 乱序窗口的共享状态:writer 推进,dispatcher 据此放行新段。
+#[derive(Clone, Copy, Debug)]
+struct WindowState {
+    /// 下一个待写盘的段序号。
+    next_to_write: usize,
+    /// 已下载完成、尚未写盘的字节数。
+    buffered: u64,
+}
+
+/// 网络并发与按序写盘之间的乱序窗口。
+///
+/// 段下载完即归还连接许可,数据在这里等待按序写盘;派发只受窗口约束:领先写盘
+/// 位置不超过 `max_ahead` 段,且缓冲字节未达 [`REORDER_BUFFER_BYTES`]。队首段永远
+/// 放行:派发严格按序,队首段一定已经派发,预算再满也不会卡住 writer。
+struct ReorderWindow {
+    state: watch::Sender<WindowState>,
+    /// 派发位置最多领先写盘位置的段数(也是结果通道容量)。
+    max_ahead: usize,
+    budget: u64,
+}
+
+impl ReorderWindow {
+    fn new(first_idx: usize, concurrency: usize) -> Self {
+        Self {
+            state: watch::Sender::new(WindowState {
+                next_to_write: first_idx,
+                buffered: 0,
+            }),
+            max_ahead: concurrency
+                .max(1)
+                .saturating_mul(REORDER_AHEAD_PER_CONNECTION),
+            budget: REORDER_BUFFER_BYTES,
+        }
+    }
+
+    fn admits(&self, state: &WindowState, idx: usize) -> bool {
+        idx <= state.next_to_write
+            || (idx - state.next_to_write < self.max_ahead && state.buffered < self.budget)
+    }
+
+    /// 等到 `idx` 可以派发;窗口已关闭时返回 `false`(发送端随窗口存活,实际不会发生)。
+    async fn admit(&self, idx: usize) -> bool {
+        let mut changes = self.state.subscribe();
+        changes
+            .wait_for(|state| self.admits(state, idx))
+            .await
+            .is_ok()
+    }
+
+    /// 一段下载完成、进入缓冲。只会收紧窗口,不必唤醒等待者。
+    fn buffered(&self, bytes: usize) {
+        self.state.send_if_modified(|state| {
+            state.buffered = state.buffered.saturating_add(bytes as u64);
+            false
+        });
+    }
+
+    /// writer 写完一段:推进写盘位置并释放这段缓冲。
+    fn written(&self, next_to_write: usize, bytes: usize) {
+        self.state.send_modify(|state| {
+            state.next_to_write = next_to_write;
+            state.buffered = state.buffered.saturating_sub(bytes as u64);
+        });
+    }
+}
+
+/// 按 seg_idx 顺序派发段任务:先等乱序窗口放行,再取连接许可。
+///
+/// 必须由单一任务顺序派发:若各段任务自行抢许可,首次 poll 顺序不保证等于 idx
+/// 顺序,许可可能全被后续段占住而队首段拿不到,writer 永远等不到它。等窗口时不占
+/// 连接,同时回收结束的段任务:崩溃的段任务送不回结果,writer 与窗口都会一直等它,
+/// 只能在这里发现并取消整轮下载。
 async fn dispatch_segments(
     jobs: Vec<SegmentJob>,
     shared: Arc<SegmentShared>,
     semaphore: Arc<Semaphore>,
+    window: Arc<ReorderWindow>,
     tx: mpsc::Sender<SegmentOutcome>,
 ) -> Result<(), DownloadError> {
     let mut failure = None;
     let mut children = tokio::task::JoinSet::new();
-    for job in jobs {
+    'dispatch: for job in jobs {
+        loop {
+            tokio::select! {
+                _ = shared.cancel.cancelled() => break 'dispatch,
+                admitted = window.admit(job.idx) => {
+                    if admitted {
+                        break;
+                    }
+                    break 'dispatch;
+                }
+                Some(joined) = children.join_next() => {
+                    if let Some(error) = reap_segment_worker(joined, &shared.cancel) {
+                        failure.get_or_insert(error);
+                        break 'dispatch;
+                    }
+                }
+            }
+        }
         let permit = tokio::select! {
             _ = shared.cancel.cancelled() => break,
             acquired = Arc::clone(&semaphore).acquire_owned() => match acquired {
@@ -4955,25 +5144,16 @@ async fn dispatch_segments(
             },
         };
         // 及时回收已结束的子任务,避免长播放列表下 JoinSet 累积。
-        while let Some(result) = children.try_join_next() {
-            if let Err(error) = result {
-                if error.is_cancelled() && shared.cancel.is_cancelled() {
-                    tracing::debug!("HLS segment worker cancelled");
-                } else {
-                    crate::logger::report_error("hls-download", "join_segment_worker", &error);
-                    if failure.is_none() {
-                        failure = Some(DownloadError::Other(format!(
-                            "HLS segment worker failed: {error}"
-                        )));
-                    }
-                    shared.cancel.cancel();
-                }
+        while let Some(joined) = children.try_join_next() {
+            if let Some(error) = reap_segment_worker(joined, &shared.cancel) {
+                failure.get_or_insert(error);
             }
         }
         if failure.is_some() {
             break;
         }
         let child_shared = Arc::clone(&shared);
+        let child_window = Arc::clone(&window);
         let child_tx = tx.clone();
         children.spawn(async move {
             let outcome = if child_shared.cancel.is_cancelled() {
@@ -4983,34 +5163,46 @@ async fn dispatch_segments(
                     .await
                     .map_err(RequestFailure::into_error)
             };
+            // 下载(含解密)结束即归还连接;数据进入乱序缓冲,写盘后才出窗口。
+            drop(permit);
+            if let Ok(data) = &outcome {
+                child_window.buffered(data.len());
+            }
             // Always emit a result for this index so the in-order writer never
             // blocks forever waiting on a task that failed.
-            if child_tx.send((job.idx, outcome, permit)).await.is_err() {
-                // writer 出错/取消后关闭通道，让生产者退出并释放许可。
+            if child_tx.send((job.idx, outcome)).await.is_err() {
+                // writer 出错/取消后关闭通道,让生产者退出。
                 tracing::debug!("HLS segment writer closed");
             }
         });
     }
     drop(tx);
-    while let Some(result) = children.join_next().await {
-        if let Err(error) = result {
-            if error.is_cancelled() && shared.cancel.is_cancelled() {
-                tracing::debug!("HLS segment worker cancelled");
-            } else {
-                crate::logger::report_error("hls-download", "join_segment_worker", &error);
-                if failure.is_none() {
-                    failure = Some(DownloadError::Other(format!(
-                        "HLS segment worker failed: {error}"
-                    )));
-                }
-                shared.cancel.cancel();
-            }
+    while let Some(joined) = children.join_next().await {
+        if let Some(error) = reap_segment_worker(joined, &shared.cancel) {
+            failure.get_or_insert(error);
         }
     }
     match failure {
         Some(error) => Err(error),
         None => Ok(()),
     }
+}
+
+/// 回收一个结束的段任务:崩溃(不是取消引起的中止)时上报、取消整轮下载并返回失败。
+fn reap_segment_worker(
+    joined: Result<(), tokio::task::JoinError>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Option<DownloadError> {
+    let error = joined.err()?;
+    if error.is_cancelled() && cancel.is_cancelled() {
+        tracing::debug!("HLS segment worker cancelled");
+        return None;
+    }
+    crate::logger::report_error("hls-download", "join_segment_worker", &error);
+    cancel.cancel();
+    Some(DownloadError::Other(format!(
+        "HLS segment worker failed: {error}"
+    )))
 }
 
 /// 把非 HLS 播放列表错误转为真实失败:已确认是 HLS 后不允许退回普通 HTTP 下载。
@@ -5046,7 +5238,7 @@ async fn download_and_decrypt_segment(
         &shared.cancel,
         &shared.task_id,
         job.idx,
-        &shared.tracker,
+        &shared.meter,
         &shared.db,
         shared.sink.as_ref(),
     )
@@ -5090,7 +5282,7 @@ async fn download_segment_with_retry(
     cancel_token: &tokio_util::sync::CancellationToken,
     task_id: &str,
     seg_idx: usize,
-    tracker: &TransferTracker,
+    meter: &SegmentMeter,
     db: &crate::db::Db,
     sink: &dyn EventSink,
 ) -> Result<Vec<u8>, RequestFailure> {
@@ -5098,7 +5290,7 @@ async fn download_segment_with_retry(
         client,
         ctx,
         cancel_token,
-        tracker,
+        meter,
         header_timeout: SEGMENT_HEADER_TIMEOUT,
         idle_timeout: SEGMENT_IDLE_TIMEOUT,
     };
@@ -5156,7 +5348,8 @@ struct SegmentTransport<'a> {
     client: &'a Client,
     ctx: &'a HlsRequestCtx<'a>,
     cancel_token: &'a tokio_util::sync::CancellationToken,
-    tracker: &'a TransferTracker,
+    /// 活跃读取计数、接收字节与限速。
+    meter: &'a SegmentMeter,
     /// 等待响应头的上限;超时按 stalled 报错,复用段重试与自动重试白名单。
     header_timeout: Duration,
     /// body 逐 chunk 空闲上限(不是整段超时:单段可达 256MB)。
@@ -5278,7 +5471,7 @@ async fn download_segment_as(
     let mut buf = Vec::new();
     loop {
         let chunk = {
-            let _transfer = transport.tracker.start(seg_idx as i32);
+            let _transfer = transport.meter.tracker.start(seg_idx as i32);
             tokio::select! {
                 _ = transport.cancel_token.cancelled() => return Err(DownloadError::Cancelled),
                 c = tokio::time::timeout(transport.idle_timeout, stream.next()) => match c {
@@ -5302,6 +5495,10 @@ async fn download_segment_as(
                 MAX_SEGMENT_BYTES / (1024 * 1024)
             )));
         }
+        transport
+            .meter
+            .admit_body(chunk_data.len(), transport.cancel_token)
+            .await?;
         buf.extend_from_slice(&chunk_data);
     }
 
@@ -5361,12 +5558,13 @@ mod tests {
             socket.write_all(b"hello").await?;
             Ok::<(), std::io::Error>(())
         });
-        let tracker = super::TransferTracker::new();
+        let meter = super::SegmentMeter::new(crate::speed_limiter::SpeedLimiter::new(0));
+        let tracker = meter.tracker.clone();
         let client = reqwest::Client::builder().no_proxy().build()?;
         let cancel = tokio_util::sync::CancellationToken::new();
         let url = format!("http://{address}/segment.ts");
         let download = tokio::spawn({
-            let tracker = tracker.clone();
+            let meter = meter.clone();
             async move {
                 let spec = crate::downloader::DownloadSpec::new(
                     crate::downloader::RequestSpec::empty_get(),
@@ -5380,7 +5578,7 @@ mod tests {
                     client: &client,
                     ctx: &ctx,
                     cancel_token: &cancel,
-                    tracker: &tracker,
+                    meter: &meter,
                     header_timeout: std::time::Duration::from_secs(30),
                     idle_timeout: std::time::Duration::from_secs(30),
                 };
@@ -6056,7 +6254,7 @@ v360.m3u8\n\
     ) -> Result<String, Box<dyn std::error::Error>> {
         let (address, release_tx) = stalling_server(send_headers).await?;
         let client = reqwest::Client::builder().no_proxy().build()?;
-        let tracker = super::TransferTracker::new();
+        let meter = super::SegmentMeter::new(crate::speed_limiter::SpeedLimiter::new(0));
         let cancel = tokio_util::sync::CancellationToken::new();
         let url = format!("http://{address}/segment.ts");
         let spec =
@@ -6070,7 +6268,7 @@ v360.m3u8\n\
             client: &client,
             ctx: &ctx,
             cancel_token: &cancel,
-            tracker: &tracker,
+            meter: &meter,
             header_timeout: std::time::Duration::from_millis(200),
             idle_timeout: std::time::Duration::from_millis(200),
         };
@@ -6243,11 +6441,10 @@ v360.m3u8\n\
             task_id: "t-audio".to_owned(),
             db: db.clone(),
             sink: std::sync::Arc::new(crate::NoopSink),
-            speed_limiter: crate::speed_limiter::SpeedLimiter::new(0),
             key_cache: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
-            tracker: super::TransferTracker::new(),
+            meter: super::SegmentMeter::new(crate::speed_limiter::SpeedLimiter::new(0)),
             written: std::sync::Arc::clone(&written),
             segment_limit: 2,
             connection_cap: 0,
@@ -6281,7 +6478,8 @@ v360.m3u8\n\
             matches!(&result, Err(error) if error.to_string().contains("checkpoint write failed")),
             "{result:?}"
         );
-        assert_eq!(std::fs::read(&temp)?, AUDIO_SEGMENTS[0]);
+        // 未落库检查点之后的段可能已在磁盘上(检查点节流);续传必须把它们截掉重下。
+        assert!(std::fs::read(&temp)?.starts_with(AUDIO_SEGMENTS[0]));
         let checkpoint = db
             .get_config(&super::audio_resume_key("t-audio"))
             .await?
@@ -6838,11 +7036,10 @@ v360.m3u8\n\
             task_id: "t-live".to_owned(),
             db: db.clone(),
             sink: std::sync::Arc::new(crate::NoopSink),
-            speed_limiter: crate::speed_limiter::SpeedLimiter::new(0),
             key_cache: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
-            tracker: super::TransferTracker::new(),
+            meter: super::SegmentMeter::new(crate::speed_limiter::SpeedLimiter::new(0)),
             written,
             concurrency: 3,
             temp,
@@ -7242,6 +7439,181 @@ v360.m3u8\n\
                 .await?
                 .is_some_and(|fp| !fp.is_empty()),
             "dropping segments must persist a fingerprint"
+        );
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    /// 队首分片卡住时,其余连接继续下载后续分片(不再整批等队首写盘);测速用的接收
+    /// 字节随网络增长,落盘字节停在 0;放行后按序写成唯一一份最终文件。
+    #[tokio::test]
+    async fn slow_head_segment_keeps_other_connections_busy_and_speed_visible()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        const SEGMENTS: usize = 12;
+        let bodies: Vec<Vec<u8>> = (0..SEGMENTS)
+            .map(|i| format!("S{i:02}").repeat(4096).into_bytes())
+            .collect();
+        let playlist: String = std::iter::once(
+            "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n".to_owned(),
+        )
+        .chain((0..SEGMENTS).map(|i| format!("#EXTINF:2,\ns{i}.ts\n")))
+        .chain(std::iter::once("#EXT-X-ENDLIST\n".to_owned()))
+        .collect();
+        let head_gate = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+        let requested = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+        let address = listener.local_addr()?;
+        {
+            let bodies = std::sync::Arc::new(bodies.clone());
+            let playlist = std::sync::Arc::new(playlist);
+            let head_gate = std::sync::Arc::clone(&head_gate);
+            let requested = std::sync::Arc::clone(&requested);
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let bodies = std::sync::Arc::clone(&bodies);
+                    let playlist = std::sync::Arc::clone(&playlist);
+                    let head_gate = std::sync::Arc::clone(&head_gate);
+                    let requested = std::sync::Arc::clone(&requested);
+                    tokio::spawn(async move {
+                        let mut buf = [0u8; 2048];
+                        let Ok(n) = socket.read(&mut buf).await else {
+                            return;
+                        };
+                        let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                        let path = request
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or_default()
+                            .to_owned();
+                        if let Ok(mut seen) = requested.lock() {
+                            seen.push(path.clone());
+                        }
+                        let segment = path
+                            .strip_prefix("/s")
+                            .and_then(|rest| rest.strip_suffix(".ts"))
+                            .and_then(|index| index.parse::<usize>().ok())
+                            .and_then(|index| bodies.get(index));
+                        let (status, body) = match (path.as_str(), segment) {
+                            ("/v.m3u8", _) => ("200 OK", playlist.as_bytes().to_vec()),
+                            (_, Some(body)) => ("200 OK", body.clone()),
+                            _ => ("404 Not Found", Vec::new()),
+                        };
+                        // 队首分片是慢连接:先给响应头和半个 body,其余等放行。
+                        let split = if path == "/s0.ts" {
+                            body.len() / 2
+                        } else {
+                            body.len()
+                        };
+                        let served = async {
+                            socket
+                                .write_all(
+                                    format!(
+                                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                        body.len()
+                                    )
+                                    .as_bytes(),
+                                )
+                                .await?;
+                            socket.write_all(&body[..split]).await?;
+                            if split < body.len() {
+                                let _released =
+                                    head_gate.acquire().await.map_err(std::io::Error::other)?;
+                                socket.write_all(&body[split..]).await?;
+                            }
+                            Ok::<(), std::io::Error>(())
+                        }
+                        .await;
+                        if let Err(error) = served {
+                            tracing::debug!(%error, "HLS fixture client disconnected");
+                        }
+                    });
+                }
+            });
+        }
+
+        let samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(i64, Option<i64>)>::new()));
+        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(64);
+        {
+            let samples = std::sync::Arc::clone(&samples);
+            tokio::spawn(async move {
+                while let Some(update) = progress_rx.recv().await {
+                    let update: crate::downloader::ProgressUpdate = update;
+                    if update.status == 1
+                        && let Ok(mut seen) = samples.lock()
+                    {
+                        seen.push((update.downloaded_bytes, update.transfer_bytes));
+                    }
+                }
+            });
+        }
+        let dir = scratch_dir("slow_head");
+        let db = crate::db::Db::connect("sqlite::memory:").await?;
+        let url = format!("http://{address}/v.m3u8");
+        let dir_text = dir.to_string_lossy().to_string();
+        db.insert_task("t-slow", &url, "v.ts", &dir_text, 0, 0, "", "", "", 0)
+            .await?;
+        let mut params = vod_params("t-slow", &url, &dir, &db, crate::intercept::noop())?;
+        // 两条连接:旧调度下队首卡住时最多只能再下一个分片。
+        params.segment_count = 2;
+        params.progress_tx = progress_tx;
+        let download = tokio::spawn(async move { super::run_hls_download_inner(&params).await });
+
+        let later: Vec<String> = (1..SEGMENTS).map(|i| format!("/s{i}.ts")).collect();
+        let all_later_requested = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !requested
+                .lock()
+                .is_ok_and(|seen| later.iter().all(|path| seen.contains(path)))
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok();
+        let received_behind_head: i64 =
+            bodies[1..].iter().map(|b| b.len() as i64).sum::<i64>() + (bodies[0].len() / 2) as i64;
+        let blocked_sample = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let hit = samples.lock().ok().and_then(|seen| {
+                    seen.iter()
+                        .copied()
+                        .find(|(_, received)| received.is_some_and(|r| r >= received_behind_head))
+                });
+                if let Some(sample) = hit {
+                    return sample;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .ok();
+        head_gate.add_permits(1);
+        let total = tokio::time::timeout(std::time::Duration::from_secs(30), download).await???;
+
+        assert!(
+            all_later_requested,
+            "segments behind a stalled head must keep downloading: {requested:?}"
+        );
+        let (written, received) = blocked_sample.ok_or("speed never saw the received bytes")?;
+        assert_eq!(written, 0, "nothing can be written before the head segment");
+        assert!(received.is_some_and(|r| r >= received_behind_head));
+        let expected = bodies.concat();
+        assert_eq!(total, expected.len() as i64);
+        let task = db
+            .load_task_by_id("t-slow")
+            .await?
+            .ok_or("task row missing")?;
+        assert_eq!(std::fs::read(dir.join(&task.file_name))?, expected);
+        let remaining: Vec<std::ffi::OsString> = std::fs::read_dir(&dir)?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<Result<_, _>>()?;
+        assert_eq!(
+            remaining,
+            [std::ffi::OsString::from(&task.file_name)],
+            "only the final file may remain"
         );
         std::fs::remove_dir_all(&dir)?;
         Ok(())

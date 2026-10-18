@@ -2303,11 +2303,21 @@ async fn run_http_family_task(run: HttpFamilyRun) {
 struct TaskSpeedState {
     /// EMA-smoothed speed in bytes/sec.
     ema_speed: f64,
-    /// downloaded_bytes at the start of the current sampling window.
+    /// Speed counter at the start of the current sampling window (see
+    /// `speed_from_transfer`).
     sample_bytes: i64,
     /// Timestamp of the current sampling window start.
     sample_time: std::time::Instant,
-    /// Latest downloaded_bytes seen (for non-monotonic detection).
+    /// Latest speed counter seen (for non-monotonic detection).
+    latest_speed_bytes: i64,
+    /// 测速计数器是否为传输层接收字节（`ProgressUpdate::transfer_bytes`），否则为
+    /// 落盘字节。两种计数不可相减：来源切换时重设测量基线。
+    speed_from_transfer: bool,
+    /// 最近一次观测到的 `transfer_bytes`（同一次运行内单调）。
+    last_transfer_bytes: Option<i64>,
+    /// 已观测、尚未随转发帧交给宿主（`EngineEvent::TaskTransferred`）的接收字节。
+    unsent_transfer_bytes: i64,
+    /// Latest downloaded_bytes seen (transfer-baseline settlement).
     latest_bytes: i64,
     /// Resolved file_name (latched from the first non-empty update).
     file_name: String,
@@ -13691,12 +13701,20 @@ pub async fn progress_reporter(
             .download_baseline
             .and_then(|_| states.get(&update.task_id).map(|state| state.latest_bytes));
 
+        // 测速计数器：下载器上报了传输层接收字节时用它，否则用落盘字节。
+        let speed_counter = update.transfer_bytes.unwrap_or(update.downloaded_bytes);
+        let speed_from_transfer = update.transfer_bytes.is_some();
+
         // Latch file_name: once we get a non-empty name, remember it.
         let state = states.entry(update.task_id.clone()).or_insert_with(|| {
             TaskSpeedState {
                 ema_speed: 0.0,
-                sample_bytes: update.downloaded_bytes,
+                sample_bytes: speed_counter,
                 sample_time: now,
+                latest_speed_bytes: speed_counter,
+                speed_from_transfer,
+                last_transfer_bytes: None,
+                unsent_transfer_bytes: 0,
                 latest_bytes: update.downloaded_bytes,
                 file_name: String::new(),
                 cached_segments: None,
@@ -13733,6 +13751,17 @@ pub async fn progress_reporter(
             state.cached_runtime = Some(runtime.clone());
         }
 
+        // 接收字节在同一次运行内单调；比上次小 = 新一轮运行的计数器（从 0 起）。
+        // 未转发的部分攒着，随下一次转发的进度帧交给宿主统计流量。
+        if let Some(transfer) = update.transfer_bytes {
+            let fresh = match state.last_transfer_bytes {
+                Some(previous) if transfer >= previous => transfer - previous,
+                _ => transfer,
+            };
+            state.unsent_transfer_bytes = state.unsent_transfer_bytes.saturating_add(fresh.max(0));
+            state.last_transfer_bytes = Some(transfer);
+        }
+
         // -----------------------------------------------------------------
         // Fixed-window speed calculation
         //
@@ -13751,30 +13780,34 @@ pub async fn progress_reporter(
         let entered_downloading = update.status == 1 && state.last_raw_status != 1;
         if entered_downloading {
             state.ema_speed = 0.0;
-            state.sample_bytes = update.downloaded_bytes;
+            state.sample_bytes = speed_counter;
             state.sample_time = now;
             state.awaiting_first_growth = true;
             state.sent_nonzero_speed = false;
         }
 
         if update.status == 1 {
-            // Non-monotonic check (e.g. server reset, re-probe).
-            if update.downloaded_bytes < state.latest_bytes {
+            // Non-monotonic check (e.g. server reset, re-probe); switching
+            // between written and received counters is a new baseline too.
+            if speed_counter < state.latest_speed_bytes
+                || speed_from_transfer != state.speed_from_transfer
+            {
                 state.ema_speed = 0.0;
-                state.sample_bytes = update.downloaded_bytes;
+                state.sample_bytes = speed_counter;
                 state.sample_time = now;
                 state.awaiting_first_growth = true;
             }
 
-            state.latest_bytes = update.downloaded_bytes;
+            state.latest_speed_bytes = speed_counter;
+            state.speed_from_transfer = speed_from_transfer;
 
             // 首增长基线吸收：进入下载态后第一个「有增长」的更新可能携带
             // resume 基线跳变，其 delta 不代表真实传输。把它仅用作测量基线
             // （代价：丢弃至多一条更新 ≈ 200ms 的真实增量），后续增量即纯
             // 传输字节。
-            if state.awaiting_first_growth && update.downloaded_bytes > state.sample_bytes {
+            if state.awaiting_first_growth && speed_counter > state.sample_bytes {
                 state.awaiting_first_growth = false;
-                state.sample_bytes = update.downloaded_bytes;
+                state.sample_bytes = speed_counter;
                 state.sample_time = now;
             }
 
@@ -13789,7 +13822,7 @@ pub async fn progress_reporter(
             let window_elapsed_ms = now.duration_since(state.sample_time).as_millis();
             if window_elapsed_ms >= window_ms {
                 let dt = now.duration_since(state.sample_time).as_secs_f64();
-                let delta = update.downloaded_bytes - state.sample_bytes;
+                let delta = speed_counter - state.sample_bytes;
 
                 if delta > 0 && dt > 0.01 {
                     let window_speed = delta as f64 / dt;
@@ -13810,7 +13843,7 @@ pub async fn progress_reporter(
                 }
 
                 // Advance sampling window baseline.
-                state.sample_bytes = update.downloaded_bytes;
+                state.sample_bytes = speed_counter;
                 state.sample_time = now;
             }
             // Within the window: just accumulate bytes, no speed recalc.
@@ -13819,10 +13852,12 @@ pub async fn progress_reporter(
             state.ema_speed = 0.0;
             state.awaiting_first_growth = false;
             state.sent_nonzero_speed = false;
-            state.sample_bytes = update.downloaded_bytes;
+            state.sample_bytes = speed_counter;
             state.sample_time = now;
-            state.latest_bytes = update.downloaded_bytes;
+            state.latest_speed_bytes = speed_counter;
+            state.speed_from_transfer = speed_from_transfer;
         }
+        state.latest_bytes = update.downloaded_bytes;
         state.last_raw_status = update.status;
         state.upload_bps = update.upload_speed_bps;
 
@@ -13939,6 +13974,12 @@ pub async fn progress_reporter(
                         task_id: update.task_id.clone(),
                         downloaded_bytes,
                         previous_downloaded_bytes,
+                    });
+                }
+                if state.unsent_transfer_bytes > 0 {
+                    sink.emit(EngineEvent::TaskTransferred {
+                        task_id: update.task_id.clone(),
+                        bytes: std::mem::take(&mut state.unsent_transfer_bytes),
                     });
                 }
                 sink.emit(EngineEvent::TaskProgress {
@@ -18590,6 +18631,81 @@ mod tests {
                 (33 * MIB, Some(33 * MIB)),
             ]
         );
+    }
+
+    /// 落盘字节按段跳变(HLS 整段缓冲后写盘)时,速度与宿主流量都跟随接收字节:
+    /// 落盘计数不动,速度照样出现;接收增量全部在对应进度帧之前交给宿主,总量守恒,
+    /// 整段落盘的跳变不再计一次。
+    #[tokio::test]
+    async fn received_bytes_drive_speed_and_host_traffic() {
+        let (tx, rx) = mpsc::channel(16);
+        let db = Db::connect("sqlite::memory:")
+            .await
+            .expect("connect mem db");
+        let sink = Arc::new(RecordingSink::new());
+        let handle = tokio::spawn(progress_reporter(rx, db, sink.clone()));
+        let received = |downloaded_bytes, transfer| ProgressUpdate {
+            task_id: "hls".into(),
+            status: 1,
+            downloaded_bytes,
+            transfer_bytes: Some(transfer),
+            ..Default::default()
+        };
+        for (step, transfer) in [0_i64, 200_000, 400_000, 600_000].into_iter().enumerate() {
+            if step > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            }
+            tx.send(received(0, transfer))
+                .await
+                .expect("enqueue received sample");
+        }
+        tx.send(received(600_000, 600_000))
+            .await
+            .expect("enqueue segment write");
+        tx.send(ProgressUpdate {
+            task_id: "hls".into(),
+            status: 3,
+            downloaded_bytes: 600_000,
+            total_bytes: 600_000,
+            ..Default::default()
+        })
+        .await
+        .expect("enqueue completion");
+        drop(tx);
+        handle.await.expect("reporter task");
+
+        let events = sink.events();
+        let transferred: i64 = events
+            .iter()
+            .filter_map(|event| match event {
+                EngineEvent::TaskTransferred { bytes, .. } => Some(*bytes),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(transferred, 600_000);
+        for pair in events.windows(2) {
+            if let EngineEvent::TaskTransferred { task_id, .. } = &pair[0] {
+                assert!(
+                    matches!(&pair[1], EngineEvent::TaskProgress { task_id: id, .. } if id == task_id),
+                    "received bytes must precede their progress frame"
+                );
+            }
+        }
+        // 200 KB / 400 ms = 500 KB/s,而落盘计数在测速期间一直是 0。
+        let peak = events
+            .iter()
+            .filter_map(|event| match event {
+                EngineEvent::TaskProgress {
+                    status: 1,
+                    downloaded_bytes: 0,
+                    speed,
+                    ..
+                } => Some(*speed),
+                _ => None,
+            })
+            .max()
+            .unwrap_or_default();
+        assert!((250_000..=1_000_000).contains(&peak), "peak speed {peak}");
     }
 
     /// 在途整表快照期间，终态进度帧必须等快照发出后再发：读库早于落库的旧快照
