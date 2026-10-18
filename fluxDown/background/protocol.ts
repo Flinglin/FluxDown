@@ -152,6 +152,8 @@ export interface SendResult {
   success: boolean;
   message?: string;
   channel?: SendChannel;
+  /** 桌面端直接建好的任务 ID；交给桌面确认框（尚未建任务）或批量发送时为空。 */
+  taskId?: string;
 }
 
 export interface PageLink {
