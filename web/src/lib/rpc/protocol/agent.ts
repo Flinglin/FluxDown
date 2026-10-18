@@ -540,6 +540,7 @@ export type UpdateInstallKind =
   | 'synology'
   | 'qnap'
   | 'openwrt'
+  | 'fnos'
   | 'androidApk'
   | 'unknown';
 

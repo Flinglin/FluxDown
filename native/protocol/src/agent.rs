@@ -1157,6 +1157,8 @@ pub enum UpdateInstallKind {
     Synology,
     Qnap,
     Openwrt,
+    /// 飞牛 fnOS 应用中心（.fpk）。
+    Fnos,
     /// Android APK（官网分发）：由 App 经系统安装器（PackageInstaller）安装。
     AndroidApk,
     #[default]
