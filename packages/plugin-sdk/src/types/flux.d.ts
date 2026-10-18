@@ -3,7 +3,7 @@
 // entry-point shapes the engine calls (resolve / hooks / authenticate / subscribe / main).
 // Mirrors native/engine/src/plugin/{quickjs.rs,quickjs_host.rs,runtime.rs}.
 //
-// Importing anything from "@fluxdown/plugin-sdk" pulls these globals in.
+// Importing anything from "fluxdown-plugin-sdk" pulls these globals in.
 
 import type { ViewChild, ViewNode } from "./view";
 

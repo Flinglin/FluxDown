@@ -1,18 +1,18 @@
 ---
 title: Plugin SDK & CLI
-description: Build plugins in TypeScript and JSX with @fluxdown/plugin-sdk — types, validator, bundler and packager.
+description: Build plugins in TypeScript and JSX with fluxdown-plugin-sdk — types, validator, bundler and packager.
 section: plugins
 order: 6
 ---
 
-`@fluxdown/plugin-sdk` is the toolchain for writing FluxDown plugins in TypeScript. It gives you typed `flux.*` APIs, a JSX runtime for [portable views](/docs/en/plugins/views/), the same manifest validator the engine and the plugin index use, and a CLI that bundles, validates and packs a `.fxplug`.
+`fluxdown-plugin-sdk` is the toolchain for writing FluxDown plugins in TypeScript. It gives you typed `flux.*` APIs, a JSX runtime for [portable views](/docs/en/plugins/views/), the same manifest validator the engine and the plugin index use, and a CLI that bundles, validates and packs a `.fxplug`.
 
 You do not need it — a plain folder of `.js` files still works (see [Your first plugin](/docs/en/plugins/your-first-plugin/)). Use it when you want types, several source files, or views written in JSX.
 
 ## Quick start
 
 ```bash
-npx @fluxdown/plugin-sdk create my-plugin --identity me@my-plugin --name "My Plugin"
+npx fluxdown-plugin-sdk create my-plugin --identity me@my-plugin --name "My Plugin"
 cd my-plugin
 npm install            # or: bun install
 npm run pack           # → me@my-plugin-0.1.0.fxplug
@@ -70,20 +70,20 @@ my-plugin/
   "compilerOptions": {
     "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
     "lib": ["ES2022"], "types": [], "strict": true, "noEmit": true,
-    "jsx": "react-jsx", "jsxImportSource": "@fluxdown/plugin-sdk/ui"
+    "jsx": "react-jsx", "jsxImportSource": "fluxdown-plugin-sdk/ui"
   },
   "include": ["src"]
 }
 ```
 
-Add `src/env.d.ts` with `/// <reference types="@fluxdown/plugin-sdk" />` to bring the global `flux` into scope. Do not enable the DOM lib: the QuickJS host has no DOM.
+Add `src/env.d.ts` with `/// <reference types="fluxdown-plugin-sdk" />` to bring the global `flux` into scope. Do not enable the DOM lib: the QuickJS host has no DOM.
 
 ## Entry-point helpers
 
-The engine reads fixed globals (`resolve`, `onDone`, `authenticate`, `subscribe`, …). The helpers in `@fluxdown/plugin-sdk/runtime` install your functions there so each entry file can be an ordinary module:
+The engine reads fixed globals (`resolve`, `onDone`, `authenticate`, `subscribe`, …). The helpers in `fluxdown-plugin-sdk/runtime` install your functions there so each entry file can be an ordinary module:
 
 ```ts
-import { defineResolver, defineHooks, defineAuth, defineSubscription } from "@fluxdown/plugin-sdk/runtime";
+import { defineResolver, defineHooks, defineAuth, defineSubscription } from "fluxdown-plugin-sdk/runtime";
 
 defineResolver(async (ctx) => {
   const res = await flux.fetch({ url: ctx.url });
@@ -117,16 +117,16 @@ flux.ui.view("dashboard", {
 
 ## Types shipped
 
-- `flux` and its sub-APIs, the entry contexts (`ResolveContext`, `AuthContext`, …) and view types — from `@fluxdown/plugin-sdk`.
+- `flux` and its sub-APIs, the entry contexts (`ResolveContext`, `AuthContext`, …) and view types — from `fluxdown-plugin-sdk`.
 - `ThemeTokenPath` — every theme token path that `fluxdown.theme().tokens` resolves, generated from the theme registry.
-- `@fluxdown/plugin-sdk/types/desktop` — declarations for desktop UI scripts (`gpui-kit` and friends), generated from the desktop runtime.
+- `fluxdown-plugin-sdk/types/desktop` — declarations for desktop UI scripts (`gpui-kit` and friends), generated from the desktop runtime.
 
 ## Validator API
 
 The manifest validator is also exported as a zero-dependency module:
 
 ```ts
-import { validateManifest, riskOf, networkHostsOf, validateSniffPack } from "@fluxdown/plugin-sdk/manifest";
+import { validateManifest, riskOf, networkHostsOf, validateSniffPack } from "fluxdown-plugin-sdk/manifest";
 
 const { ok, errors } = validateManifest(manifest, new Set(["main.js"]));
 riskOf(manifest);          // "standard" | "elevated" | "full"

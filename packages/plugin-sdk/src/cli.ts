@@ -24,7 +24,7 @@ import {
   validateSniffPack,
 } from "./manifest";
 
-const SDK_NAME = "@fluxdown/plugin-sdk";
+const SDK_NAME = "fluxdown-plugin-sdk";
 const CONFIG_FILE = "fluxdown-plugin.config.json";
 const MAX_ENTRIES = 200;
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
@@ -348,7 +348,7 @@ function create(dir: string, flags: Record<string, string>): void {
     identity,
     name,
     version: "0.1.0",
-    description: "A FluxDown plugin built with @fluxdown/plugin-sdk.",
+    description: "A FluxDown plugin built with fluxdown-plugin-sdk.",
     main: { entry: "main.js" },
     contributes: {
       views: [{ id: "dashboard", title: name.slice(0, 40), location: "activity" }],

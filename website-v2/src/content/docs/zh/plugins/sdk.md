@@ -1,19 +1,19 @@
 ---
 title: 插件 SDK 与 CLI
-description: 用 @fluxdown/plugin-sdk 以 TypeScript 和 JSX 开发插件——类型、校验器、打包与封装。
+description: 用 fluxdown-plugin-sdk 以 TypeScript 和 JSX 开发插件——类型、校验器、打包与封装。
 section: plugins
 order: 6
-sourceHash: "3d30ffef1b48"
+sourceHash: "0a551bfade4d"
 ---
 
-`@fluxdown/plugin-sdk` 是用 TypeScript 编写 FluxDown 插件的工具链：带类型的 `flux.*`、用于[可移植视图](/docs/zh/plugins/views/)的 JSX 运行时、与引擎和插件索引同一套的 manifest 校验器，以及负责打包、校验、封装 `.fxplug` 的 CLI。
+`fluxdown-plugin-sdk` 是用 TypeScript 编写 FluxDown 插件的工具链：带类型的 `flux.*`、用于[可移植视图](/docs/zh/plugins/views/)的 JSX 运行时、与引擎和插件索引同一套的 manifest 校验器，以及负责打包、校验、封装 `.fxplug` 的 CLI。
 
 不用它也行——一个只含 `.js` 文件的文件夹照样能用（见[写第一个插件](/docs/zh/plugins/your-first-plugin/)）。需要类型、多个源文件或用 JSX 写视图时再用它。
 
 ## 快速开始
 
 ```bash
-npx @fluxdown/plugin-sdk create my-plugin --identity me@my-plugin --name "My Plugin"
+npx fluxdown-plugin-sdk create my-plugin --identity me@my-plugin --name "My Plugin"
 cd my-plugin
 npm install            # 或：bun install
 npm run pack           # → me@my-plugin-0.1.0.fxplug
@@ -71,20 +71,20 @@ my-plugin/
   "compilerOptions": {
     "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
     "lib": ["ES2022"], "types": [], "strict": true, "noEmit": true,
-    "jsx": "react-jsx", "jsxImportSource": "@fluxdown/plugin-sdk/ui"
+    "jsx": "react-jsx", "jsxImportSource": "fluxdown-plugin-sdk/ui"
   },
   "include": ["src"]
 }
 ```
 
-新增 `src/env.d.ts`，内容为 `/// <reference types="@fluxdown/plugin-sdk" />`，即可引入全局 `flux`。不要启用 DOM lib：QuickJS 宿主没有 DOM。
+新增 `src/env.d.ts`，内容为 `/// <reference types="fluxdown-plugin-sdk" />`，即可引入全局 `flux`。不要启用 DOM lib：QuickJS 宿主没有 DOM。
 
 ## 入口辅助函数
 
-引擎读取固定的全局名（`resolve`、`onDone`、`authenticate`、`subscribe` 等）。`@fluxdown/plugin-sdk/runtime` 里的辅助函数会把你的函数安装到这些全局名上，这样每个入口文件都可以写成普通模块：
+引擎读取固定的全局名（`resolve`、`onDone`、`authenticate`、`subscribe` 等）。`fluxdown-plugin-sdk/runtime` 里的辅助函数会把你的函数安装到这些全局名上，这样每个入口文件都可以写成普通模块：
 
 ```ts
-import { defineResolver, defineHooks, defineAuth, defineSubscription } from "@fluxdown/plugin-sdk/runtime";
+import { defineResolver, defineHooks, defineAuth, defineSubscription } from "fluxdown-plugin-sdk/runtime";
 
 defineResolver(async (ctx) => {
   const res = await flux.fetch({ url: ctx.url });
@@ -118,16 +118,16 @@ flux.ui.view("dashboard", {
 
 ## 随包提供的类型
 
-- `flux` 及其子 API、入口上下文（`ResolveContext`、`AuthContext` 等）和视图类型——来自 `@fluxdown/plugin-sdk`。
+- `flux` 及其子 API、入口上下文（`ResolveContext`、`AuthContext` 等）和视图类型——来自 `fluxdown-plugin-sdk`。
 - `ThemeTokenPath`——`fluxdown.theme().tokens` 解析出的全部主题 token 路径，由主题注册表生成。
-- `@fluxdown/plugin-sdk/types/desktop`——桌面 UI 脚本（`gpui-kit` 等）的声明，由桌面运行时生成。
+- `fluxdown-plugin-sdk/types/desktop`——桌面 UI 脚本（`gpui-kit` 等）的声明，由桌面运行时生成。
 
 ## 校验器 API
 
 manifest 校验器也作为零依赖模块导出：
 
 ```ts
-import { validateManifest, riskOf, networkHostsOf, validateSniffPack } from "@fluxdown/plugin-sdk/manifest";
+import { validateManifest, riskOf, networkHostsOf, validateSniffPack } from "fluxdown-plugin-sdk/manifest";
 
 const { ok, errors } = validateManifest(manifest, new Set(["main.js"]));
 riskOf(manifest);          // "standard" | "elevated" | "full"
