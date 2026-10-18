@@ -4431,7 +4431,7 @@ impl DownloadManager {
         pm.notify(crate::plugin::PluginEvent::Cancel {
             task_id: task_id.to_string(),
             url,
-            reason: Some(reason),
+            reason,
         })
         .await;
     }
@@ -10482,7 +10482,7 @@ impl DownloadManager {
             pm.notify(crate::plugin::PluginEvent::Cancel {
                 task_id: task_id.to_string(),
                 url,
-                reason: Some(crate::plugin::CancelReason::UserCancelled),
+                reason: crate::plugin::CancelReason::UserCancelled,
             })
             .await;
         }
@@ -12666,18 +12666,31 @@ impl DownloadManager {
         self.rss.refresh_now(source_id, &proxy, &ua)
     }
 
-    /// 只读验证一个 feed 地址（新建订阅向导）。结果经 RSS 回流通道返回。
+    /// 只读验证一个订阅地址（新建订阅向导）。结果经 RSS 回流通道返回。
+    /// `provider_id` 为空按内置 RSS 处理，其余走插件订阅 provider。
+    #[allow(clippy::too_many_arguments)]
     pub fn validate_rss_feed(
         &self,
         request_id: String,
+        provider_id: String,
+        provider_config: String,
         url: String,
         cookies: String,
         user_agent: String,
         proxy_url: String,
     ) {
         let (proxy, ua) = (self.proxy_config.clone(), self.global_user_agent.clone());
-        self.rss
-            .validate(request_id, url, cookies, user_agent, proxy_url, &proxy, &ua);
+        self.rss.validate(
+            request_id,
+            provider_id,
+            provider_config,
+            url,
+            cookies,
+            user_agent,
+            proxy_url,
+            &proxy,
+            &ua,
+        );
     }
 
     /// 只读验证的**请求-应答**变体（REST `POST /api/v1/rss/validate`、CLI）。
@@ -12687,14 +12700,18 @@ impl DownloadManager {
     /// （与 `spawn_resolve_preview` 的先例同款）。
     pub fn rss_validate_future(
         &self,
+        provider_id: String,
+        provider_config: String,
         url: String,
         cookies: String,
         user_agent: String,
         proxy_url: String,
-    ) -> impl std::future::Future<Output = crate::rss::RssValidateOutcome> + Send + use<> {
+    ) -> impl Future<Output = crate::rss::RssValidateOutcome> + Send + use<> {
         let (proxy, ua) = (self.proxy_config.clone(), self.global_user_agent.clone());
         self.rss.validate_future(
             String::new(),
+            provider_id,
+            provider_config,
             url,
             cookies,
             user_agent,

@@ -689,6 +689,8 @@ impl DaemonService {
                 match self
                     .actor
                     .execute(ActorOperation::RssValidate {
+                        provider_id: request.provider_id,
+                        provider_config: request.provider_config,
                         url: request.url,
                         cookies: request.cookies,
                         user_agent: request.user_agent,
