@@ -20,6 +20,7 @@ This page covers the user-facing model and the rules a plugin author needs to kn
 | `tasks` | `flux.tasks.*`: list, create, pause, resume and delete download tasks. |
 | `browserRules` | Contribute rules to the browser extension (`contributes.sniffRules`). |
 | `background` | Keep the `main` script running with the daemon. |
+| `intercept` | Interceptors: read and change the URL, request headers, cookies and body of matching tasks, control their connection count, filter streaming segments and process the file before completion. See the [Interceptors guide](/docs/en/plugins/interceptors-guide/). |
 | `desktop` | Run native desktop scripts with **full trust** (see below). |
 
 Subscription providers, hooks, resolvers and portable views need no permission of their own.
@@ -31,7 +32,7 @@ The risk level is computed from the permissions — it is not self-declared.
 | Level | When | Shown as |
 |---|---|---|
 | **Standard** | No permissions. | — |
-| **Elevated** | Any of `ffmpeg`, `ytdlp`, `auth`, `tasks`, `browserRules`, `background`. | Warning badge |
+| **Elevated** | Any of `ffmpeg`, `ytdlp`, `auth`, `tasks`, `browserRules`, `background`, `intercept`. | Warning badge |
 | **Full** | `desktop`. | Destructive badge |
 
 The badge appears on installed plugins and on market listings.
@@ -109,6 +110,7 @@ The same data is available over RPC: `daemon.plugin.audit.list` (paged, optional
 | `fs.write`, `fs.remove` | Writes to the plugin's scratch workspace. |
 | `ffmpeg.run`, `ffprobe.run`, `ytdlp.run` | Tool runs; the target is the argument list (shortened). |
 | `task.retry`, `task.artifact` | Task requests from hooks. |
+| `intercept.<stage>` | An interceptor call for that stage (`prepare`, `segments`, `finalize`, …); the target is the task id, the detail is empty or the error text. |
 | `tasks.create`, `tasks.control` | `flux.tasks` calls from `main`. Task creation is rate limited; a refused call is recorded with outcome `denied`. |
 | `settings.update` | `flux.settings.update`. |
 | `desktop.load`, `desktop.unload` | A desktop script started / stopped; the detail lists the grants it ran with. |

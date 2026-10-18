@@ -17,6 +17,7 @@ use fluxdown_protocol::{
     DaemonDeleteTasksParams, DaemonTaskIdsParams, MigrationAckParams, RpcErrorData, RpcErrorObject,
     RpcRequest, RpcResponse, SelectionResolutionDto, ServiceHello, SiteAuthCredentialDto,
     SiteAuthDeleteParams, SiteAuthMatchParams, SnapshotBody, TaskActivityQuery,
+    TaskSpeedHistoryQuery,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -202,6 +203,20 @@ impl DaemonService {
                     newest_id: page.newest_id,
                     truncated: page.truncated,
                 })
+            }
+            method::DAEMON_TASK_SPEED_HISTORY => {
+                let query = parse_params::<TaskSpeedHistoryQuery>(params)?;
+                if query.task_id.is_empty() {
+                    return Err(invalid_argument("taskId", "taskId is required"));
+                }
+                let history = self
+                    .db
+                    .task_speed_history(&query.task_id)
+                    .await
+                    .map_err(|error| internal_error(format!("{error:#}")))?;
+                to_value(history.map(|history| {
+                    fluxdown_engine_protocol::task_speed_history_to_dto(query.task_id, history)
+                }))
             }
             method::DAEMON_TASK_CREATE => self.create_task(params).await,
             method::DAEMON_TASK_CREATE_MANY => self.create_tasks(params).await,

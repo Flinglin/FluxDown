@@ -11,6 +11,8 @@ pub const SYSTEM_SHUTDOWN: &str = "system.shutdown";
 pub const DAEMON_TASK_LIST: &str = "daemon.task.list";
 pub const DAEMON_TASK_GET: &str = "daemon.task.get";
 pub const DAEMON_TASK_ACTIVITY: &str = "daemon.task.activity";
+/// 单任务速度历史（`TaskSpeedHistoryQuery` → `Option<TaskSpeedHistoryDto>`）。
+pub const DAEMON_TASK_SPEED_HISTORY: &str = "daemon.task.speedHistory";
 pub const DAEMON_TASK_CREATE: &str = "daemon.task.create";
 pub const DAEMON_TASK_PAUSE: &str = "daemon.task.pause";
 pub const DAEMON_TASK_RESUME: &str = "daemon.task.resume";
@@ -333,6 +335,7 @@ pub const ALL_METHODS: &[&str] = &[
     DAEMON_TASK_LIST,
     DAEMON_TASK_GET,
     DAEMON_TASK_ACTIVITY,
+    DAEMON_TASK_SPEED_HISTORY,
     DAEMON_TASK_CREATE,
     DAEMON_TASK_CREATE_MANY,
     DAEMON_TASK_PAUSE,

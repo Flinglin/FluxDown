@@ -16,6 +16,8 @@ public enum HostMethod {
     public static let daemonTaskList = "daemon.task.list"
     public static let daemonTaskGet = "daemon.task.get"
     public static let daemonTaskActivity = "daemon.task.activity"
+    /// 任务整个生命周期的持久化速度曲线与统计（`{taskId}` → `TaskSpeedHistory?`，`null` = 无记录）。
+    public static let daemonTaskSpeedHistory = "daemon.task.speedHistory"
     public static let daemonTaskCreate = "daemon.task.create"
     public static let daemonTaskPause = "daemon.task.pause"
     public static let daemonTaskResume = "daemon.task.resume"

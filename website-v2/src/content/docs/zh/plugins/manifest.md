@@ -3,7 +3,7 @@ title: Manifest 参考
 description: manifest.json 全部字段及校验规则、设置项 widget 矩阵、URL pattern 规则，以及安装与加载时的检查方式。
 section: plugins
 order: 10
-sourceHash: "87ab2144e183"
+sourceHash: "5266664e30c6"
 ---
 
 `manifest.json` 位于插件包根部，声明插件是什么、带有哪些入口脚本、向界面贡献什么，以及需要哪些能力。所有键名使用 camelCase。**未知键会被拒绝**——写错字段名会让整份 manifest 校验失败，而不是被静默忽略。
@@ -42,7 +42,7 @@ sourceHash: "87ab2144e183"
 }
 ```
 
-插件可以任意组合 `resolvers`、`subscriptions`、`hooks`、`auth`、`main` 与 `contributes`。一项都不声明的 manifest 合法，只是什么也不做。
+插件可以任意组合 `resolvers`、`subscriptions`、`hooks`、`interceptors`、`auth`、`main` 与 `contributes`。一项都不声明的 manifest 合法，只是什么也不做。
 
 ## 顶层字段
 
@@ -58,6 +58,7 @@ sourceHash: "87ab2144e183"
 | `resolvers` | 否 | array | **至多一项**。见 [`resolvers[0]`](#resolvers0)。 |
 | `subscriptions` | 否 | array | **至多一项**，订阅源 provider。见 [`subscriptions[0]`](#subscriptions0)。 |
 | `hooks` | 否 | object | 下载生命周期回调。见 [`hooks`](#hooks)。 |
+| `interceptors` | 否 | object | 任务拦截器（请求改写、分片过滤、后处理）。见 [`interceptors`](#interceptors)。 |
 | `auth` | 否 | object | 平台登录入口。见 [`auth`](#auth)。 |
 | `main` | 否 | object | 常驻脚本，承载可移植视图、命令与后台逻辑。见 [`main`](#main)。 |
 | `contributes` | 否 | object | 视图、命令与浏览器嗅探规则。见 [`contributes`](#contributes)。 |
@@ -150,6 +151,33 @@ hooks 在下载生命周期事件发生时运行你的代码。
 注意：同一插件如果还声明了 resolver，`onMetaProbed` 对它的任务永远不会触发——带 resolver 的任务直接跳过元数据探测。若你仍然订阅了它，FluxDown 会记一条警告日志。
 
 事件参数、`requestRetry`、ffmpeg/ffprobe 与 yt-dlp 后处理见[事件钩子指南](/docs/zh/plugins/hooks-guide/)。
+
+## `interceptors`
+
+拦截器让插件在引擎运行任务时读取并修改任务：请求身份、并发、流媒体分片、后处理与重试决策。每个插件至多声明一个 `interceptors` 对象，并且需要 `intercept` 权限（较高风险，见[权限](/docs/zh/plugins/permissions/)）。
+
+```json
+{
+  "permissions": ["intercept"],
+  "interceptors": {
+    "entry": "intercept.js",
+    "stages": ["prepare", "segments"],
+    "match": { "urls": ["https://example.com/*"] },
+    "timeoutMs": 3000,
+    "onFailure": "continue"
+  }
+}
+```
+
+| 字段 | 必填 | 规则 |
+|---|---|---|
+| `entry` | 是 | 脚本文件，安全相对路径。必须定义唯一的全局函数 `intercept(ctx)`，由它按 `ctx.stage` 分派。 |
+| `stages` | 是 | 非空且不重复，每项只能取 `prepare`、`probed`、`refresh`、`selectVariant`、`selectPeriod`、`segments`、`liveSegments`、`finalize`、`failed`。未知阶段会被拒绝并列出合法值。 |
+| `match` | 是 | URL 过滤器，pattern 规则同上，`urls` 不能为空。任务的原始 URL 或解析后的 URL 命中任一 pattern 即被拦截。 |
+| `timeoutMs` | 否 | 单次调用的墙钟超时，不能是 `0`。默认 5 秒，受硬顶限制；`liveSegments` 另被限制在 2 秒内，`refresh` 另被限制在 5 秒内。 |
+| `onFailure` | 否 | `continue`（默认）或 `fail`。`continue` 时该插件的报错或非法返回值会记入任务活动并被忽略；`fail` 时任务失败，错误为 `[插件] <identity>（<阶段>）：<消息>`。 |
+
+校验在 `auth` 之后进行，顺序为：`entry` 路径 → `stages` 非空 → 每个阶段都已知 → 阶段不重复 → `match.urls` 非空 → `timeoutMs ≠ 0` → `permissions` 含 `intercept`。入口文件必须在包内存在，并与 `hooks.entry` 一样在加载时读取。各阶段的上下文、返回值、`RequestPatch` 规则与 `defineInterceptors` 见[拦截器指南](/docs/zh/plugins/interceptors-guide/)。
 
 ## `auth`
 

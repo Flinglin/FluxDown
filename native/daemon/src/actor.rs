@@ -512,6 +512,11 @@ async fn run_actor(
         Ok(Err(error)) => tracing::error!(%error, "daemon task activity flush failed"),
         Err(_) => tracing::error!("daemon task activity flush timed out"),
     }
+    match tokio::time::timeout(Duration::from_secs(5), engine.db.flush_speed_history()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::error!(%error, "daemon speed history flush failed"),
+        Err(_) => tracing::error!("daemon speed history flush timed out"),
+    }
     selections.resolve_all_defaults();
     commands.close();
     while let Some(command) = commands.recv().await {

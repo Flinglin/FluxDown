@@ -3,7 +3,7 @@ title: 插件 API 参考
 description: 全部入口函数、flux.* 接口、JavaScript 运行环境、运行时限制，以及插件会遇到的错误信息。
 section: plugins
 order: 11
-sourceHash: "71426afded0f"
+sourceHash: "485aa6e33714"
 ---
 
 本页列出插件脚本能看到的一切：FluxDown 会调用的入口函数、注入的 `flux` 对象、JavaScript 运行环境、运行时限制，以及开发中会遇到的错误信息。这是一份参考手册；分步教程请看[你的第一个插件](/docs/zh/plugins/your-first-plugin/)、[TypeScript 项目](/docs/zh/plugins/typescript-project/)、[事件钩子指南](/docs/zh/plugins/hooks-guide/)、[账号登录指南](/docs/zh/plugins/auth-guide/)、[订阅源指南](/docs/zh/plugins/subscription-guide/)、[可移植界面指南](/docs/zh/plugins/ui-guide/)和[桌面原生界面指南](/docs/zh/plugins/desktop-ui-guide/)。
@@ -70,6 +70,7 @@ sourceHash: "71426afded0f"
 | `fileName` | string | 覆盖保存的文件名；为空时忽略。 |
 | `totalBytes` | integer | 文件大小（字节）。**仅当 `ephemeral` 为 `true` 时**才被采用，作为跳过探测后的大小提示（未知或 `0` 视为「未知」）。其他情况下被忽略：FluxDown 会自己探测真实大小。被选中变体的 `totalBytes` 会先覆盖这个字段。 |
 | `extraHeaders` | object | 下载解析后链接时要发送的请求头，会替换任务原本捕获的请求头。 |
+| `request` | object | 应用于任务本次运行的 [`RequestPatch`](/docs/zh/plugins/interceptors-guide/#requestpatch)，规则与 `prepare` 阶段相同（同主机 `url`、请求头、Cookie、User-Agent、`segments` 等）。非法补丁会让任务失败，错误为 `[插件] <identity>: <消息>`。每次运行都会应用，不会存库。同时返回 `extraHeaders` 与 `request` 时，先由 `extraHeaders` 替换请求头表，再叠加 `request`。 |
 | `ephemeral` | boolean | `true` 表示链接是一次性 / 防盗链的：跳过元数据探测（代价是续传完整性校验变弱）。默认 `false`：正常探测并保留基于 ETag 的续传校验。 |
 | `rangeSupported` | boolean | `true` 表示你保证解析后的主机支持 HTTP Range 请求（例如 googlevideo）。与 `ephemeral` 同时使用时，FluxDown 仍然跳过探测，但会立即规划完整的多段下载，而不是保守的单流起步。默认 `false`：没有探测时，Range 能力由首个响应判断。 |
 | `variants` | array | 多个画质 / 格式选项，见[变体](#变体variants)。 |
@@ -175,6 +176,10 @@ GPUI 新建下载窗口在创建任务前，会对单个本地 GET 链接做预�
 两个例外：[`flux.task.requestRetry`](#fluxtaskrequestretryopts)（在 `onError` 中）和 [`flux.task.recordArtifact`](#fluxtaskrecordartifactname)（在 `onDone` 中）。
 
 `onDone` 是唯一有产物文件的钩子：`flux.ffmpeg` / `flux.ffprobe` 可以在其中运行，被限制在完成文件所在的文件夹里。
+
+### `intercept(ctx)`
+
+任务拦截器入口，仅当清单声明了 `interceptors.entry`（且 `permissions` 含 `"intercept"`）时才会被调用。同一个全局函数处理所有已订阅的阶段，按 `ctx.stage` 分派（`prepare`、`probed`、`refresh`、`selectVariant`、`selectPeriod`、`segments`、`liveSegments`、`finalize`、`failed`）。返回 `null` / `undefined` 表示不做改动。上下文、返回值与 `RequestPatch` 规则见[拦截器指南](/docs/zh/plugins/interceptors-guide/)；TypeScript 中使用 `fluxdown-plugin-sdk/runtime` 的 `defineInterceptors`。调用与 resolve 共用并发池和熔断；声明了 `ffmpeg` 或 `ytdlp` 权限的插件在 `finalize` 阶段的调用使用更长的后处理预算。
 
 ### `authenticate(ctx)`
 

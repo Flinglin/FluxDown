@@ -162,6 +162,7 @@ The engine reads fixed globals after evaluating a script: `resolve`, `onStart` /
 |---|---|---|
 | `defineResolver(fn: ResolveFn)` | `globalThis.resolve` | `resolvers[].entry` |
 | `defineHooks(handlers: HookHandlers)` | every function-valued property of `handlers` as a global with the same name: `onStart`, `onError`, `onDone`, `onMetaProbed`, `onCancel` | `hooks.entry`; which events fire is set by `hooks.events` |
+| `defineInterceptors(handlers: InterceptHandlers)` | `globalThis.intercept`, dispatching on `ctx.stage` to the same-named handler in `handlers` (`prepare`, `probed`, `refresh`, `selectVariant`, `selectPeriod`, `segments`, `liveSegments`, `finalize`, `failed`); returns `undefined` when there is no handler | `interceptors.entry` (needs the `intercept` permission; which stages fire is set by `interceptors.stages`) |
 | `defineAuth(fn: AuthFn)` | `globalThis.authenticate` | `auth.entry` (needs the `auth` permission) |
 | `defineSubscription(fn: SubscribeFn)` | `globalThis.subscribe` | `subscriptions[].entry` |
 | `defineMain(setup: (flux: MainFlux) => void)` | nothing — it calls `setup(flux)` **immediately and synchronously** with the `main`-script facade (`MainFlux`), so views, commands, rpc handlers, events and timers are registered while the script is evaluated | `main.entry` |

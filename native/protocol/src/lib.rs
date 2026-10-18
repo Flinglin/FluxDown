@@ -20,7 +20,7 @@ pub mod task_activity;
 pub mod update_prompt;
 pub use task_activity::{
     TaskActivityDto, TaskActivityPage, TaskActivityQuery, TaskRuntimeDto, TaskSegmentDto,
-    TaskSourceBytesDto,
+    TaskSourceBytesDto, TaskSpeedHistoryDto, TaskSpeedHistoryQuery,
 };
 
 pub use agent::{

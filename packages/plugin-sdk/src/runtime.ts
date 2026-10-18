@@ -5,6 +5,8 @@
 import type {
   AuthFn,
   HookHandlers,
+  InterceptContext,
+  InterceptHandlers,
   MainFlux,
   ResolveFn,
   SubscribeFn,
@@ -40,6 +42,15 @@ export function defineAuth(fn: AuthFn): AuthFn {
 export function defineSubscription(fn: SubscribeFn): SubscribeFn {
   install("subscribe", fn);
   return fn;
+}
+
+/** Installs `globalThis.intercept`, dispatching by `ctx.stage` (manifest `interceptors.entry`). */
+export function defineInterceptors(handlers: InterceptHandlers): InterceptHandlers {
+  install("intercept", (ctx: InterceptContext) => {
+    const h = handlers[ctx.stage] as ((c: InterceptContext) => unknown) | undefined;
+    return h ? h(ctx) : undefined;
+  });
+  return handlers;
 }
 
 /**

@@ -362,6 +362,8 @@ export interface ResolveResult {
   rangeSupported?: boolean;
   variants?: ResolveVariant[];
   defaultVariantIndex?: number;
+  /** Request overlay applied to this task's every run (same shape as the `prepare` result). */
+  request?: RequestPatch;
   /** Multi-file listing; mutually exclusive with `url` / `variants` / `audioUrl`. */
   manifest?: { name?: string; items: ManifestItem[] };
 }
@@ -423,6 +425,249 @@ export type ResolveFn = (ctx: ResolveContext) => Awaitable<ResolveResult | null 
 export type AuthFn = (ctx: AuthContext) => Awaitable<AuthResult>;
 /** Returns the normalized subscription payload (at most 1000 items). */
 export type SubscribeFn = (ctx: SubscribeContext) => Awaitable<SubscribeResult>;
+
+// ---- Interceptor plane (manifest `interceptors`; entry `globalThis.intercept(ctx)`) ----
+
+export type InterceptStage =
+  | "prepare"
+  | "probed"
+  | "refresh"
+  | "selectVariant"
+  | "selectPeriod"
+  | "segments"
+  | "liveSegments"
+  | "finalize"
+  | "failed";
+
+/** Same shape as the protocol `RequestBody`. */
+export type CapturedBody =
+  | { kind: "formData"; fields: Record<string, string[]> }
+  | { kind: "urlencoded"; raw: string }
+  | { kind: "raw"; bytesB64: string; contentType?: string | null };
+
+export interface OriginHeaders {
+  origin: string;
+  headers: Record<string, string>;
+}
+
+export interface InterceptTask {
+  id: string;
+  /** Request URL of this run (after resolver rewrite). */
+  url: string;
+  /** Original persisted URL of the task. */
+  sourceUrl: string;
+  fileName: string;
+  saveDir: string;
+  protocol: "http" | "ftp" | "hls" | "dash";
+  /** Audio/video track-pair task (has an audio URL). */
+  trackPair: boolean;
+  isResume: boolean;
+}
+
+export interface InterceptRequest {
+  url: string;
+  method: string;
+  cookies: string;
+  referrer: string;
+  /** Effective UA: the one in request headers, else the task/queue/global resolved UA. */
+  userAgent: string;
+  headers: Record<string, string>;
+  body: CapturedBody | null;
+  originHeaders: OriginHeaders[];
+  /** Read-only. */
+  proxyUrl: string;
+  /** Read-only. */
+  ignoreTlsErrors: boolean;
+}
+
+/** 0 = automatic / unlimited. */
+export interface InterceptConnections {
+  segments: number;
+  maxConnections: number;
+  autoMaxConnections: number;
+}
+
+export interface SegmentItem {
+  /** HLS: absolute media sequence; DASH: 0-based index in the track's media segment list (init excluded). */
+  id: number;
+  uri: string;
+  duration: number | null;
+  byteRange: { offset: number; length: number } | null;
+  discontinuity: boolean;
+  title: string | null;
+  /** RFC 3339. */
+  programDateTime: string | null;
+  dateRange: {
+    id: string;
+    class: string | null;
+    startDate: string;
+    endDate: string | null;
+    duration: number | null;
+    plannedDuration: number | null;
+    endOnNext: boolean;
+    attributes: Record<string, string>;
+  } | null;
+  /** Raw tags the engine does not interpret, e.g. `"#EXT-X-CUE-OUT:30"`. */
+  tags: string[];
+  key: { method: "AES-128"; uri: string; iv: string | null } | null;
+  map: { uri: string; byteRange: { offset: number; length: number } | null } | null;
+  /** DASH SegmentTemplate only. */
+  number: number | null;
+  time: number | null;
+}
+
+export interface InterceptVariant {
+  index: number;
+  bandwidth: number;
+  width: number | null;
+  height: number | null;
+  uri: string;
+  id: string | null;
+  codecs: string | null;
+}
+
+export interface InterceptPeriod {
+  index: number;
+  id: string | null;
+  startSeconds: number | null;
+  durationSeconds: number | null;
+  hasVideo: boolean;
+  hasAudio: boolean;
+}
+
+export type InterceptContext =
+  | { stage: "prepare"; task: InterceptTask; request: InterceptRequest; connections: InterceptConnections }
+  | {
+      stage: "probed";
+      task: InterceptTask;
+      request: InterceptRequest;
+      connections: InterceptConnections;
+      probe: {
+        totalBytes: number;
+        supportsRange: boolean;
+        fileName: string;
+        contentType: string;
+        etag: string;
+        lastModified: string;
+      };
+    }
+  | { stage: "selectVariant"; task: InterceptTask; format: "hls" | "dash"; variants: InterceptVariant[] }
+  | {
+      stage: "selectPeriod";
+      task: InterceptTask;
+      /** MPD text; empty when over 4 MiB (see `manifestTextOmitted`). */
+      manifestText: string;
+      manifestTextOmitted: boolean;
+      periods: InterceptPeriod[];
+    }
+  | {
+      stage: "refresh";
+      task: InterceptTask;
+      /** Identity of the rejected request (`url` is the actual request address). */
+      request: InterceptRequest;
+      /** Rejecting HTTP status (401 / 403 / 410). */
+      status: number;
+      /** Successful refreshes already done in this run. */
+      refreshCount: number;
+    }
+  | {
+      stage: "segments" | "liveSegments";
+      task: InterceptTask;
+      format: "hls" | "dash";
+      track: "video" | "audio";
+      playlistUrl: string;
+      manifestText: string;
+      manifestTextOmitted: boolean;
+      mediaSequence: number | null;
+      targetDuration: number | null;
+      periodIndex: number | null;
+      representationId: string | null;
+      segments: SegmentItem[];
+    }
+  | {
+      stage: "finalize";
+      task: InterceptTask;
+      filePath: string;
+      fileName: string;
+      saveDir: string;
+      totalBytes: number;
+      audioPath: string | null;
+    }
+  | {
+      stage: "failed";
+      task: InterceptTask;
+      errorMessage: string;
+      httpStatus: number | null;
+      autoRetryCount: number;
+    };
+
+/** `prepare` result; also the shape of a resolver result's `request` field. */
+export interface RequestPatch {
+  url?: string;
+  method?: string;
+  body?: CapturedBody;
+  clearBody?: boolean;
+  cookies?: string;
+  referrer?: string;
+  userAgent?: string;
+  setHeaders?: Record<string, string>;
+  removeHeaders?: string[];
+  originHeaders?: OriginHeaders[];
+  segments?: number;
+  maxConnections?: number;
+  /**
+   * HTTP only, same meaning as in a resolver result: skip the metadata probe for this run
+   * (use for one-time credentials a probe would burn).
+   */
+  ephemeral?: boolean;
+  /** HTTP only; requires `ephemeral: true`; must be > 0. Size hint used instead of probing. */
+  totalBytes?: number;
+  /** HTTP only; requires `ephemeral: true`. Whether the server is known to support ranges. */
+  rangeSupported?: boolean;
+  fileName?: string;
+}
+/**
+ * `refresh` result: the credential subset of `RequestPatch`. `url` is only allowed for HTTP
+ * tasks (same host, same protocol class).
+ */
+export type RefreshPatch = Pick<
+  RequestPatch,
+  "url" | "cookies" | "referrer" | "userAgent" | "setHeaders" | "removeHeaders" | "originHeaders"
+>;
+export interface ProbedResult {
+  segments?: number;
+  maxConnections?: number;
+  fail?: string;
+}
+export interface SelectResult {
+  select?: number;
+}
+export interface SegmentsResult {
+  drop?: number[];
+  /** Replace segment URIs (e.g. per-segment signed addresses); relative values resolve against `playlistUrl`. */
+  rewrite?: { id: number; uri: string }[];
+}
+export interface FinalizeResult {
+  fail?: string;
+  replaceWith?: string;
+}
+export interface FailedResult {
+  retry?: { delayMs?: number };
+}
+
+type InterceptCtx<S extends InterceptStage> = Extract<InterceptContext, { stage: S }>;
+
+export interface InterceptHandlers {
+  prepare?(ctx: InterceptCtx<"prepare">): Awaitable<RequestPatch | null | undefined>;
+  probed?(ctx: InterceptCtx<"probed">): Awaitable<ProbedResult | null | undefined>;
+  refresh?(ctx: InterceptCtx<"refresh">): Awaitable<RefreshPatch | null | undefined>;
+  selectVariant?(ctx: InterceptCtx<"selectVariant">): Awaitable<SelectResult | null | undefined>;
+  selectPeriod?(ctx: InterceptCtx<"selectPeriod">): Awaitable<SelectResult | null | undefined>;
+  segments?(ctx: InterceptCtx<"segments">): Awaitable<SegmentsResult | null | undefined>;
+  liveSegments?(ctx: InterceptCtx<"liveSegments">): Awaitable<SegmentsResult | null | undefined>;
+  finalize?(ctx: InterceptCtx<"finalize">): Awaitable<FinalizeResult | null | undefined>;
+  failed?(ctx: InterceptCtx<"failed">): Awaitable<FailedResult | null | undefined>;
+}
 
 export interface HookHandlers {
   onStart?(ev: Extract<FluxEvent, { event: "start" }>): Awaitable<void>;

@@ -16,6 +16,8 @@ object HostMethod {
     const val daemonTaskList = "daemon.task.list"
     const val daemonTaskGet = "daemon.task.get"
     const val daemonTaskActivity = "daemon.task.activity"
+    /** 任务全生命周期速度曲线与统计（`TaskSpeedHistoryQuery` → `TaskSpeedHistoryDto | null`）；旧主机无此方法。 */
+    const val daemonTaskSpeedHistory = "daemon.task.speedHistory"
     const val daemonTaskCreate = "daemon.task.create"
     const val daemonTaskPause = "daemon.task.pause"
     const val daemonTaskResume = "daemon.task.resume"

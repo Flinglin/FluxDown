@@ -43,6 +43,8 @@ pub enum PluginEntryKind {
     Subscription,
     /// 常驻宿主入口：manifest `main.entry`，顶层脚本注册视图/命令/RPC。
     Main,
+    /// 拦截入口：`globalThis.intercept`。
+    Intercept,
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +150,9 @@ pub struct ResolveResult {
     /// fail-closed 强制）。仅初段解析（[`ResolveRequest::resolver_item`] 为空）
     /// 可返回；二段返回会被拒绝（防递归裂变）。`None` = 单直链旧语义。
     pub manifest: Option<ResolveManifest>,
+    /// 请求改写补丁（与拦截器 `prepare` 返回值同形），每次运行都重新应用，
+    /// 失败即任务失败。`extraHeaders` 作为整表替换并入同一补丁。
+    pub request: Option<crate::intercept::RequestPatch>,
 }
 
 /// [`ResolveResult::manifest`] —— 插件返回的多文件清单（网盘文件夹/多规格
@@ -684,6 +689,22 @@ pub trait ScriptRuntime: Send + Sync {
         budget: ExecutionBudget,
         host: HostContext,
     ) -> Result<Option<ResolveResult>, PluginError>;
+
+    /// 调用 `globalThis.intercept(ctx)`（下载拦截平面）。`Ok(None)` = 不改动；
+    /// `Ok(Some(raw))` 为插件返回值的 JSON 文本。`long_running` 走外部工具信号量
+    /// （finalize 阶段可能运行 ffmpeg / yt-dlp 数十分钟）。
+    #[allow(clippy::too_many_arguments)]
+    async fn invoke_intercept(
+        &self,
+        plugin: &PluginScript,
+        arg_json: String,
+        settings_json: String,
+        bridge: Arc<dyn PluginBridge>,
+        budget: ExecutionBudget,
+        host: HostContext,
+        long_running: bool,
+        artifact_task_id: Option<String>,
+    ) -> Result<Option<String>, PluginError>;
 
     /// 调用 `globalThis.authenticate(ctx)`，返回一次登录交互状态。
     async fn invoke_auth(

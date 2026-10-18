@@ -41,7 +41,7 @@ This page is the field-by-field reference. For a guided walkthrough see [Your fi
 }
 ```
 
-A plugin may declare any combination of `resolvers`, `subscriptions`, `hooks`, `auth`, `main` and `contributes`. A manifest that declares none of them is valid but does nothing.
+A plugin may declare any combination of `resolvers`, `subscriptions`, `hooks`, `interceptors`, `auth`, `main` and `contributes`. A manifest that declares none of them is valid but does nothing.
 
 ## Top-level fields
 
@@ -57,6 +57,7 @@ A plugin may declare any combination of `resolvers`, `subscriptions`, `hooks`, `
 | `resolvers` | no | array | **At most one entry.** See [`resolvers[0]`](#resolvers0). |
 | `subscriptions` | no | array | **At most one entry.** Subscription provider. See [`subscriptions[0]`](#subscriptions0). |
 | `hooks` | no | object | Download lifecycle callbacks. See [`hooks`](#hooks). |
+| `interceptors` | no | object | Task interceptors (request rewrite, segment filtering, post-processing). See [`interceptors`](#interceptors). |
 | `auth` | no | object | Platform login entry. See [`auth`](#auth). |
 | `main` | no | object | Always-on script for portable views, commands and background logic. See [`main`](#main). |
 | `contributes` | no | object | Views, commands and browser sniff rules. See [`contributes`](#contributes). |
@@ -149,6 +150,33 @@ Hooks run your code on download lifecycle events.
 Caveat: if the same plugin also declares a resolver, `onMetaProbed` never fires for its tasks — resolver tasks skip the metadata probe entirely. FluxDown logs a warning if you subscribe to it anyway.
 
 Event payloads, `requestRetry`, ffmpeg/ffprobe and yt-dlp post-processing are covered in the [Hooks guide](/docs/en/plugins/hooks-guide/).
+
+## `interceptors`
+
+Interceptors let a plugin read and change a task while the engine runs it — request identity, concurrency, streaming segments, post-processing and retry decisions. At most one `interceptors` object per plugin. It requires the `intercept` permission (elevated risk, see [Permissions](/docs/en/plugins/permissions/)).
+
+```json
+{
+  "permissions": ["intercept"],
+  "interceptors": {
+    "entry": "intercept.js",
+    "stages": ["prepare", "segments"],
+    "match": { "urls": ["https://example.com/*"] },
+    "timeoutMs": 3000,
+    "onFailure": "continue"
+  }
+}
+```
+
+| Field | Required | Rules |
+|---|---|---|
+| `entry` | yes | Script file, safe relative path. Must define the single global `intercept(ctx)`; it dispatches on `ctx.stage`. |
+| `stages` | yes | Non-empty, no duplicates. Each item one of `prepare`, `probed`, `refresh`, `selectVariant`, `selectPeriod`, `segments`, `liveSegments`, `finalize`, `failed`. An unknown name is rejected with the list of valid ones. |
+| `match` | yes | URL filter, same pattern rules; `urls` must be non-empty. A task is intercepted when a pattern matches its original URL or its resolved URL. |
+| `timeoutMs` | no | Wall-clock limit of one call, must not be `0`. Default 5 s, capped by the hard ceiling; `liveSegments` is further capped at 2 s and `refresh` at 5 s. |
+| `onFailure` | no | `continue` (default) or `fail`. With `continue`, an error or invalid return value of this plugin is noted in the task activity and ignored; with `fail`, the task fails with `[插件] <identity>（<stage>）：<message>`. |
+
+Validation runs after `auth`, in this order: `entry` path → `stages` non-empty → every stage known → no duplicate stage → `match.urls` non-empty → `timeoutMs ≠ 0` → `permissions` includes `intercept`. The entry file must exist in the package and is read at load time like `hooks.entry`. Stage contexts, return values, the `RequestPatch` rules and `defineInterceptors` are in the [Interceptors guide](/docs/en/plugins/interceptors-guide/).
 
 ## `auth`
 

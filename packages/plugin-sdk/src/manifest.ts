@@ -14,6 +14,18 @@ export const VALID_PERMISSIONS = [
   "browserRules",
   "desktop",
   "background",
+  "intercept",
+] as const;
+export const VALID_INTERCEPT_STAGES = [
+  "prepare",
+  "probed",
+  "refresh",
+  "selectVariant",
+  "selectPeriod",
+  "segments",
+  "liveSegments",
+  "finalize",
+  "failed",
 ] as const;
 export type PluginPermission = (typeof VALID_PERMISSIONS)[number];
 
@@ -483,7 +495,7 @@ export function validateManifest(
   if (!isObject(manifest)) return { ok: false, errors: ["manifest.json 须为 JSON 对象"] };
   unknownKeys(errors, "manifest", manifest, [
     "identity", "name", "version", "description", "homepage", "icon", "minAppVersion",
-    "resolvers", "subscriptions", "hooks", "auth", "main", "contributes", "settings", "permissions",
+    "resolvers", "subscriptions", "hooks", "interceptors", "auth", "main", "contributes", "settings", "permissions",
   ]);
 
   if (!isValidIdentity(manifest.identity)) {
@@ -587,6 +599,36 @@ export function validateManifest(
     }
   }
 
+  if (manifest.interceptors !== undefined && manifest.interceptors !== null) {
+    const ic = manifest.interceptors;
+    if (!isObject(ic)) errors.push("interceptors 须为对象");
+    else {
+      unknownKeys(errors, "interceptors", ic, ["entry", "stages", "match", "timeoutMs", "onFailure"]);
+      checkEntry(errors, "interceptors entry", ic.entry, fileSet, strict);
+      if (!stringArray(ic.stages) || ic.stages.length === 0) {
+        errors.push("interceptors.stages 不可为空");
+      } else {
+        const seenStages = new Set<string>();
+        for (const stage of ic.stages) {
+          if (!(VALID_INTERCEPT_STAGES as readonly string[]).includes(stage)) {
+            errors.push(`未知拦截阶段 '${stage}'，合法：${VALID_INTERCEPT_STAGES.join(", ")}`);
+          } else if (seenStages.has(stage)) {
+            errors.push(`interceptors.stages 重复：'${stage}'`);
+          }
+          seenStages.add(stage);
+        }
+      }
+      checkMatch(errors, "interceptors match", ic.match);
+      checkTimeout(errors, "interceptors", ic.timeoutMs);
+      if (ic.onFailure !== undefined && ic.onFailure !== null && ic.onFailure !== "continue" && ic.onFailure !== "fail") {
+        errors.push("interceptors.onFailure 须为 continue 或 fail");
+      }
+      if (!hasPermission(permissions, "intercept")) {
+        errors.push("声明 interceptors 时 permissions 必须包含 intercept");
+      }
+    }
+  }
+
   checkMain(errors, manifest, fileSet, permissions);
   checkContributes(errors, manifest, fileSet, permissions);
 
@@ -603,7 +645,7 @@ export function validateManifest(
 export function riskOf(manifest: { permissions?: readonly string[] | null }): PluginRisk {
   const permissions = manifest.permissions ?? [];
   if (permissions.includes("desktop")) return "full";
-  const elevated = ["ffmpeg", "ytdlp", "auth", "tasks", "browserRules", "background"];
+  const elevated = ["ffmpeg", "ytdlp", "auth", "tasks", "browserRules", "background", "intercept"];
   return permissions.some((p) => elevated.includes(p)) ? "elevated" : "standard";
 }
 

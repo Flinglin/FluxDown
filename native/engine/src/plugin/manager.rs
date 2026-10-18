@@ -34,6 +34,8 @@ use super::runtime::{
 
 #[path = "host_manager.rs"]
 mod host_manager;
+#[path = "interceptors.rs"]
+mod interceptors;
 #[path = "routing.rs"]
 pub mod routing;
 
@@ -125,6 +127,8 @@ pub struct LoadedPlugin {
     resolver_entry: Option<PathBuf>,
     /// hooks 入口绝对路径（若声明）。
     hooks_entry: Option<PathBuf>,
+    /// interceptors 入口绝对路径（若声明）。
+    intercept_entry: Option<PathBuf>,
     /// auth 入口绝对路径（若声明）。
     auth_entry: Option<PathBuf>,
     /// subscription provider 入口绝对路径（若声明）。
@@ -132,6 +136,7 @@ pub struct LoadedPlugin {
     /// 非 dev 模式的缓存源码（加载时读入）。
     resolver_cache: Option<String>,
     hooks_cache: Option<String>,
+    intercept_cache: Option<String>,
     auth_cache: Option<String>,
     subscription_cache: Option<String>,
     /// `main` 入口绝对路径（若声明）。
@@ -154,6 +159,13 @@ impl LoadedPlugin {
         match (&self.hooks_entry, self.dev) {
             (Some(p), true) => tokio::fs::read_to_string(p).await.ok(),
             (Some(_), false) => self.hooks_cache.clone(),
+            (None, _) => None,
+        }
+    }
+    async fn intercept_source(&self) -> Option<String> {
+        match (&self.intercept_entry, self.dev) {
+            (Some(p), true) => tokio::fs::read_to_string(p).await.ok(),
+            (Some(_), false) => self.intercept_cache.clone(),
             (None, _) => None,
         }
     }
@@ -459,6 +471,7 @@ impl PluginManager {
 
         let resolver_entry = manifest.resolvers.first().map(|r| dir.join(&r.entry));
         let hooks_entry = manifest.hooks.as_ref().map(|h| dir.join(&h.entry));
+        let intercept_entry = manifest.interceptors.as_ref().map(|i| dir.join(&i.entry));
         let auth_entry = manifest.auth.as_ref().map(|a| dir.join(&a.entry));
         let subscription_entry = manifest.subscriptions.first().map(|s| dir.join(&s.entry));
 
@@ -541,14 +554,22 @@ impl PluginManager {
         let main_source = read_entry(dir, manifest.main.as_ref().map(|m| m.entry.as_str()))
             .await
             .map_err(fail)?;
-        let (resolver_cache, hooks_cache, auth_cache, subscription_cache) = if dev {
-            (None, None, None, None)
+        let intercept_source = read_entry(
+            dir,
+            manifest.interceptors.as_ref().map(|i| i.entry.as_str()),
+        )
+        .await
+        .map_err(fail)?;
+        let (resolver_cache, hooks_cache, auth_cache, subscription_cache, intercept_cache) = if dev
+        {
+            (None, None, None, None, None)
         } else {
             (
                 resolver_source,
                 hooks_source,
                 auth_source,
                 subscription_source,
+                intercept_source,
             )
         };
 
@@ -591,10 +612,12 @@ impl PluginManager {
             disabled_reason,
             resolver_entry,
             hooks_entry,
+            intercept_entry,
             auth_entry,
             subscription_entry,
             resolver_cache,
             hooks_cache,
+            intercept_cache,
             auth_cache,
             subscription_cache,
             main_entry,
@@ -2601,6 +2624,7 @@ mod tests {
             resolvers: Vec::new(),
             subscriptions: Vec::new(),
             hooks: None,
+            interceptors: None,
             auth: None,
             main: None,
             contributes: None,
@@ -2618,10 +2642,12 @@ mod tests {
             disabled_reason: super::DisabledReason::None,
             resolver_entry: None,
             hooks_entry: None,
+            intercept_entry: None,
             auth_entry: None,
             subscription_entry: None,
             resolver_cache: None,
             hooks_cache: None,
+            intercept_cache: None,
             auth_cache: None,
             subscription_cache: None,
             main_entry: None,

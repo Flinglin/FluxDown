@@ -75,8 +75,8 @@ describe("misc rules", () => {
     const good = { ...base, settings: [{ key: "k", title: "K", type: "number", min: 1, max: 5, default: "3" }] };
     expect(validateManifest(good, new Set()).ok).toBe(true);
   });
-  test("seven permissions", () => {
-    expect(VALID_PERMISSIONS).toHaveLength(7);
+  test("eight permissions", () => {
+    expect(VALID_PERMISSIONS).toHaveLength(8);
   });
   test("ipv6 network hosts", () => {
     const m = (host: string) => ({

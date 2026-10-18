@@ -69,6 +69,7 @@ Return `null` or `undefined` to pass through: FluxDown downloads `ctx.url` uncha
 | `fileName` | string | Override the saved file name. Ignored when empty. |
 | `totalBytes` | integer | File size in bytes. Used **only when `ephemeral` is `true`**, as the size hint for the skipped probe (an unknown or `0` size becomes "unknown"). Otherwise ignored: FluxDown probes the real size itself. A selected variant's `totalBytes` overrides this field first. |
 | `extraHeaders` | object | Headers to send when downloading the resolved link. They replace the headers captured with the task. |
+| `request` | object | A [`RequestPatch`](/docs/en/plugins/interceptors-guide/#requestpatch) applied to this run of the task — same rules as the `prepare` stage (same-host `url`, headers, cookies, User-Agent, `segments`, …). An invalid patch fails the task with `[插件] <identity>: <message>`. Applied on every run, never stored. If both `extraHeaders` and `request` are returned, `extraHeaders` replaces the header table first and `request` is applied on top. |
 | `ephemeral` | boolean | `true` = the link is one-shot / anti-hotlinked: skip the metadata probe (at the cost of weaker resume-integrity checks). Default `false`: probe normally and keep ETag-based resume validation. |
 | `rangeSupported` | boolean | `true` = you guarantee the resolved host honours HTTP Range requests (e.g. googlevideo). Combined with `ephemeral`, FluxDown still skips the probe but plans a full multi-segment download right away instead of the conservative single-stream start. Default `false`: without a probe, Range capability is learned from the first response. |
 | `variants` | array | Multiple quality/format choices — see [Variants](#variants). |
@@ -174,6 +175,10 @@ Delivery and failure behavior:
 The two exceptions: [`flux.task.requestRetry`](#fluxtaskrequestretryopts) (inside `onError`) and [`flux.task.recordArtifact`](#fluxtaskrecordartifactname) (inside `onDone`).
 
 `onDone` is the only hook with a produced file: `flux.ffmpeg` / `flux.ffprobe` can run there, jailed to the folder of the finished file.
+
+### `intercept(ctx)`
+
+The task interceptor entry point, called only when the manifest declares `interceptors.entry` (and `permissions` includes `"intercept"`). One global function handles every subscribed stage; dispatch on `ctx.stage` (`prepare`, `probed`, `refresh`, `selectVariant`, `selectPeriod`, `segments`, `liveSegments`, `finalize`, `failed`). Return `null` / `undefined` for no change. Contexts, results and the `RequestPatch` rules are in the [interceptors guide](/docs/en/plugins/interceptors-guide/); in TypeScript use `defineInterceptors` from `fluxdown-plugin-sdk/runtime`. Calls share the resolve pool and circuit breaker; `finalize` calls from a plugin with the `ffmpeg` or `ytdlp` permission run under the longer post-processing budget.
 
 ### `authenticate(ctx)`
 
