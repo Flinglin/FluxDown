@@ -784,6 +784,7 @@
   "showCompletionWindowDesc": "你开始的下载完成后弹出完成窗口，可直接打开文件或所在文件夹",
   "progressWindowTitle": "下载进度",
   "progressWindowStop": "停止",
+  "progressWindowOpenMain": "打开主界面",
   "progressWindowSegments": "{n} 个分段",
   "progressWindowPartsShow": "显示分段详情",
   "progressWindowPartsHide": "收起分段详情",

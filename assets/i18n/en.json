@@ -784,6 +784,7 @@
   "showCompletionWindowDesc": "When a download you started finishes, show a window to open the file or its folder",
   "progressWindowTitle": "Download progress",
   "progressWindowStop": "Stop",
+  "progressWindowOpenMain": "Open main window",
   "progressWindowSegments": "{n} segments",
   "progressWindowPartsShow": "Show segments",
   "progressWindowPartsHide": "Hide segments",
