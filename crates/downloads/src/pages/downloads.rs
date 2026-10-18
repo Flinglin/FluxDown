@@ -21,7 +21,7 @@ use crate::{
             DownloadTableDelegate, SelectionSummary, TableFilter, ToolbarCommand,
             spawn_midnight_refresh,
         },
-        title_bar::{DownloadTitleBar, left_edge_probe},
+        title_bar::DownloadTitleBar,
     },
     controller::{DownloadsCommand, DownloadsController, DownloadsPort, ResumeTargets},
     deletion::{
@@ -47,8 +47,7 @@ use fluxdown_ui_i18n::Translator;
 use gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity,
     ExternalPaths, FocusHandle, FontWeight, InteractiveElement as _, IntoElement, ParentElement,
-    PathPromptOptions, Pixels, Render, SharedString, Styled, Window, div,
-    prelude::FluentBuilder as _, px,
+    PathPromptOptions, Render, SharedString, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     Disableable as _, Icon, ResizableState, WindowExt as _,
@@ -211,8 +210,6 @@ pub struct DownloadView {
     pub(crate) detail_resizable_state: Entity<ResizableState>,
     /// 上次渲染时的选中投影；表格选中变化时与之比较，变了才重绘本页（浮动选择条）。
     pub(crate) selection_summary: Cell<SelectionSummary>,
-    /// 内容区（侧栏右侧）左缘的窗口横坐标；顶栏插槽据此把「新建」主按钮与内容区左对齐。
-    pub(crate) content_left: Pixels,
     /// 文件跟踪重扫节流（主窗口获焦触发）。
     file_rescan: RescanThrottle,
     /// 事件驱动刷新的合并闸门（≤30Hz、同批事件一次刷新）。
@@ -348,7 +345,6 @@ impl DownloadView {
             detail: None,
             detail_resizable_state: cx.new(|_| ResizableState::default()),
             selection_summary: Cell::new(SelectionSummary::default()),
-            content_left: px(0.),
             file_rescan: RescanThrottle::default(),
             refresh_gate: RefreshGate::default(),
             refreshed_structure: u64::MAX,
@@ -2262,11 +2258,6 @@ impl DownloadView {
             .min_h_0()
             .bg(surface)
             .child(body)
-            .child(left_edge_probe(
-                cx.weak_entity(),
-                |view| view.content_left,
-                |view, left| view.content_left = left,
-            ))
             .into_any_element()
     }
 
@@ -2429,6 +2420,7 @@ impl Render for DownloadView {
             .on_action(cx.listener(Self::on_rename_selected))
             .on_action(cx.listener(Self::on_change_selected_url))
             .on_action(cx.listener(Self::on_change_selected_segments))
+            .on_action(cx.listener(Self::on_verify_selected))
             .on_action(cx.listener(Self::on_toggle_detail_panel))
             .on_drop(cx.listener(Self::on_paths_dropped))
             .drag_over::<ExternalPaths>(|style, _, _, cx| {

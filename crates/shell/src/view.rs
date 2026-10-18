@@ -1,14 +1,14 @@
 use std::{collections::HashSet, rc::Rc};
 
-use fluxdown_ui_components::{FluxIcon, SidebarState, toolbar_action_button};
+use fluxdown_ui_components::{FluxIcon, SidebarState, sidebar_toggle_button};
 use fluxdown_ui_i18n::Translator;
 use fluxdown_ui_theme::active_theme;
 use gpui::{
     AnyElement, AnyView, AnyWindowHandle, App, Context, Entity, FontWeight,
-    InteractiveElement as _, IntoElement, MouseButton, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement as _, Styled, Window, div, img, percentage, px,
+    InteractiveElement as _, IntoElement, ParentElement, Pixels, Render, SharedString, Styled,
+    Window, div, img, px,
 };
-use gpui_component::{Icon, TitleBar, h_flex, tooltip::Tooltip, v_flex};
+use gpui_component::{Icon, TitleBar, h_flex, v_flex};
 use serde_json::Value;
 
 use crate::assets::APP_LOGO_PATH;
@@ -607,28 +607,7 @@ impl ShellView {
             "collapseSidebar"
         };
         let label = SharedString::from(self.translator.read(cx).text(key).to_owned());
-        let state = sidebar.clone();
-        div()
-            .id("shell-sidebar-toggle-tooltip")
-            .flex_none()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .tooltip({
-                let label = label.clone();
-                move |window, cx| Tooltip::new(label.clone()).build(window, cx)
-            })
-            .child(
-                toolbar_action_button(
-                    "shell-sidebar-toggle",
-                    label,
-                    Icon::new(FluxIcon::PanelRight)
-                        .size(active_theme(cx).extended().icon.md)
-                        .rotate(percentage(0.5)),
-                    false,
-                    false,
-                    cx,
-                )
-                .on_click(move |_, _, cx| state.update(cx, |state, cx| state.toggle(cx))),
-            )
+        sidebar_toggle_button("shell-sidebar-toggle", label, sidebar, cx)
     }
 
     /// 当前活跃路由挂载的顶栏插槽。
