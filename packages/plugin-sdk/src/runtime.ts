@@ -4,8 +4,8 @@
 // into classic scripts. The resident `main` script registers through `flux.*` instead.
 import type {
   AuthFn,
-  Flux,
   HookHandlers,
+  MainFlux,
   ResolveFn,
   SubscribeFn,
 } from "./types/flux";
@@ -47,6 +47,7 @@ export function defineSubscription(fn: SubscribeFn): SubscribeFn {
  * `flux` facade, so views, commands, rpc handlers, events and timers are registered while the
  * script is evaluated.
  */
-export function defineMain(setup: (flux: Flux) => void): void {
-  setup(flux);
+export function defineMain(setup: (flux: MainFlux) => void): void {
+  // The global is the shared facade type; in the resident `main` script it carries the host additions.
+  setup(flux as MainFlux);
 }

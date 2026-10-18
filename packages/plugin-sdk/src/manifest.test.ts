@@ -52,6 +52,16 @@ describe("strict mode", () => {
     expect(validateManifest({ ...base, version: "v1.0.0-rc.1" }, new Set()).ok).toBe(true);
     expect(validateManifest({ ...base, version: "v1.0.0-rc.1" }, new Set(), { strict: true }).ok).toBe(false);
   });
+  test("omitted files skip existence checks; strict without files is a clear error", () => {
+    const m = { ...base, main: { entry: "main.js" }, hooks: { entry: "h.js", events: ["onDone"] } };
+    expect(validateManifest(m).ok).toBe(true);
+    expect(validateManifest(m, null).ok).toBe(true);
+    expect(validateManifest({ ...base, version: "x" }).ok).toBe(false);
+    const strict = validateManifest(m, undefined, { strict: true });
+    expect(strict.ok).toBe(false);
+    expect(strict.errors).toHaveLength(1);
+    expect(strict.errors[0]).toContain("files");
+  });
 });
 
 describe("misc rules", () => {

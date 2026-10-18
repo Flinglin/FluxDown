@@ -263,26 +263,25 @@ pub enum PluginEvent {
         file_name: String,
         total_bytes: i64,
     },
-    /// 任务被取消（用户手动取消 / variants 选择被取消 / 宿主取消）终态通知
-    /// （593#1）。与 onDone/onError 互斥：cancel_task 只在 generation 未被
-    /// on_task_done 接管的路径上发出，同一任务不会重复触发终态钩子。仅用于
-    /// 通知插件释放已转存的临时远程资源，不影响任务状态机、不支持重试。
+    /// 用户关闭「选择插件」/ 变体选择对话框而取消（任务被暂停）终态通知
+    /// （593#1）。与 onDone/onError 互斥：只在 generation 未被 on_task_done
+    /// 接管的路径上发出，同一任务不会重复触发终态钩子。仅用于通知插件释放已转存
+    /// 的临时远程资源，不影响任务状态机、不支持重试。
     Cancel {
         task_id: String,
         url: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reason: Option<CancelReason>,
+        reason: CancelReason,
     },
 }
 
-/// `onCancel` 载荷的可选取消原因。
+/// `onCancel` 载荷的取消原因；每个变体都对应一条真实的引擎发射路径。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CancelReason {
+    /// 用户关闭了「选择插件」对话框（任务被暂停）。
     UserCancelled,
+    /// 用户关闭了 resolver 多变体选择框。
     VariantSelectionCancelled,
-    HostCancelled,
-    Unknown,
 }
 
 impl PluginEvent {

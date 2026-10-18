@@ -511,81 +511,45 @@ impl PluginManager {
             );
         }
 
-        // 非 dev：加载时读入源码缓存。
+        // 入口脚本：dev 与非 dev 都在加载期读一遍——缺失或不可读直接判定加载失败并点名
+        // 文件，而不是等到调用时才报「未提供 resolver」。非 dev 另存缓存；dev 每次调用重读。
+        let fail = |error: String| {
+            log_info!("[plugin] 跳过 {}: {error}", manifest.identity);
+            FailedPlugin {
+                identity: manifest.identity.clone(),
+                dir: dir.to_path_buf().into_boxed_path(),
+                manifest: Some(Box::new(manifest.clone())),
+                dev_mode: dev,
+                error,
+            }
+        };
+        let resolver_source = read_entry(dir, manifest.resolvers.first().map(|r| r.entry.as_str()))
+            .await
+            .map_err(fail)?;
+        let hooks_source = read_entry(dir, manifest.hooks.as_ref().map(|h| h.entry.as_str()))
+            .await
+            .map_err(fail)?;
+        let auth_source = read_entry(dir, manifest.auth.as_ref().map(|a| a.entry.as_str()))
+            .await
+            .map_err(fail)?;
+        let subscription_source = read_entry(
+            dir,
+            manifest.subscriptions.first().map(|s| s.entry.as_str()),
+        )
+        .await
+        .map_err(fail)?;
+        let main_source = read_entry(dir, manifest.main.as_ref().map(|m| m.entry.as_str()))
+            .await
+            .map_err(fail)?;
         let (resolver_cache, hooks_cache, auth_cache, subscription_cache) = if dev {
             (None, None, None, None)
         } else {
-            let rc = match &resolver_entry {
-                Some(p) => match tokio::fs::read_to_string(p).await {
-                    Ok(s) => Some(s),
-                    Err(e) => {
-                        log_info!(
-                            "[plugin] 跳过 {}: 读取 resolver 失败: {e}",
-                            manifest.identity
-                        );
-                        return Err(FailedPlugin {
-                            identity: manifest.identity.clone(),
-                            dir: dir.to_path_buf().into_boxed_path(),
-                            manifest: Some(Box::new(manifest.clone())),
-                            dev_mode: dev,
-                            error: format!("读取 resolver 失败: {e}"),
-                        });
-                    }
-                },
-                None => None,
-            };
-            let hc = match &hooks_entry {
-                Some(p) => match tokio::fs::read_to_string(p).await {
-                    Ok(s) => Some(s),
-                    Err(e) => {
-                        log_info!("[plugin] 跳过 {}: 读取 hooks 失败: {e}", manifest.identity);
-                        return Err(FailedPlugin {
-                            identity: manifest.identity.clone(),
-                            dir: dir.to_path_buf().into_boxed_path(),
-                            manifest: Some(Box::new(manifest.clone())),
-                            dev_mode: dev,
-                            error: format!("读取 hooks 失败: {e}"),
-                        });
-                    }
-                },
-                None => None,
-            };
-            let ac = match &auth_entry {
-                Some(p) => match tokio::fs::read_to_string(p).await {
-                    Ok(s) => Some(s),
-                    Err(e) => {
-                        log_info!("[plugin] 跳过 {}: 读取 auth 失败: {e}", manifest.identity);
-                        return Err(FailedPlugin {
-                            identity: manifest.identity.clone(),
-                            dir: dir.to_path_buf().into_boxed_path(),
-                            manifest: Some(Box::new(manifest.clone())),
-                            dev_mode: dev,
-                            error: format!("读取 auth 失败: {e}"),
-                        });
-                    }
-                },
-                None => None,
-            };
-            let sc = match &subscription_entry {
-                Some(p) => match tokio::fs::read_to_string(p).await {
-                    Ok(s) => Some(s),
-                    Err(e) => {
-                        log_info!(
-                            "[plugin] 跳过 {}: 读取 subscription 失败: {e}",
-                            manifest.identity
-                        );
-                        return Err(FailedPlugin {
-                            identity: manifest.identity.clone(),
-                            dir: dir.to_path_buf().into_boxed_path(),
-                            manifest: Some(Box::new(manifest.clone())),
-                            dev_mode: dev,
-                            error: format!("读取 subscription 失败: {e}"),
-                        });
-                    }
-                },
-                None => None,
-            };
-            (rc, hc, ac, sc)
+            (
+                resolver_source,
+                hooks_source,
+                auth_source,
+                subscription_source,
+            )
         };
 
         let identity = manifest.identity.clone();
@@ -616,24 +580,8 @@ impl PluginManager {
             disabled_reason = DisabledReason::ConsentRequired;
         }
 
-        // `main` 源码：非 dev 模式加载时读入缓存（dev 每次激活重读）。
         let main_entry = manifest.main.as_ref().map(|m| dir.join(&m.entry));
-        let main_cache = match (&main_entry, dev) {
-            (Some(p), false) => match tokio::fs::read_to_string(p).await {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    log_info!("[plugin] 跳过 {}: 读取 main 失败: {e}", manifest.identity);
-                    return Err(FailedPlugin {
-                        identity: manifest.identity.clone(),
-                        dir: dir.to_path_buf().into_boxed_path(),
-                        manifest: Some(Box::new(manifest.clone())),
-                        dev_mode: dev,
-                        error: format!("读取 main 失败: {e}"),
-                    });
-                }
-            },
-            _ => None,
-        };
+        let main_cache = if dev { None } else { main_source };
 
         Ok(LoadedPlugin {
             manifest,
@@ -2004,6 +1952,21 @@ fn dedup_plugins_by_identity(
 
 fn identity_from_dev_key(key: &str) -> &str {
     key.strip_prefix("plugin.dev.").unwrap_or(key)
+}
+
+/// 读取 manifest 声明的入口脚本（相对插件目录）。未声明返回 `None`；缺失与不可读都
+/// 以点名该文件的消息报告，供加载期判定失败。
+async fn read_entry(dir: &Path, rel: Option<&str>) -> Result<Option<String>, String> {
+    let Some(rel) = rel else {
+        return Ok(None);
+    };
+    match tokio::fs::read_to_string(dir.join(rel)).await {
+        Ok(source) => Ok(Some(source)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(format!("包内缺少文件 '{rel}'"))
+        }
+        Err(error) => Err(format!("读取入口文件 '{rel}' 失败: {error}")),
+    }
 }
 
 fn failure_identity(dir: &Path, identity_hint: Option<&str>) -> String {

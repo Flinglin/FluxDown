@@ -159,17 +159,22 @@ function checkOptionalBool(errors: string[], where: string, value: unknown) {
   }
 }
 
+/** Package file set; `null` = unknown, so existence checks are skipped. */
+type Files = Set<string> | null;
+
+const inPackage = (files: Files, path: string) => files === null || files.has(path.replaceAll("\\", "/"));
+
 /** Entry path: safe relative path; in strict mode it must also exist in the package. */
 function checkEntry(
   errors: string[],
   where: string,
   entry: unknown,
-  files: Set<string>,
+  files: Files,
   strict: boolean,
 ) {
   if (!isSafeRelativePath(entry)) {
     errors.push(`${where} 路径 '${String(entry)}' 非法`);
-  } else if (strict && !files.has(entry.replaceAll("\\", "/"))) {
+  } else if (strict && !inPackage(files, entry)) {
     errors.push(`${where} 指向的 ${entry} 不在包内`);
   }
 }
@@ -194,7 +199,7 @@ const validTitle = (title: unknown) =>
   typeof title === "string" && charLength(title) >= 1 && charLength(title) <= TITLE_MAX_CHARS;
 
 /** `main`: classic script run by the daemon's QuickJS host. */
-function checkMain(errors: string[], manifest: Obj, files: Set<string>, permissions: unknown) {
+function checkMain(errors: string[], manifest: Obj, files: Files, permissions: unknown) {
   const main = manifest.main;
   if (main === undefined || main === null) return;
   if (!isObject(main)) return void errors.push("main 须为对象");
@@ -203,7 +208,7 @@ function checkMain(errors: string[], manifest: Obj, files: Set<string>, permissi
     errors.push(`main entry 路径 '${String(main.entry)}' 非法`);
   } else {
     if (!hasExtension(main.entry, [".js"])) errors.push(`main entry '${main.entry}' 扩展名须为 .js`);
-    if (!files.has(main.entry.replaceAll("\\", "/"))) errors.push(`包内缺少文件 '${main.entry}'`);
+    if (!inPackage(files, main.entry)) errors.push(`包内缺少文件 '${main.entry}'`);
   }
   const events = main.events ?? [];
   if (!stringArray(events)) errors.push("main.events 须为字符串数组");
@@ -226,7 +231,7 @@ function checkDesktop(
   errors: string[],
   view: Obj,
   desktop: unknown,
-  files: Set<string>,
+  files: Files,
   permissions: unknown,
 ) {
   const where = `view '${String(view.id)}'`;
@@ -238,7 +243,7 @@ function checkDesktop(
     if (!hasExtension(desktop.entry, [".js", ".mjs"])) {
       errors.push(`${where} desktop entry '${desktop.entry}' 扩展名须为 .js 或 .mjs`);
     }
-    if (!files.has(desktop.entry.replaceAll("\\", "/"))) errors.push(`包内缺少文件 '${desktop.entry}'`);
+    if (!inPackage(files, desktop.entry)) errors.push(`包内缺少文件 '${desktop.entry}'`);
   }
   if (!hasPermission(permissions, "desktop")) {
     errors.push(`${where} 声明 desktop 时 permissions 必须包含 desktop`);
@@ -271,7 +276,7 @@ function checkDesktop(
 function checkContributes(
   errors: string[],
   manifest: Obj,
-  files: Set<string>,
+  files: Files,
   permissions: unknown,
 ) {
   const contributes = manifest.contributes;
@@ -352,7 +357,7 @@ function checkContributes(
       if (!hasPermission(permissions, "browserRules")) {
         errors.push("声明 sniffRules 时 permissions 必须包含 browserRules");
       }
-      if (!files.has(rules.replaceAll("\\", "/"))) errors.push(`包内缺少文件 '${rules}'`);
+      if (!inPackage(files, rules)) errors.push(`包内缺少文件 '${rules}'`);
     }
   }
 }
@@ -461,15 +466,20 @@ function utf8Length(s: string): number {
 
 /**
  * Validates a manifest against the engine rules. `files` is the set of package-relative
- * file paths (forward slashes). Returns every error found.
+ * file paths (forward slashes). When omitted (`undefined`/`null`), file-existence checks are
+ * skipped; `strict` mode requires it and reports a single error otherwise. Returns every error found.
  */
 export function validateManifest(
   manifest: unknown,
-  files: Set<string>,
+  files?: Set<string> | null,
   options: ValidateOptions = {},
 ): ValidationResult {
   const errors: string[] = [];
   const strict = options.strict === true;
+  const fileSet: Files = files ?? null;
+  if (strict && fileSet === null) {
+    return { ok: false, errors: ["strict 模式需要提供包内文件集合 files（用于校验入口文件是否存在）"] };
+  }
   if (!isObject(manifest)) return { ok: false, errors: ["manifest.json 须为 JSON 对象"] };
   unknownKeys(errors, "manifest", manifest, [
     "identity", "name", "version", "description", "homepage", "icon", "minAppVersion",
@@ -496,7 +506,7 @@ export function validateManifest(
     errors.push(`minAppVersion '${manifest.minAppVersion}' 非法`);
   }
   if (typeof manifest.icon === "string" && manifest.icon !== "") {
-    checkEntry(errors, "icon", manifest.icon, files, strict);
+    checkEntry(errors, "icon", manifest.icon, fileSet, strict);
   }
 
   const resolvers = manifest.resolvers ?? [];
@@ -510,7 +520,7 @@ export function validateManifest(
       }
       unknownKeys(errors, "resolver", resolver, ["match", "entry", "timeoutMs", "multi"]);
       checkMatch(errors, "resolver match", resolver.match);
-      checkEntry(errors, "resolver entry", resolver.entry, files, strict);
+      checkEntry(errors, "resolver entry", resolver.entry, fileSet, strict);
       checkTimeout(errors, "resolver", resolver.timeoutMs);
       checkOptionalBool(errors, "resolver multi", resolver.multi);
     }
@@ -532,7 +542,7 @@ export function validateManifest(
       } else if (id === RSS_PROVIDER_ID) {
         errors.push(`subscription providerId '${id}' 为内置 provider 保留字`);
       }
-      checkEntry(errors, "subscription entry", subscription.entry, files, strict);
+      checkEntry(errors, "subscription entry", subscription.entry, fileSet, strict);
       checkTimeout(errors, "subscription", subscription.timeoutMs);
     }
   }
@@ -552,7 +562,7 @@ export function validateManifest(
     if (!isObject(hooks)) errors.push("hooks 须为对象");
     else {
       unknownKeys(errors, "hooks", hooks, ["entry", "events", "match"]);
-      checkEntry(errors, "hooks entry", hooks.entry, files, strict);
+      checkEntry(errors, "hooks entry", hooks.entry, fileSet, strict);
       if (!stringArray(hooks.events) || hooks.events.length === 0) {
         errors.push("hooks.events 不可为空");
       } else {
@@ -571,14 +581,14 @@ export function validateManifest(
     if (!isObject(auth)) errors.push("auth 须为对象");
     else {
       unknownKeys(errors, "auth", auth, ["entry", "timeoutMs"]);
-      checkEntry(errors, "auth entry", auth.entry, files, strict);
+      checkEntry(errors, "auth entry", auth.entry, fileSet, strict);
       if (!hasPermission(permissions, "auth")) errors.push("声明 auth.entry 时 permissions 必须包含 auth");
       checkTimeout(errors, "auth", auth.timeoutMs);
     }
   }
 
-  checkMain(errors, manifest, files, permissions);
-  checkContributes(errors, manifest, files, permissions);
+  checkMain(errors, manifest, fileSet, permissions);
+  checkContributes(errors, manifest, fileSet, permissions);
 
   const settings = manifest.settings ?? [];
   if (!Array.isArray(settings)) errors.push("settings 须为数组");

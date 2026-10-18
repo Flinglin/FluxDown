@@ -34,8 +34,10 @@ export interface FluxFetchResponse {
 /** `flux.auth` — only present when `permissions` contains `auth`. */
 export interface FluxAuth {
   get(authRef: string): Promise<unknown>;
-  save(profile: Record<string, unknown>): Promise<unknown>;
-  remove(authRef: string): Promise<unknown>;
+  /** Persists the credential profile; resolves to its `authRef`. */
+  save(profile: Record<string, unknown>): Promise<string>;
+  /** Resolves to `true` once removed. */
+  remove(authRef: string): Promise<true>;
 }
 
 export interface FluxStorage {
@@ -59,7 +61,8 @@ export interface FluxLogger {
 }
 
 export interface FluxTask {
-  requestRetry(opts?: { delayMs?: number }): Promise<unknown>;
+  /** Synchronous; only effective inside `onError` (ignored with a warning elsewhere). */
+  requestRetry(opts?: { delayMs?: number }): void;
   recordArtifact(name: string): Promise<void>;
 }
 
@@ -173,7 +176,7 @@ export type FluxEvent =
       event: "cancel";
       taskId: string;
       url: string;
-      reason?: "user_cancelled" | "variant_selection_cancelled" | "host_cancelled" | "unknown";
+      reason: "user_cancelled" | "variant_selection_cancelled";
     };
 
 export type FluxEventName = "onStart" | "onError" | "onDone" | "onMetaProbed" | "onCancel";
@@ -184,7 +187,7 @@ export interface FluxUi {
   /** Builds a node. Same shape as the JSX runtime output. */
   h(kind: string, props?: Record<string, unknown> | null, ...children: ViewChild[]): ViewNode;
   /** Fragment marker for `h`; children are spliced into the parent. */
-  Fragment: symbol | string;
+  Fragment: (props?: { children?: ViewChild } | null) => ViewNode;
   toast(level: ToastLevel, text: string): void;
 }
 
@@ -220,11 +223,50 @@ export type TaskDto = Record<string, unknown>;
 export interface FluxTasks {
   list(): Promise<TaskDto[]>;
   get(id: string): Promise<TaskDto>;
-  /** Parameters are the `daemon.task.create` wire format. Rate-limited to 20 per minute. */
-  create(params: Record<string, unknown>): Promise<TaskDto>;
-  pause(id: string): Promise<unknown>;
-  resume(id: string): Promise<unknown>;
-  remove(id: string, deleteFiles?: boolean): Promise<unknown>;
+  /** Rate-limited to 20 per minute. Resolves to the new (or, with URL dedup, existing) task id. */
+  create(params: CreateTaskParams): Promise<{ taskId: string }>;
+  pause(id: string): Promise<{ ok: true }>;
+  resume(id: string): Promise<{ ok: true }>;
+  remove(id: string, deleteFiles?: boolean): Promise<{ ok: true }>;
+}
+
+/** `daemon.task.create` request body (`CreateTaskRequest`); every field except `url` is optional. */
+export interface CreateTaskRequest {
+  url: string;
+  /** Empty = inferred from the URL / Content-Disposition. */
+  fileName?: string;
+  /** Empty = the global default save directory. */
+  saveDir?: string;
+  /** 0 = chosen automatically. */
+  segments?: number;
+  cookies?: string;
+  referrer?: string;
+  proxyUrl?: string;
+  userAgent?: string;
+  queueId?: string;
+  /** `algo=hexhash`. */
+  checksum?: string;
+  ignoreTlsErrors?: boolean;
+  headers?: Record<string, string>;
+  /** Base64 torrent bytes; `url` may then be empty. */
+  torrentB64?: string;
+  method?: string;
+  audioUrl?: string;
+  /** `true` = create paused. */
+  startPaused?: boolean;
+  httpUser?: string;
+  httpPassword?: string;
+  saveSiteAuth?: boolean;
+}
+
+/** `daemon.task.create` parameters (`DaemonCreateTaskParams`). */
+export interface CreateTaskParams {
+  request: CreateTaskRequest;
+  unattended?: boolean;
+  /** Known file size in bytes (`> 0` takes effect). */
+  hintFileSize?: number;
+  /** Original file name used to complete a missing extension of `request.fileName`. */
+  nameHint?: string;
 }
 
 export interface FluxSettingsHost {
@@ -232,26 +274,35 @@ export interface FluxSettingsHost {
   update(entries: Record<string, string>): Promise<void>;
 }
 
+/** Typed settings values; `null` = unset string/number field without a default. */
+export type FluxSettingsValues = Record<string, string | number | boolean | null>;
+
+/** The `flux` facade shared by every entry script (resolve / hooks / auth / subscribe / main). */
 export interface Flux {
   fetch(opts: FluxFetchOptions): Promise<FluxFetchResponse>;
   auth?: FluxAuth;
   storage: FluxStorage;
   fs: FluxFs;
   /** Typed settings values, keyed by `manifest.settings[].key`. */
-  settings: Record<string, string | number | boolean>;
+  settings: FluxSettingsValues;
   info: FluxInfo;
   logger: FluxLogger;
   task: FluxTask;
   ffmpeg?: FluxFfmpeg;
   ffprobe?: FluxFfprobe;
   ytdlp?: FluxYtdlp;
+}
 
-  // Only in the resident `main` script:
+/** The `flux` facade of the resident `main` script (received by `defineMain`). */
+export interface MainFlux extends Omit<Flux, "settings"> {
+  /** Values as in `Flux.settings`, plus the non-enumerable `update` method. */
+  settings: FluxSettingsValues & FluxSettingsHost;
   ui: FluxUi;
   commands: FluxCommands;
   rpc: FluxRpc;
   events: FluxEvents;
   timers: FluxTimers;
+  /** Only present when `permissions` contains `tasks`. */
   tasks?: FluxTasks;
 }
 
@@ -329,6 +380,7 @@ export interface AuthResult {
   sessionId?: string;
   /** QR content, data URL, or any challenge to show the user. */
   challenge?: string;
+  /** How to render `challenge`, e.g. `"text"`. */
   challengeType?: string;
   message?: string;
   authRef?: string;
@@ -345,10 +397,32 @@ export interface SubscribeContext {
   userAgent: string;
 }
 
+export interface SubscribeItem {
+  /** Required, non-empty, ≤2048 bytes; the dedup key. */
+  guid: string;
+  /** ≤1024 bytes. */
+  title?: string;
+  /** At least one of `link` / `enclosureUrl` is required (http/https/ftp/magnet/ed2k, ≤8KB). */
+  link?: string;
+  enclosureUrl?: string;
+  /** Second-stage resolver id (≤2048 bytes); requires `link`. */
+  resolverItem?: string;
+  /** Bytes; must not be negative. */
+  enclosureLength?: number;
+  /** Unix timestamp (seconds). */
+  pubDate?: number;
+}
+
+export interface SubscribeResult {
+  title?: string;
+  link?: string;
+  items: SubscribeItem[];
+}
+
 export type ResolveFn = (ctx: ResolveContext) => Awaitable<ResolveResult | null | undefined>;
 export type AuthFn = (ctx: AuthContext) => Awaitable<AuthResult>;
-/** Returns the normalized subscription payload (JSON-serializable). */
-export type SubscribeFn = (ctx: SubscribeContext) => Awaitable<unknown>;
+/** Returns the normalized subscription payload (at most 1000 items). */
+export type SubscribeFn = (ctx: SubscribeContext) => Awaitable<SubscribeResult>;
 
 export interface HookHandlers {
   onStart?(ev: Extract<FluxEvent, { event: "start" }>): Awaitable<void>;
