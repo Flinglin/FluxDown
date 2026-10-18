@@ -790,9 +790,10 @@ fn sealed_link_response(sealed: Vec<u8>) -> Response {
 // 探活
 // ---------------------------------------------------------------------------
 
-/// 探活。返回应用名、版本号与 `pong`；宿主配置了 Web UI 语言时附带 `language`
-/// （无鉴权——登录前的前端靠它决定界面默认语言；经 [`ApiHost::web_language`]
-/// 实时求值，配置变更无需重启）。
+/// 检查服务状态
+///
+/// 返回应用名称、版本号与 `pong`；配置了 Web UI 语言时附带 `language`。
+/// 无需鉴权，可用于连接检测和登录前的语言设置。
 #[utoipa::path(get, path = "/ping", tag = "system",
     responses((status = 200, description = "应用存活，返回 app/version/message；配置了 Web 语言时附带 language"))
 )]
@@ -821,7 +822,7 @@ pub(crate) async fn ping(State(state): State<AppState>) -> Response {
 // P2P 设备互联端点（无 token 鉴权：配对由一次性码 + SAS 守卫；数据面由链路 HMAC）
 // ---------------------------------------------------------------------------
 
-/// 处理配对 `hello`（发起方 → 本机）。
+/// 接收配对请求
 #[utoipa::path(post, path = "/api/v1/link/pair/hello", tag = "link",
     description = "配对握手第一步（发起方 → 响应方）。**无 token 鉴权**：由响应方 UI 展示的一次性配对码守卫，重复/过期码拒绝。请求只携带发起方临时公钥与随机数的承诺；响应方回出本次会话全新的临时公钥与随机数（不含 SAS）。`protocolVersion` 与响应方不一致（含旧版发起方）一律以版本不兼容拒绝。",
     request_body = LinkPairHelloRequest,
@@ -866,7 +867,7 @@ pub(crate) async fn api_link_pair_hello(
     }
 }
 
-/// 处理配对 `reveal`（发起方揭示 hello 里承诺的临时公钥）。
+/// 验证配对公钥
 #[utoipa::path(post, path = "/api/v1/link/pair/reveal", tag = "link",
     description = "配对握手第二步（发起方 → 响应方）：揭示 `pair/hello` 里承诺过的临时公钥与随机数，响应方核对承诺后返回对完整握手转录的身份签名。**无 token 鉴权**：由 `pair/hello` 建立的 sessionId 与公钥承诺守卫，承诺不符即作废会话。",
     request_body = LinkPairRevealRequest,
@@ -892,7 +893,7 @@ pub(crate) async fn api_link_pair_reveal(State(state): State<AppState>, body: By
     }
 }
 
-/// 处理配对 `confirm`（SAS 核对后确认/拒绝）。
+/// 接收配对确认
 #[utoipa::path(post, path = "/api/v1/link/pair/confirm", tag = "link",
     description = "配对第三步：核对 SAS 后确认/拒绝（响应方内部会话，由 pair/hello 建立、pair/reveal 揭示后的 sessionId 守卫；未揭示的会话上 confirm=true 属协议违规）。**无 token 鉴权**。",
     request_body = LinkPairConfirmRequest,
@@ -940,7 +941,7 @@ where
     }
 }
 
-/// 已配对设备下发下载任务：从 `X-FluxLink-*` 头取鉴权凭据 → 校验 → 建任务。
+/// 接收设备下载任务
 #[utoipa::path(post, path = "/api/v1/link/tasks", tag = "link",
     description = "数据面（v2）：已配对设备下发下载任务（一次性投递）。**无 management token**，鉴权靠 `X-FluxLink-Device`/`X-FluxLink-Ts`/`X-FluxLink-Nonce`/`X-FluxLink-Tag`/`X-FluxLink-Enc: v2` 头：Tag 是每对设备独立密钥对 `fluxlink-v2\\n{METHOD}\\n{path}\\n{ts}\\n{nonce}\\n{sender_fp}\\n{receiver_fp}\\n{hex(sha256(密文 body))}` 的 HMAC-SHA256（绑定收发双方指纹）。\n\n\
 请求体是对明文 JSON 任务描述做 ChaCha20-Poly1305 加密后的**二进制密文**（`Content-Type: application/octet-stream`，AAD 绑定方向、方法、路径、收发双方指纹与 nonce），非普通 JSON。**成功响应同样是封装后的二进制密文**（响应头 `X-FluxLink-Enc: v2`，AAD 绑定方向与请求 nonce，明文为 `{\"taskId\":…}`），发起方解封失败按鉴权失败处理。`Enc` 缺失或不是 `v2`（含旧的 `v1`）一律 401。",
@@ -978,7 +979,7 @@ fn link_auth_from_headers(headers: &HeaderMap) -> Option<LinkAuth> {
     }
 }
 
-/// 已配对设备经已认证链路双向交换设备信息。
+/// 交换设备信息
 #[utoipa::path(post, path = "/api/v1/link/info", tag = "link",
     description = "数据面（v2）：已配对设备双向交换设备信息（名称 / 平台 / 版本 / 回连地址 ≤4 / 云设备 ID / 默认下载目录 / 路径风格）。**无 management token**，鉴权与封装规则同 `/api/v1/link/tasks`。请求体与成功响应体都是 AEAD 密文（`application/octet-stream`，响应头 `X-FluxLink-Enc: v2`）。",
     responses(
@@ -997,7 +998,7 @@ pub(crate) async fn api_link_info(
     .await
 }
 
-/// 已配对设备通知本机「我已解除与你的配对」。
+/// 接收解除配对通知
 #[utoipa::path(post, path = "/api/v1/link/unpair", tag = "link",
     description = "数据面（v2）：已配对设备通知本机它已解除与本机的配对。**无 management token**，鉴权与封装规则同 `/api/v1/link/tasks`。收到后本机把该设备记录标记为已撤销（拒绝其入站请求、不再向它下发），幂等；请求与成功响应体都是 AEAD 密文（`application/octet-stream`，响应头 `X-FluxLink-Enc: v2`）。",
     responses(
@@ -1047,7 +1048,7 @@ fn effective_link_source(
     Some(peer)
 }
 
-/// 生成一次性配对码（**需 management token**）。供 web/CLI 让 headless 设备出示。
+/// 生成配对码
 #[utoipa::path(post, path = "/api/v1/link/code", tag = "link",
     description = "生成一次性配对码，供发起方在 pair/hello 出示。**需 management token**。",
     responses(
@@ -1069,8 +1070,7 @@ pub(crate) async fn api_link_generate_code(
     }
 }
 
-/// 停止 mDNS 广播（撤销「可被发现」状态）；配对码本身若未过期仍可用
-/// （手动地址/已知连接仍能核对），只是不再出现在局域网 mDNS 扫描里。
+/// 停止设备广播
 #[utoipa::path(delete, path = "/api/v1/link/code", tag = "link",
     description = "停止 mDNS 广播（撤销「可被发现」状态）；配对码本身未过期仍可用，只是不再出现在局域网扫描里。**需 management token**。",
     responses(
@@ -1097,7 +1097,7 @@ pub(crate) async fn api_link_stop_advertising(
 // 契约见 docs/link_mgmt_contract.md）
 // ---------------------------------------------------------------------------
 
-/// 本地设备发现开关：`start` 幂等且清空发现快照；`stop` 停止 mDNS 浏览。
+/// 启停设备发现
 #[utoipa::path(post, path = "/api/v1/link/discovery", tag = "link",
     description = "本地设备发现开关：`start` 幂等且清空发现快照，`stop` 停止 mDNS 浏览。**需 management token**。",
     request_body = LinkDiscoveryRequest,
@@ -1143,7 +1143,7 @@ pub(crate) async fn api_link_discovery(
     }
 }
 
-/// 当前发现快照（发起方侧 UI 轮询）。
+/// 获取发现的设备
 #[utoipa::path(get, path = "/api/v1/link/discovered", tag = "link",
     description = "当前发现快照（发起方侧 UI 轮询）。**需 management token**。",
     responses(
@@ -1165,7 +1165,7 @@ pub(crate) async fn api_link_discovered(
     }
 }
 
-/// 手动地址探测（mDNS 失效兜底）；结果不入发现快照。
+/// 探测设备地址
 #[utoipa::path(post, path = "/api/v1/link/probe", tag = "link",
     description = "手动地址探测（mDNS 失效兜底）；结果不入发现快照，直接返回给调用方。**需 management token**。",
     request_body = LinkProbeRequest,
@@ -1201,8 +1201,7 @@ pub(crate) async fn api_link_probe(
     }
 }
 
-/// 发起配对：向 `host:port` 发送 `hello`（带配对码），返回待确认令牌 + SAS +
-/// 对端信息，供 UI 展示 SAS 核对后调 [`api_link_pair_finish`]。
+/// 发起设备配对
 #[utoipa::path(post, path = "/api/v1/link/pair/begin", tag = "link",
     description = "发起配对：向 `host:port` 发送 hello（带配对码），返回待确认令牌 + SAS，供 UI 展示核对后调用 pair/finish。**需 management token**。",
     request_body = LinkPairBeginRequest,
@@ -1242,7 +1241,7 @@ pub(crate) async fn api_link_pair_begin(
     }
 }
 
-/// SAS 核对后确认/拒绝配对（管理面版本，区别于响应方内部 `pair/confirm`）。
+/// 确认发起的配对
 #[utoipa::path(post, path = "/api/v1/link/pair/finish", tag = "link",
     description = "SAS 核对后确认/拒绝配对（管理面视角，区别于响应方内部 `pair/confirm`）。**需 management token**。",
     request_body = LinkPairFinishRequest,
@@ -1281,8 +1280,7 @@ pub(crate) async fn api_link_pair_finish(
     }
 }
 
-/// 批准/拒绝一次入站配对核验（响应本机收到的 `IncomingPairing` 通知；区别于
-/// 发起方视角、核对 SAS 后调用的 [`api_link_pair_finish`]）。
+/// 审核收到的配对
 #[utoipa::path(post, path = "/api/v1/link/pair/approve", tag = "link",
     description = "批准/拒绝一次入站配对核验（响应本机收到的 `IncomingPairing` 通知；区别于发起方视角、核对 SAS 后调用的 pair/finish）。**需 management token**。",
     request_body = LinkPairApproveRequest,
@@ -1321,7 +1319,7 @@ pub(crate) async fn api_link_pair_approve(
     }
 }
 
-/// 已配对设备列表（含并发在线探测）。
+/// 获取已配对设备
 #[utoipa::path(get, path = "/api/v1/link/devices", tag = "link",
     description = "已配对设备列表（含并发在线探测）。**需 management token**。",
     responses(
@@ -1343,7 +1341,7 @@ pub(crate) async fn api_link_devices(
     }
 }
 
-/// 解除配对（删除设备）。
+/// 解除设备配对
 #[utoipa::path(delete, path = "/api/v1/link/devices/{fingerprint}", tag = "link",
     description = "解除配对（删除设备记录及双方链路密钥）。**需 management token**。",
     params(("fingerprint" = String, Path, description = "设备指纹")),
@@ -1369,8 +1367,7 @@ pub(crate) async fn api_link_remove_device(
     }
 }
 
-/// 下发下载任务给已配对设备（管理面，token 鉴权；区别于数据面链路 HMAC 鉴权的
-/// `POST /api/v1/link/tasks`）。
+/// 向设备发送下载任务
 #[utoipa::path(post, path = "/api/v1/link/devices/{fingerprint}/tasks", tag = "link",
     description = "下发下载任务给已配对设备（管理面，token 鉴权；区别于数据面链路 HMAC 鉴权的 `POST /api/v1/link/tasks`）。**需 management token**。",
     params(("fingerprint" = String, Path, description = "目标设备指纹")),
@@ -1420,8 +1417,10 @@ pub(crate) async fn api_link_device_tasks(
 // 脚本接管端点
 // ---------------------------------------------------------------------------
 
-/// 提交单个外部下载请求。用 `Bytes` 而非 `Json` 提取：油猴脚本可能不带
-/// `application/json` Content-Type（保留旧实现的宽容行为）。
+/// 提交下载请求
+///
+/// 提交单个外部下载请求，进入下载确认流程。
+/// 支持未设置 `application/json` Content-Type 的脚本请求。
 #[utoipa::path(post, path = "/download", tag = "takeover",
     request_body = DownloadRequest,
     responses(
@@ -1453,8 +1452,10 @@ pub(crate) async fn takeover_download(
     submit_external(&state, dl).await
 }
 
-/// 批量提交外部下载请求。支持 `{"urls":[...]}` 与 `{"items":[{...}]}` 两种形态，
-/// 合并为单次确认。鉴权与 `/download` 相同。
+/// 批量提交下载请求
+///
+/// 支持 `{"urls":[...]}` 与 `{"items":[{...}]}` 两种请求格式，
+/// 多个请求合并为一次确认。鉴权方式与 `/download` 相同。
 #[utoipa::path(post, path = "/download/batch", tag = "takeover",
     responses(
         (status = 200, description = "已受理", body = fluxdown_protocol::daemon::ResultMessage),
@@ -1499,7 +1500,10 @@ fn status_from(code: u16) -> StatusCode {
 // aria2 JSON-RPC 兼容端点
 // ---------------------------------------------------------------------------
 
-/// aria2 客户端约定：HTTP 层始终 200，错误在 JSON-RPC envelope 内表达。
+/// 调用 aria2 接口
+///
+/// 提供 aria2 兼容的 JSON-RPC 调用。HTTP 状态码始终为 200，
+/// 调用错误通过 JSON-RPC 响应的错误字段返回。
 #[utoipa::path(post, path = "/jsonrpc", tag = "aria2",
     responses((status = 200, description = "JSON-RPC 响应（错误在 envelope 内表达）。支持方法：aria2.addUri / aria2.getVersion / aria2.getGlobalStat / system.multicall / system.listMethods；token 可经 X-FluxDown-Token 头或 params[0]=\"token:xxx\" 传递")),
     security(("tokenHeader" = []))
@@ -1539,9 +1543,15 @@ pub(crate) async fn jsonrpc_ws(State(state): State<AppState>, ws: WebSocketUpgra
 // MCP 兼容端点
 // ---------------------------------------------------------------------------
 
-/// MCP（Model Context Protocol）端点。强制 token 鉴权（Bearer /
-/// X-FluxDown-Token，复用管理 API 门禁）。请求返回 `200 application/json`
-/// JSON-RPC 响应；通知（无 `id`）返回 `202 Accepted` 空体。
+/// 调用 MCP 接口
+///
+/// 通过 MCP（Model Context Protocol）供 AI 客户端查询和调用下载工具。
+///
+/// **鉴权**：必须提供访问令牌，使用 `Authorization: Bearer <token>`
+/// 或 `X-FluxDown-Token` 请求头，与管理 API 使用相同的鉴权规则。
+///
+/// **响应**：带 `id` 的请求返回 HTTP 200 与 JSON-RPC 响应
+/// （`Content-Type: application/json`）；不带 `id` 的通知返回 HTTP 202，无响应体。
 #[utoipa::path(post, path = "/mcp", tag = "mcp",
     responses(
         (status = 200, description = "JSON-RPC 响应（initialize / tools/list / tools/call / ping）"),
@@ -1576,7 +1586,9 @@ fn guard(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
         .map_err(|(code, msg)| Box::new(result_response(status_from(code), false, msg)))
 }
 
-/// 应用信息（名称与版本号）。
+/// 获取应用信息
+///
+/// 返回应用名称与版本号。
 #[utoipa::path(get, path = "/api/v1/info", tag = "management",
     responses(
         (status = 200, description = "应用信息", body = fluxdown_protocol::daemon::ApiInfo),
@@ -1602,7 +1614,9 @@ pub(crate) struct TaskListQuery {
     status: Option<i32>,
 }
 
-/// 列出全部任务，可按状态过滤。
+/// 获取任务列表
+///
+/// 列出全部下载任务，支持按状态筛选。
 #[utoipa::path(get, path = "/api/v1/tasks", tag = "management",
     params(TaskListQuery),
     responses(
@@ -1630,7 +1644,9 @@ pub(crate) async fn api_list_tasks(
     }
 }
 
-/// 直接创建下载任务（不弹确认框），返回新任务 ID。
+/// 创建下载任务
+///
+/// 直接创建下载任务，不显示确认对话框。成功后返回任务 ID。
 #[utoipa::path(post, path = "/api/v1/tasks", tag = "management",
     request_body = CreateTaskRequest,
     responses(
@@ -1676,7 +1692,9 @@ pub(crate) async fn api_create_task(
     }
 }
 
-/// 按 ID 查询单个任务。
+/// 获取任务详情
+///
+/// 按任务 ID 查询单个下载任务。
 #[utoipa::path(get, path = "/api/v1/tasks/{id}", tag = "management",
     params(("id" = String, Path, description = "任务 ID（UUID）")),
     responses(
@@ -1709,7 +1727,9 @@ pub(crate) struct DeleteTaskQuery {
     delete_files: bool,
 }
 
-/// 删除任务，可选同时删除磁盘文件。
+/// 删除下载任务
+///
+/// 删除任务记录，可选择同时删除已下载的文件。
 #[utoipa::path(delete, path = "/api/v1/tasks/{id}", tag = "management",
     params(("id" = String, Path, description = "任务 ID（UUID）"), DeleteTaskQuery),
     responses(
@@ -1731,7 +1751,7 @@ pub(crate) async fn api_delete_task(
     ack(state.host.delete_task(&id, q.delete_files).await)
 }
 
-/// 暂停单个任务。
+/// 暂停下载任务
 #[utoipa::path(put, path = "/api/v1/tasks/{id}/pause", tag = "management",
     params(("id" = String, Path, description = "任务 ID（UUID）")),
     responses(
@@ -1752,7 +1772,7 @@ pub(crate) async fn api_pause_task(
     ack(state.host.pause_task(&id).await)
 }
 
-/// 恢复单个任务。
+/// 恢复下载任务
 #[utoipa::path(put, path = "/api/v1/tasks/{id}/continue", tag = "management",
     params(("id" = String, Path, description = "任务 ID（UUID）")),
     responses(
@@ -1773,7 +1793,7 @@ pub(crate) async fn api_continue_task(
     ack(state.host.continue_task(&id).await)
 }
 
-/// 重命名任务文件。
+/// 重命名任务文件
 #[utoipa::path(post, path = "/api/v1/tasks/{id}/rename", tag = "management",
     params(("id" = String, Path, description = "任务 ID（UUID）")),
     request_body = fluxdown_protocol::daemon::RenameTaskRequest,
@@ -1808,7 +1828,7 @@ pub(crate) async fn api_rename_task(
     ack(state.host.rename_task(&id, &req.file_name).await)
 }
 
-/// 更换任务下载源地址。
+/// 更换下载地址
 #[utoipa::path(put, path = "/api/v1/tasks/{id}/url", tag = "management",
     params(("id" = String, Path, description = "任务 ID（UUID）")),
     request_body = fluxdown_protocol::daemon::ChangeTaskUrlRequest,
@@ -1843,7 +1863,9 @@ pub(crate) async fn api_change_task_url(
     ack(state.host.change_task_url(&id, &req.url).await)
 }
 
-/// 暂停全部活跃任务（pending / downloading / preparing）。
+/// 暂停全部任务
+///
+/// 暂停处于等待、下载或准备状态（`pending` / `downloading` / `preparing`）的任务。
 #[utoipa::path(put, path = "/api/v1/tasks/pause", tag = "management",
     responses(
         (status = 200, description = "已全部暂停", body = fluxdown_protocol::daemon::ResultMessage),
@@ -1858,7 +1880,7 @@ pub(crate) async fn api_pause_all(State(state): State<AppState>, headers: Header
     ack(state.host.pause_all().await)
 }
 
-/// 恢复全部已暂停任务。
+/// 恢复全部已暂停任务
 #[utoipa::path(put, path = "/api/v1/tasks/continue", tag = "management",
     responses(
         (status = 200, description = "已全部恢复", body = fluxdown_protocol::daemon::ResultMessage),
@@ -1876,6 +1898,8 @@ pub(crate) async fn api_continue_all(
     ack(state.host.continue_all().await)
 }
 
+/// 获取队列列表
+///
 /// 列出全部命名队列。
 #[utoipa::path(get, path = "/api/v1/queues", tag = "management",
     responses(
@@ -1894,7 +1918,9 @@ pub(crate) async fn api_list_queues(State(state): State<AppState>, headers: Head
     }
 }
 
-/// 列出已保存的站点凭据；只返回站点和用户名，不返回密码。
+/// 获取站点凭据列表
+///
+/// 仅返回已保存的站点和用户名，不包含密码。
 #[utoipa::path(get, path = "/api/v1/site-auth", tag = "management",
     responses(
         (status = 200, description = "脱敏后的站点凭据列表", body = Vec<SiteAuthEntryDto>),
@@ -1915,10 +1941,11 @@ pub(crate) async fn api_list_site_auth(
     }
 }
 
-/// 读取单个站点凭据详情。只允许按站点定向读取，不进入通用配置快照。
+/// 获取站点凭据
 ///
-/// **`pass` 字段是明文密码**（未脱敏）：仅供编辑对话框回填原值，调用方不应
-/// 在列表页/日志里回显；列表接口 [`api_list_site_auth`] 本就不含密码（L-1）。
+/// 按站点读取凭据详情，不包含在通用配置快照中。
+/// **`pass` 字段为明文密码**，仅用于编辑表单回填，不应显示在列表或写入日志。
+/// 凭据列表接口不返回密码。
 #[utoipa::path(get, path = "/api/v1/site-auth/{site}", tag = "management",
     params(("site" = String, Path, description = "host 或 host:port")),
     responses(
@@ -1943,7 +1970,9 @@ pub(crate) async fn api_get_site_auth(
     }
 }
 
-/// 保存单个站点 HTTP Basic 凭据。
+/// 保存站点凭据
+///
+/// 保存单个站点的 HTTP Basic 认证凭据。
 #[utoipa::path(put, path = "/api/v1/site-auth", tag = "management",
     request_body = SiteAuthSaveRequest,
     responses(
@@ -1977,7 +2006,7 @@ pub(crate) async fn api_save_site_auth(
     }
 }
 
-/// 删除单个站点凭据。
+/// 删除站点凭据
 #[utoipa::path(delete, path = "/api/v1/site-auth/{site}", tag = "management",
     params(("site" = String, Path, description = "host 或 host:port")),
     responses(
@@ -2006,8 +2035,10 @@ pub(crate) async fn api_delete_site_auth(
 // docs/multi-file-task-group-design.md Phase D）
 // ---------------------------------------------------------------------------
 
-/// 前置预解析清单（多文件清单，只读、不建任务、不写库）。强制鉴权——
-/// 会触发插件网络调用（网盘 API），与管理 API 其余端点同一门禁。
+/// 预览下载文件
+///
+/// 解析链接并返回多文件清单，不创建下载任务，也不写入数据库。
+/// 解析可能通过插件调用网盘等外部服务，因此必须提供管理 API 访问令牌。
 #[utoipa::path(post, path = "/api/v1/resolve/preview", tag = "groups",
     request_body = ResolvePreviewRequest,
     responses(
@@ -2044,7 +2075,7 @@ pub(crate) async fn api_resolve_preview(
     }
 }
 
-/// 列出全部任务组。
+/// 获取任务组列表
 #[utoipa::path(get, path = "/api/v1/groups", tag = "groups",
     responses(
         (status = 200, description = "任务组列表", body = Vec<fluxdown_protocol::daemon::GroupDto>),
@@ -2062,7 +2093,10 @@ pub(crate) async fn api_list_groups(State(state): State<AppState>, headers: Head
     }
 }
 
-/// 创建多文件任务组（建组 + N 子任务），返回新组 ID。`items` 为空 → 400。
+/// 创建任务组
+///
+/// 根据文件清单创建任务组及其子任务，成功后返回任务组 ID。
+/// `items` 不能为空，否则返回 HTTP 400。
 #[utoipa::path(post, path = "/api/v1/groups", tag = "groups",
     request_body = CreateGroupRequest,
     responses(
@@ -2108,7 +2142,9 @@ pub(crate) struct DeleteGroupQuery {
     delete_files: bool,
 }
 
-/// 删除任务组（批量删成员），可选同时删除磁盘文件。
+/// 删除任务组
+///
+/// 删除任务组及组内任务，可选择同时删除已下载的文件。
 #[utoipa::path(delete, path = "/api/v1/groups/{id}", tag = "groups",
     params(("id" = String, Path, description = "任务组 ID（UUID）"), DeleteGroupQuery),
     responses(
@@ -2130,7 +2166,9 @@ pub(crate) async fn api_delete_group(
     ack(state.host.group_delete(&id, q.delete_files).await)
 }
 
-/// 暂停组内全部成员。
+/// 暂停任务组
+///
+/// 暂停组内全部任务。
 #[utoipa::path(put, path = "/api/v1/groups/{id}/pause", tag = "groups",
     params(("id" = String, Path, description = "任务组 ID（UUID）")),
     responses(
@@ -2151,7 +2189,9 @@ pub(crate) async fn api_group_pause(
     ack(state.host.group_pause(&id).await)
 }
 
-/// 恢复组内全部成员。
+/// 恢复任务组
+///
+/// 恢复组内全部任务。
 #[utoipa::path(put, path = "/api/v1/groups/{id}/continue", tag = "groups",
     params(("id" = String, Path, description = "任务组 ID（UUID）")),
     responses(
@@ -2176,7 +2216,7 @@ pub(crate) async fn api_group_continue(
 // RSS 订阅（/api/v1/rss*，全强制 token）
 // ---------------------------------------------------------------------------
 
-/// 列出全部 RSS 订阅。
+/// 获取 RSS 订阅列表
 #[utoipa::path(get, path = "/api/v1/rss", tag = "rss",
     responses(
         (status = 200, description = "订阅列表", body = Vec<fluxdown_protocol::daemon::RssSourceDto>),
@@ -2197,7 +2237,9 @@ pub(crate) async fn api_list_rss_sources(
     }
 }
 
-/// 新建 RSS 订阅，返回新订阅 ID。`url` 为空 → 400。
+/// 创建 RSS 订阅
+///
+/// 创建订阅并返回订阅 ID。`url` 不能为空，否则返回 HTTP 400。
 #[utoipa::path(post, path = "/api/v1/rss", tag = "rss",
     request_body = RssSourceDto,
     responses(
@@ -2234,7 +2276,9 @@ pub(crate) async fn api_create_rss_source(
     }
 }
 
-/// 更新订阅配置。运行态字段（`lastFetchAt`/`failCount` 等）写入被忽略。
+/// 更新 RSS 订阅
+///
+/// 更新订阅配置。`lastFetchAt`、`failCount` 等运行状态字段不会被写入。
 #[utoipa::path(put, path = "/api/v1/rss/{id}", tag = "rss",
     params(("id" = String, Path, description = "订阅 ID（UUID）")),
     request_body = RssSourceDto,
@@ -2268,8 +2312,9 @@ pub(crate) async fn api_update_rss_source(
     ack(state.host.update_rss_source(&id, req).await)
 }
 
-/// 删除订阅（级联删条目）。已建下载任务保留——用户要的是不再抓新条目，
-/// 不是撤销已下载的东西。
+/// 删除 RSS 订阅
+///
+/// 删除订阅及其条目，保留已创建的下载任务。
 #[utoipa::path(delete, path = "/api/v1/rss/{id}", tag = "rss",
     params(("id" = String, Path, description = "订阅 ID（UUID）")),
     responses(
@@ -2290,9 +2335,11 @@ pub(crate) async fn api_delete_rss_source(
     ack(state.host.delete_rss_source(&id).await)
 }
 
-/// 立即抓取一个订阅。抓取异步派发，本端点只表示「已受理」，结果走
-/// `rssSourcesChanged` / `rssItemsChanged` 事件；该订阅已在抓取时同样视为成功，
-/// 仅订阅不存在返回 404。
+/// 刷新 RSS 订阅
+///
+/// 异步获取订阅的最新内容。成功响应仅表示请求已受理，不代表刷新完成；
+/// 结果通过 `rssSourcesChanged` / `rssItemsChanged` 事件通知。
+/// 订阅正在刷新时仍返回成功；订阅不存在时返回 HTTP 404。
 #[utoipa::path(post, path = "/api/v1/rss/{id}/refresh", tag = "rss",
     params(("id" = String, Path, description = "订阅 ID（UUID）")),
     responses(
@@ -2313,7 +2360,9 @@ pub(crate) async fn api_refresh_rss_source(
     ack(state.host.refresh_rss_source(&id).await)
 }
 
-/// 一个订阅的条目流（新→旧）。
+/// 获取订阅条目
+///
+/// 返回指定订阅的条目，按时间从新到旧排列。
 #[utoipa::path(get, path = "/api/v1/rss/{id}/items", tag = "rss",
     params(("id" = String, Path, description = "订阅 ID（UUID）")),
     responses(
@@ -2337,8 +2386,10 @@ pub(crate) async fn api_list_rss_items(
     }
 }
 
-/// 对条目执行手动操作（下载 / 忽略 / 全部标记已读）。guid 在请求体里，
-/// 不进路径段——真实 feed 的 guid 常常是一整条 URL。
+/// 操作订阅条目
+///
+/// 支持下载、忽略和全部标记已读。条目标识 `guid` 可能包含完整 URL，
+/// 因此通过请求体传递，而非 URL 路径。
 #[utoipa::path(post, path = "/api/v1/rss/{id}/items/action", tag = "rss",
     params(("id" = String, Path, description = "订阅 ID（UUID）")),
     request_body = RssItemActionRequest,
@@ -2372,8 +2423,10 @@ pub(crate) async fn api_rss_item_action(
     ack(state.host.rss_item_action(&id, req).await)
 }
 
-/// 只读验证一个 feed 地址（新建订阅向导）。抓取失败**不是** HTTP 错误：
-/// 这是一次诊断调用，失败原因本身就是有效载荷，仍回 200 + `error` 非空。
+/// 验证订阅地址
+///
+/// 获取并验证 RSS 内容，不创建订阅。
+/// 抓取失败时仍返回 HTTP 200，具体原因通过响应中的 `error` 字段提供。
 #[utoipa::path(post, path = "/api/v1/rss/validate", tag = "rss",
     request_body = RssValidateRequest,
     responses(
@@ -2414,7 +2467,7 @@ pub(crate) async fn api_validate_rss_feed(
 // 插件系统管理端点（/api/v1/plugins*，全强制 token）
 // ---------------------------------------------------------------------------
 
-/// 列出全部已安装插件。
+/// 获取已安装插件
 #[utoipa::path(get, path = "/api/v1/plugins", tag = "plugins",
     responses(
         (status = 200, description = "插件列表", body = Vec<fluxdown_protocol::daemon::PluginDto>),
@@ -2435,7 +2488,9 @@ pub(crate) async fn api_list_plugins(
     }
 }
 
-/// 从 zip 安装插件（≤4MB，受全局请求体上限约束）。
+/// 安装插件包
+///
+/// 从 ZIP 文件安装插件。请求体不得超过全局大小限制（4 MB）。
 #[utoipa::path(post, path = "/api/v1/plugins/install", tag = "plugins",
     responses(
         (status = 200, description = "安装成功", body = fluxdown_protocol::daemon::InstalledPlugin),
@@ -2458,7 +2513,9 @@ pub(crate) async fn api_install_plugin(
     }
 }
 
-/// dev 安装插件（引用目录，不拷贝）。
+/// 从本地目录加载插件
+///
+/// 用于插件开发。直接引用指定目录，不复制文件。
 #[utoipa::path(post, path = "/api/v1/plugins/install-dev", tag = "plugins",
     request_body = fluxdown_protocol::daemon::InstallPluginDevRequest,
     responses(
@@ -2493,7 +2550,7 @@ pub(crate) async fn api_install_plugin_dev(
     }
 }
 
-/// 启用/禁用插件。
+/// 启用或禁用插件
 #[utoipa::path(put, path = "/api/v1/plugins/{identity}/enabled", tag = "plugins",
     params(("identity" = String, Path, description = "插件 identity")),
     request_body = fluxdown_protocol::daemon::SetPluginEnabledRequest,
@@ -2526,7 +2583,9 @@ pub(crate) async fn api_set_plugin_enabled(
     ack(state.host.set_plugin_enabled(&identity, req.enabled).await)
 }
 
-/// 批量更新插件设置（all-or-nothing）。请求体为 `{key: value}` 字符串映射。
+/// 更新插件设置
+///
+/// 请求体为 `{key: value}` 字符串映射。批量更新采用原子操作：全部成功或全部不生效。
 #[utoipa::path(put, path = "/api/v1/plugins/{identity}/settings", tag = "plugins",
     params(("identity" = String, Path, description = "插件 identity")),
     responses(
@@ -2558,7 +2617,9 @@ pub(crate) async fn api_update_plugin_settings(
     ack(state.host.update_plugin_settings(&identity, entries).await)
 }
 
-/// 驱动插件登录流程（二维码/账号登录）。认证结果只返回交互状态，凭据由引擎保存。
+/// 执行插件登录
+///
+/// 支持二维码或账号登录。响应仅包含交互状态，认证凭据由引擎保存。
 #[utoipa::path(post, path = "/api/v1/plugins/{identity}/auth", tag = "plugins",
     params(("identity" = String, Path, description = "插件 identity")),
     request_body = fluxdown_protocol::daemon::PluginAuthRequest,
@@ -2596,7 +2657,7 @@ pub(crate) async fn api_plugin_auth(
     }
 }
 
-/// 卸载插件。
+/// 卸载插件
 #[utoipa::path(delete, path = "/api/v1/plugins/{identity}", tag = "plugins",
     params(("identity" = String, Path, description = "插件 identity")),
     responses(
@@ -2616,7 +2677,9 @@ pub(crate) async fn api_uninstall_plugin(
     ack(state.host.uninstall_plugin(&identity).await)
 }
 
-/// 任务级逃生舱：忽略插件重试，按原始链接重跑。
+/// 使用原始链接重试
+///
+/// 忽略当前任务的插件重试流程，改用原始下载链接重新执行。
 #[utoipa::path(post, path = "/api/v1/tasks/{id}/ignore-plugin-retry", tag = "plugins",
     params(("id" = String, Path, description = "任务 ID")),
     responses(
@@ -2636,7 +2699,9 @@ pub(crate) async fn api_ignore_plugin_retry(
     ack(state.host.ignore_plugin_retry(&id).await)
 }
 
-/// 拉取去中心化插件市场索引。
+/// 获取插件市场索引
+///
+/// 获取去中心化插件市场的索引条目。
 #[utoipa::path(get, path = "/api/v1/market", tag = "plugins",
     responses(
         (status = 200, description = "市场索引条目", body = Vec<fluxdown_protocol::daemon::MarketEntryDto>),
@@ -2654,7 +2719,9 @@ pub(crate) async fn api_market_list(State(state): State<AppState>, headers: Head
     }
 }
 
-/// 从市场安装某插件最新版。
+/// 安装市场插件
+///
+/// 从插件市场安装指定插件的最新版本。
 #[utoipa::path(post, path = "/api/v1/market/install", tag = "plugins",
     request_body = fluxdown_protocol::daemon::MarketInstallRequest,
     responses(
