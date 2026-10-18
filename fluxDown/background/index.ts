@@ -17,6 +17,7 @@ import {
   setInterceptListenersActive,
   syncDownloadShelfState,
 } from "./intercept";
+import { installLinkCapture } from "./link-capture";
 import { createContextMenus, installMenus } from "./menus";
 import { downloadPlayingMedia } from "./downloads";
 import { installMessages } from "./messages";
@@ -73,6 +74,7 @@ export function startBackground(): void {
   installSniff();
   installIntercept();
   installMenus();
+  installLinkCapture();
   installTaskListeners();
   installCaptureTracker();
   installMessages();
