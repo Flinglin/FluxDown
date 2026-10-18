@@ -1,5 +1,5 @@
 /** 规则包校验：整包不合格抛 PackRejectedError，单条不合格则剔除。 */
-import { parseHostPattern } from "./glob";
+import { hostMatchesPattern, parseHostPattern } from "./glob";
 import {
   FORBIDDEN_RULE_HEADERS,
   RULE_ENGINE_VERSION,
@@ -204,6 +204,14 @@ function checkRule(rule: SniffRuleV1, expectedTier: RuleTier): string | null {
       if (!Array.isArray(a.hosts) || a.hosts.length < 2) return "mirror.hosts 至少两个";
       for (const h of a.hosts) {
         if (typeof h !== "string" || !parseHostPattern(h)) return "mirror.hosts 非法";
+      }
+      if (rule.tier === "community") {
+        const scope = [...(rule.match.host ?? []), ...(rule.match.pageHost ?? [])].flatMap((p) => parseHostPattern(p) ?? []);
+        for (const h of a.hosts) {
+          const domain = parseHostPattern(h)?.domain ?? "";
+          if (!scope.some((p) => hostMatchesPattern(domain, p)))
+            return `社区规则的 mirror.hosts 必须在 match.host / pageHost 范围内: ${h}`;
+        }
       }
       break;
     case "title":

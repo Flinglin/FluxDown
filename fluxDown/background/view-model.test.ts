@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { compileBuiltin } from "@/rules/engine";
+import { compileBundled } from "@/rules/engine";
 import type { DetectedResource } from "@/utils/resource-types";
 import type { HostCapabilities } from "./protocol";
 import { groupTrackPairs, handoffFor } from "./view-model";
 
-const engine = compileBuiltin();
+const engine = compileBundled();
 const PAGE = "https://example.com/watch";
 
 /** 从 engine.trackKind 判轨（与生产路径一致）。 */

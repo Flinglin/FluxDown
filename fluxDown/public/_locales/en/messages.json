@@ -14,5 +14,9 @@
   "commandDownloadPlayingMedia": {
     "message": "Download the playing video or audio",
     "description": "Keyboard shortcut: download the playing media"
+  },
+  "commandOpenSidePanel": {
+    "message": "Open the side panel",
+    "description": "Keyboard shortcut: open the FluxDown side panel"
   }
 }

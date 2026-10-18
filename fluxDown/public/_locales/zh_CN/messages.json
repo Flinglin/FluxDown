@@ -14,5 +14,9 @@
   "commandDownloadPlayingMedia": {
     "message": "下载正在播放的视频或音频",
     "description": "Keyboard shortcut: download the playing media"
+  },
+  "commandOpenSidePanel": {
+    "message": "打开侧边栏",
+    "description": "Keyboard shortcut: open the FluxDown side panel"
   }
 }

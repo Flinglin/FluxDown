@@ -3,9 +3,10 @@
  * 覆盖（overrides），编译为 CompiledRules。任一来源变化时重编译并广播 PageConfig 失效。
  *
  * 远程包只经桌面端 agent 下发（agent 负责验签与吊销）；扩展侧再做一次 validatePack。
+ * 官方包随扩展附带快照（BUNDLED_OFFICIAL_PACK），远程同步到更高 sequence 后以远程为准。
  */
 import { browser } from "wxt/browser";
-import { BUILTIN_PACK, compileBuiltin, compileRules } from "@/rules/engine";
+import { BUILTIN_PACK, compileBundled, compileRules, effectiveOfficialPack } from "@/rules/engine";
 import type { CompiledRules } from "@/rules/engine";
 import type { RevocationDoc, RuleOverrides, RulePack, SniffRuleV1 } from "@/rules/schema";
 import { RULE_ENGINE_VERSION } from "@/rules/schema";
@@ -23,7 +24,7 @@ const FIRST_SYNC_DELAY_MS = 5_000;
 /** community 包带过期时间；编译快照超过 1 h 就后台重编译一次。 */
 const COMPILE_MAX_AGE_MS = 60 * 60 * 1000;
 
-let engine: CompiledRules = compileBuiltin();
+let engine: CompiledRules = compileBundled();
 let compiledAt = Date.now();
 let building: Promise<void> | null = null;
 /** 编译期间收到新的重编译请求。 */
@@ -71,8 +72,7 @@ async function compileFromStorage(): Promise<CompiledRules> {
   const stored = await loadStored();
   const settings = await getCachedSettings();
 
-  const packs: RulePack[] = [BUILTIN_PACK];
-  if (stored.official) packs.push(stored.official);
+  const packs: RulePack[] = [BUILTIN_PACK, effectiveOfficialPack(stored.official)];
   if (stored.community) packs.push(stored.community);
   if (stored.plugin) packs.push(stored.plugin);
   if (localRules.length > 0) packs.push(localPack(localRules));
@@ -125,7 +125,7 @@ export async function getRuleSyncStatus(): Promise<RuleSyncStatus> {
   return {
     enabled: settings.ruleSyncEnabled,
     communityEnabled: settings.communityRulesEnabled,
-    official: summarize(stored.official),
+    official: summarize(effectiveOfficialPack(stored.official)),
     community: summarize(stored.community),
     plugin: summarize(stored.plugin),
     revocations: summarize(stored.revocations),
@@ -154,7 +154,7 @@ export async function syncRemotePacks(): Promise<RuleSyncStatus> {
 
   const stored = await loadStored();
   const reply = await fetchSniffRules({
-    official: stored.official?.sequence,
+    official: effectiveOfficialPack(stored.official).sequence,
     community: stored.community?.sequence,
     plugin: stored.plugin?.sequence,
     revocations: stored.revocations?.sequence,
@@ -172,7 +172,7 @@ export async function syncRemotePacks(): Promise<RuleSyncStatus> {
     if (!incoming) continue;
     try {
       const { pack, rejected } = validatePack(incoming, tier);
-      const current = stored[tier];
+      const current = tier === "official" ? effectiveOfficialPack(stored.official) : stored[tier];
       if (current && pack.sequence < current.sequence) {
         problems.push(`${tier}: rollback`);
         continue;

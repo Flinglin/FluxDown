@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compileBuiltin } from "@/rules/engine";
+import { compileBundled } from "@/rules/engine";
 import type { DashManifest } from "@/utils/dash-manifest";
 import type { DetectedResource } from "@/utils/resource-types";
 import { activeElement, bindCandidates, rankElement } from "./media-binding";
@@ -7,7 +7,7 @@ import type { ElementState } from "./protocol";
 import { badgeCount, composeTabView } from "./view-model";
 import type { ViewModelInput } from "./view-model";
 
-const engine = compileBuiltin();
+const engine = compileBundled();
 const PAGE_URL = "https://www.bilibili.com/video/BV1xx";
 
 function element(overrides: Partial<ElementState> = {}): ElementState {

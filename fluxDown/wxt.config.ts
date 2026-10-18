@@ -103,6 +103,8 @@ export default defineConfig({
       },
     },
     // 描述经 _locales 跟随浏览器语言；浏览器快捷键页已按扩展分组，无需再加扩展名前缀。
+    // 打开侧边栏：Firefox 用内置 `_execute_sidebar_action`（浏览器直接切换 sidebar_action）；
+    // Chromium 无内置命令，以自定义命令在 background 中调用 sidePanel.open。
     commands: {
       "toggle-intercept": {
         suggested_key: {
@@ -115,6 +117,12 @@ export default defineConfig({
           default: "Alt+Shift+V",
         },
         description: "__MSG_commandDownloadPlayingMedia__",
+      },
+      [browser === "firefox" ? "_execute_sidebar_action" : "open-side-panel"]: {
+        suggested_key: {
+          default: "Alt+Shift+S",
+        },
+        description: "__MSG_commandOpenSidePanel__",
       },
     },
   }),

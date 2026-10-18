@@ -225,4 +225,11 @@ describe("page / request / mirror / manifest 规则校验", () => {
     expect(check(rule({ id: "official.m2", tier: "official", stage: "normalize", match: {}, action: { kind: "mirror", hosts: ["a.com", "b.net"] } }))).toHaveLength(0);
     expect(check(rule({ id: "official.b1", tier: "official", stage: "body", match: { url: ["*/api*"] }, action: { kind: "manifest", path: 3 as unknown as string } }))).toHaveLength(1);
   });
+
+  test("社区规则的 mirror.hosts 必须在 match 声明的站点内", () => {
+    const mirror = (hosts: string[]) =>
+      check(rule({ id: "community.m1", tier: "community", stage: "normalize", match: { host: ["example.com", "example-cdn.net"] }, action: { kind: "mirror", hosts } }));
+    expect(mirror(["a.example.com", "b.example-cdn.net"])).toHaveLength(0);
+    expect(mirror(["a.example.com", "evil.test"])).toHaveLength(1);
+  });
 });

@@ -34,7 +34,7 @@ import {
   type ScanContext,
 } from "@/page/dom-scan";
 import { MediaTracker } from "@/page/media-tracker";
-import { compileBuiltin } from "@/rules/engine";
+import { compileBundled } from "@/rules/engine";
 import { createFloatButton, type FloatButtonController } from "@/ui/features/FloatButton";
 import { normalizeDashManifest, parseDashManifestText } from "@/utils/dash-manifest";
 import { isHttpUrl } from "@/utils/media-sniff";
@@ -92,7 +92,7 @@ export default defineContentScript({
 
   async main(ctx) {
     const top = isTopFrame();
-    const rules = compileBuiltin();
+    const rules = compileBundled();
 
     let config: PageConfig | null = null;
     const sniffImages = (): boolean => config?.sniffImages === true;

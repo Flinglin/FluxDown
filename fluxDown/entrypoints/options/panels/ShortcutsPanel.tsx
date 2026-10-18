@@ -33,6 +33,11 @@ const COMMAND_TEXT: Record<string, { title: MessageKey; desc: MessageKey }> = {
   },
   _execute_action: { title: "options.shortcuts.openPopupTitle", desc: "options.shortcuts.openPopupDesc" },
   _execute_browser_action: { title: "options.shortcuts.openPopupTitle", desc: "options.shortcuts.openPopupDesc" },
+  "open-side-panel": { title: "options.shortcuts.openSidePanelTitle", desc: "options.shortcuts.openSidePanelDesc" },
+  _execute_sidebar_action: {
+    title: "options.shortcuts.openSidePanelTitle",
+    desc: "options.shortcuts.openSidePanelDesc",
+  },
 };
 const COMMAND_ORDER = Object.keys(COMMAND_TEXT);
 
