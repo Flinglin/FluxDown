@@ -346,7 +346,7 @@ async fn unattended_uses_fallback_and_records_unconfirmed_choice() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cancelling_choice_cancels_task_and_keeps_it_pending() {
+async fn cancelling_choice_pauses_task_and_asks_again_on_resume() {
     let selector = ChoosingSelection::new(PluginChoice::Cancel);
     let mut fx = Fixture::new(selector.clone()).await;
     let task = fx.create("cancel.bin", false).await;
@@ -360,7 +360,7 @@ async fn cancelling_choice_cancels_task_and_keeps_it_pending() {
         .await
         .unwrap()
         .expect("task row");
-    assert_eq!(info.status, 4);
+    assert_eq!(info.status, 2, "取消插件选择应暂停任务而不是失败");
     assert!(
         fx.engine
             .db
@@ -370,5 +370,10 @@ async fn cancelling_choice_cancels_task_and_keeps_it_pending() {
     );
     let pm = fx.engine.manager.plugin_manager().unwrap();
     assert!(pm.site_defaults().await.unwrap().is_empty());
+
+    // 恢复时仍待选择：重新询问。
+    fx.engine.manager.resume_task(&task).await;
+    fx.drive(&task, false).await;
+    assert_eq!(selector.calls.load(Ordering::SeqCst), 2);
     fx.cleanup().await;
 }

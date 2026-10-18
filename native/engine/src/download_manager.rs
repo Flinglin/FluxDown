@@ -3812,16 +3812,16 @@ impl DownloadManager {
             }
             return;
         }
-        // 用户在变体 / 插件选择弹窗点关闭/取消 → 取消该任务（cancel_task 会清 pending_resolve /
-        // active_tasks 占位、置 status=4、drain_queue）。放在世代守卫之后：确认本 outcome
-        // 拥有当前 pending 条目才动手。
+        // 用户在变体 / 插件选择弹窗点关闭/取消 → 任务暂停（与「文件已存在」取消、BT 文件
+        // 选择取消同一语义）：请求上下文都在库里，恢复时 begin_resolve_resume 重新解析并
+        // 再次询问。放在世代守卫之后：确认本 outcome 拥有当前 pending 条目才动手。
         if let Some(reason) = out.cancelled {
             log_info!(
-                "[plugin-resolve] task {} selection cancelled by user ({:?}), cancelling task",
+                "[plugin-resolve] task {} selection cancelled by user ({:?}), pausing task",
                 task_id,
                 reason
             );
-            self.cancel_task_with_reason(&task_id, reason).await;
+            self.pause_after_selection_cancelled(&task_id, reason).await;
             return;
         }
         // 任务已从 DB 删除（兜底；delete_task 亦已清 pending_resolve）→ 放弃再入。
@@ -4320,7 +4320,11 @@ impl DownloadManager {
             auth_ref: String::new(),
             cookies: queued.cookies.clone(),
             referrer: queued.referrer.clone(),
-            user_agent: queued.user_agent.clone(),
+            user_agent: self.plugin_resolve_user_agent(
+                &queued.user_agent,
+                &queued.extra_headers,
+                &queued.queue_id,
+            ),
             extra_headers: queued.extra_headers.clone(),
             resolver_item: queued.resolver_item.clone(),
         };
@@ -4333,6 +4337,7 @@ impl DownloadManager {
         );
         let unattended = self.db.is_task_unattended(&task_id).await.unwrap_or(false);
         let choice_pending = self.resolver_choice_pending(&task_id).await;
+        self.mark_resolving(&task_id).await;
         self.spawn_resolve_worker(
             task_id,
             identity,
@@ -4360,6 +4365,70 @@ impl DownloadManager {
                 false
             }
         }
+    }
+
+    /// 插件 resolve 上下文的 User-Agent，与该任务下载请求的身份一致：已持久化请求头里的
+    /// User-Agent（调用方捕获或单任务覆盖，创建时并入）优先，否则按单任务覆盖 → 队列 →
+    /// 全局默认解析。首次起跑与暂停 / 重启后的恢复重解析因此拿到同一个值。
+    #[cfg(feature = "plugins")]
+    fn plugin_resolve_user_agent(
+        &self,
+        explicit: &str,
+        extra_headers: &HashMap<String, String>,
+        queue_id: &str,
+    ) -> String {
+        extra_headers
+            .iter()
+            .find_map(|(name, value)| {
+                name.eq_ignore_ascii_case("user-agent")
+                    .then(|| value.clone())
+            })
+            .unwrap_or_else(|| self.resolved_task_ua(explicit, queue_id).to_string())
+    }
+
+    /// resolve 开始：落库并广播「准备中」(5)，插件解析（yt-dlp 可能要数秒）期间各端
+    /// 显示进行中而不是「等待中」。与下载器探测阶段同一约定：重启时
+    /// `reset_incomplete_tasks_to_paused` 把 5 归为暂停并交给自动恢复。
+    /// 落库失败只记录：状态展示不阻断解析。
+    #[cfg(feature = "plugins")]
+    async fn mark_resolving(&self, task_id: &str) {
+        if let Err(error) = self.db.update_task_status(task_id, 5, "").await {
+            crate::logger::report_error("download-manager", "persist resolving state", &error);
+            return;
+        }
+        self.emit_progress_from_db(task_id, 5, 0, "", 0).await;
+    }
+
+    /// 变体 / 插件选择弹窗被用户取消：任务暂停（不发 `task.paused` webhook——这是关闭
+    /// 弹窗而非点暂停），并照常以 `reason` 通知插件 `onCancel`（593#1）。
+    #[cfg(feature = "plugins")]
+    async fn pause_after_selection_cancelled(
+        &mut self,
+        task_id: &str,
+        reason: crate::plugin::CancelReason,
+    ) {
+        self.pause_task_silent(task_id).await;
+        let Some(pm) = &self.plugin_manager else {
+            return;
+        };
+        let url = match self.db.load_task_by_id(task_id).await {
+            Ok(Some(task)) => task.url,
+            Ok(None) => return,
+            Err(error) => {
+                crate::logger::report_error(
+                    "download-manager",
+                    "load task for plugin cancel event",
+                    &error,
+                );
+                return;
+            }
+        };
+        pm.notify(crate::plugin::PluginEvent::Cancel {
+            task_id: task_id.to_string(),
+            url,
+            reason: Some(reason),
+        })
+        .await;
     }
 
     /// do_resume_task 体首守卫调用：对称占位（防 resumeAll 并发双 resolve）+ spawn。
@@ -4477,7 +4546,7 @@ impl DownloadManager {
             auth_ref: String::new(),
             cookies,
             referrer,
-            user_agent: String::new(),
+            user_agent: self.plugin_resolve_user_agent("", &extra_headers, &task.queue_id),
             extra_headers,
             resolver_item,
         };
@@ -4488,6 +4557,7 @@ impl DownloadManager {
             },
         );
         let choice_pending = self.resolver_choice_pending(task_id).await;
+        self.mark_resolving(task_id).await;
         self.spawn_resolve_worker(
             task_id.to_string(),
             identity,
@@ -10282,30 +10352,6 @@ impl DownloadManager {
     }
 
     pub async fn cancel_task(&mut self, task_id: &str) {
-        self.cancel_task_impl(
-            task_id,
-            #[cfg(feature = "plugins")]
-            crate::plugin::CancelReason::UserCancelled,
-        )
-        .await;
-    }
-
-    /// 变体选择弹窗被取消时调用（593#1）：与普通用户取消同一条清理路径，
-    /// 仅 `onCancel` 钩子载荷的 `reason` 不同，便于插件区分场景。
-    #[cfg(feature = "plugins")]
-    pub async fn cancel_task_with_reason(
-        &mut self,
-        task_id: &str,
-        reason: crate::plugin::CancelReason,
-    ) {
-        self.cancel_task_impl(task_id, reason).await;
-    }
-
-    async fn cancel_task_impl(
-        &mut self,
-        task_id: &str,
-        #[cfg(feature = "plugins")] reason: crate::plugin::CancelReason,
-    ) {
         // 清除自动重试计数，与 delete_task / resume_task 对齐。取消是用户的
         // 明确意图，必须从自动重试状态中移除，使后续 create/resume 干净起步。
         self.auto_retry_counts.remove(task_id);
@@ -10431,7 +10477,7 @@ impl DownloadManager {
             pm.notify(crate::plugin::PluginEvent::Cancel {
                 task_id: task_id.to_string(),
                 url,
-                reason: Some(reason),
+                reason: Some(crate::plugin::CancelReason::UserCancelled),
             })
             .await;
         }
