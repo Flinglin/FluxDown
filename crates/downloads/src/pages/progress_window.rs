@@ -1022,8 +1022,9 @@ impl ProgressWindowView {
     fn render_open_main_button(&self, cx: &mut Context<Self>) -> AnyElement {
         Button::new("progress-open-main")
             .outline()
-            .control(cx)
-            .label(self.t(cx, "progressWindowOpenMain"))
+            .control_icon(cx)
+            .icon(FluxIcon::AppWindow)
+            .tooltip(self.t(cx, "progressWindowOpenMain"))
             .on_click(cx.listener(|_, _, _, cx| cx.emit(ProgressWindowEvent::OpenMainWindow)))
             .into_any_element()
     }
