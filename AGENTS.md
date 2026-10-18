@@ -41,7 +41,7 @@
 |---|---|
 | 设置键 | `native/protocol/src/{daemon_config,settings}.rs` 的规范目录；下载设置存引擎 `db.rs` 的 `config` 表，客户端偏好由 agent 管理 |
 | DB schema | `native/engine/src/db.rs`：`SQLITE_SCHEMA` + `POSTGRES_SCHEMA` + `add_column_if_missing` |
-| HTTP 契约 | `native/api/src/types.rs`（wire，camelCase）+ `routes.rs`（路径常量）；规范文件 `website-v2/public/openapi.json`（官网主站 = `website-v2/`，`website/` 是挂 `/v1/` 的旧站存档，不再同步） |
+| HTTP 契约 | `native/api/src/types.rs`（wire，camelCase）+ `routes.rs`（路径常量）；规范文件 `website-v2/public/openapi.json`（官网 = `website-v2/`） |
 | 本机服务协议基线 / daemon 双向鉴权 | `native/protocol/src/{rpc,handshake}.rs`：角色、版本、挑战应答与会话 HTTP 凭据；daemon 保留旧 agent 静态 Bearer 兼容，新 agent 不发送长期密钥 |
 | 慢方法调度 | `fluxdown_protocol::method::SLOW_DAEMON_METHODS`：daemon 并发调度与 agent 独立通道共用，禁止另立清单 |
 | 日志文本脱敏 | `fluxdown_logfile::SANITIZE_PATTERNS`：引擎日志与 agent 导出共用唯一正则规则源；结构化快照脱敏另见 `native/daemon/src/log_redact.rs` |
@@ -91,7 +91,7 @@ cargo run -p fluxdown_cli -- add <url> --local   # B 模式：内嵌引擎独立
 
 # ── 前端/官网/扩展 ──
 cd web && bun run dev                 # Web SPA localhost:5173（/rpc、/api、/ping、/demo 代理到 :17800 的 agent --server）；bun run build → web/dist
-cd website && npm run dev             # 官网 Astro localhost:4321
+cd website-v2 && bun run dev          # 官网 Astro localhost:4321
 cd fluxDown && npm run dev            # 扩展开发（Chrome）；dev:firefox / build / zip
 cd mobile/Android && ./gradlew :core:testDebugUnitTest :bridge:testDebugUnitTest :app:assembleDebug   # 原生 Android（JAVA_HOME = Android Studio 自带 JBR；:bridge 经 cargo-ndk 编译 fluxdown_mobile）
 mobile/Android/scripts/package.sh --version X.Y.Z[-后缀] --signing <签名属性文件>   # 原生 Android release 签名 APK（universal + 各 ABI）；CI = android-package.yml（见 .omp/knowledge/ops.md「原生 Android 打包」）
