@@ -1098,12 +1098,9 @@ impl TaskDetailView {
                 |this| {
                     this.child(detail_row(
                         self.t(cx, "infoStatus"),
-                        div().text_color(task_status_color(&row, cx)).child(
-                            self.strings
-                                .queued_label(&row)
-                                .map(SharedString::from)
-                                .unwrap_or_else(|| self.strings.task_state_label(&row)),
-                        ),
+                        div()
+                            .text_color(task_status_color(&row, cx))
+                            .child(self.strings.task_status_text(&row)),
                         cx,
                     ))
                     .when(row.size_bytes > 0, |this| {
@@ -1825,7 +1822,7 @@ impl TaskDetailView {
             let state = if entry.kind == "status" {
                 entry
                     .status
-                    .map(|status| self.strings.state_label(activity_state(status)))
+                    .map(|status| self.strings.status_code_label(status))
             } else {
                 None
             };
@@ -2030,16 +2027,6 @@ fn format_activity_timestamp(timestamp_ms: i64) -> SharedString {
             || SharedString::from("—"),
             |at| SharedString::from(at.format("%Y-%m-%d %H:%M:%S%.3f").to_string()),
         )
-}
-
-fn activity_state(status: i32) -> TaskState {
-    match status {
-        0 | 5 => TaskState::Pending,
-        1 => TaskState::Downloading,
-        2 => TaskState::Paused,
-        3 => TaskState::Completed,
-        _ => TaskState::Failed,
-    }
 }
 
 fn activity_kind_key(kind: &str) -> &'static str {

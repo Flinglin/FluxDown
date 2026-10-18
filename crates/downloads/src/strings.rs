@@ -352,7 +352,8 @@ impl DownloadStrings {
         }
     }
 
-    /// 行级状态名：已完成但产物已不在下载目录时显示「文件已删除」。
+    /// 行级状态名：已完成但产物已不在下载目录时显示「文件已删除」，引擎 status 5（探测 /
+    /// 插件解析）显示「准备中」。所有按任务展示状态名的地方都走这里，不得直接 `state_label`。
     pub(crate) fn task_state_label(&self, task: &crate::model::DownloadTaskView) -> SharedString {
         if task.is_file_missing() {
             self.status_file_missing.clone()
@@ -360,6 +361,23 @@ impl DownloadStrings {
             self.metadata_loading.clone()
         } else {
             self.state_label(task.state)
+        }
+    }
+
+    /// 单行状态（详情窗口状态行、进度窗口标题下）：排队中显示「排队 #n」，其余同
+    /// [`Self::task_state_label`]。
+    pub(crate) fn task_status_text(&self, task: &crate::model::DownloadTaskView) -> SharedString {
+        self.queued_label(task)
+            .map_or_else(|| self.task_state_label(task), SharedString::from)
+    }
+
+    /// 只有引擎原始 status 的场景（活动日志的状态变更）：与 [`Self::task_state_label`]
+    /// 同一规则，5 为「准备中」而非「等待中」。
+    pub(crate) fn status_code_label(&self, status: i32) -> SharedString {
+        if status == 5 {
+            self.metadata_loading.clone()
+        } else {
+            self.state_label(crate::model::TaskState::from_status(status))
         }
     }
 
@@ -914,5 +932,50 @@ mod tests {
         ] {
             assert_eq!(group_digits(value), expected);
         }
+    }
+
+    /// 引擎 status 5（探测 / 插件解析）在任务表、详情、进度窗口与活动日志都是「准备中」，
+    /// 不得退回 `TaskState::Pending` 的「等待中」；排队位置只属于未开始准备的等待任务。
+    #[test]
+    fn preparing_status_is_labelled_consistently_across_surfaces()
+    -> Result<(), fluxdown_ui_i18n::I18nError> {
+        let catalog = std::sync::Arc::new(fluxdown_ui_i18n::I18nCatalog::load_embedded()?);
+        let translator = catalog.translator("en");
+        let strings = DownloadStrings::from_translator(&translator);
+        let task = |status: i32, queue_position: u32| {
+            let dto = serde_json::from_value::<fluxdown_protocol::TaskDto>(serde_json::json!({
+                "taskId": "t",
+                "url": "https://www.youtube.com/watch?v=x",
+                "fileName": "video.mp4",
+                "saveDir": "/tmp",
+                "status": status,
+                "downloadedBytes": 0,
+                "totalBytes": 0,
+                "errorMessage": "",
+                "createdAt": "1",
+                "proxyUrl": "",
+                "queueId": "main",
+                "checksum": ""
+            }))
+            .expect("task");
+            let mut view = crate::model::DownloadTaskView::local(&dto, None, false);
+            view.queue_position = queue_position;
+            view
+        };
+        let preparing = translator.text("statusPreparing");
+        let pending = translator.text("statusPending");
+
+        let resolving = task(5, 3);
+        assert_eq!(strings.task_state_label(&resolving).as_ref(), preparing);
+        assert_eq!(strings.task_status_text(&resolving).as_ref(), preparing);
+        assert_eq!(strings.status_code_label(5).as_ref(), preparing);
+
+        assert_eq!(strings.task_status_text(&task(0, 0)).as_ref(), pending);
+        assert_eq!(strings.status_code_label(0).as_ref(), pending);
+        assert_eq!(
+            strings.task_status_text(&task(0, 2)).as_ref(),
+            translator.text("subtitleQueued").replace("{pos}", "2")
+        );
+        Ok(())
     }
 }
