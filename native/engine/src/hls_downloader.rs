@@ -208,17 +208,21 @@ impl RequestFailure {
     }
 }
 
-/// `outcome` 是用 `used` 发出的请求的结果。它是 401 / 403 / 410 拒绝且插件换发了
-/// 新凭据时,返回应重发所用的新身份;其余情况(含未声明 `refresh`)返回 `None`,
-/// 调用方照常处理原结果。每个请求至多因刷新重发一次。
+/// `outcome` 是用 `used` 发出的请求的结果。成功时记录该身份可用;是 401 / 403 / 410
+/// 拒绝且插件换发了新凭据时,返回应重发所用的新身份;其余情况(含未声明 `refresh`)
+/// 返回 `None`,调用方照常处理原结果。每个请求至多因刷新重发一次。
 async fn refreshed_identity<T>(
     spec: &DownloadSpec,
     used: &Arc<RequestSpec>,
     outcome: &Result<T, DownloadError>,
 ) -> Result<Option<Arc<RequestSpec>>, RequestFailure> {
     let status = match outcome {
+        Ok(_) => {
+            spec.confirm(used);
+            return Ok(None);
+        }
         Err(DownloadError::Request(error)) => error.status(),
-        _ => None,
+        Err(_) => None,
     };
     let Some(status) = status else {
         return Ok(None);
@@ -226,6 +230,18 @@ async fn refreshed_identity<T>(
     spec.refresh_after_rejection(used, status)
         .await
         .map_err(RequestFailure::from_refresh)
+}
+
+/// 刷新后重发的结果:成功时同样记录新身份可用。
+fn confirm_resend<T>(
+    spec: &DownloadSpec,
+    fresh: &Arc<RequestSpec>,
+    outcome: Result<T, DownloadError>,
+) -> Result<T, DownloadError> {
+    if outcome.is_ok() {
+        spec.confirm(fresh);
+    }
+    outcome
 }
 
 impl HlsRequestCtx<'_> {
@@ -256,7 +272,11 @@ impl HlsRequestCtx<'_> {
         let used = self.spec.current();
         let first = fetch_small(self.get(client, url, &used), cancel).await;
         match refreshed_identity(self.spec, &used, &first).await? {
-            Some(fresh) => Ok(fetch_small(self.get(client, url, &fresh), cancel).await?),
+            Some(fresh) => Ok(confirm_resend(
+                self.spec,
+                &fresh,
+                fetch_small(self.get(client, url, &fresh), cancel).await,
+            )?),
             None => Ok(first?),
         }
     }
@@ -5154,7 +5174,11 @@ async fn download_segment_once(
     let used = transport.ctx.spec.current();
     let first = download_segment_as(transport, &used, url, byte_range, seg_idx).await;
     match refreshed_identity(transport.ctx.spec, &used, &first).await? {
-        Some(fresh) => Ok(download_segment_as(transport, &fresh, url, byte_range, seg_idx).await?),
+        Some(fresh) => Ok(confirm_resend(
+            transport.ctx.spec,
+            &fresh,
+            download_segment_as(transport, &fresh, url, byte_range, seg_idx).await,
+        )?),
         None => Ok(first?),
     }
 }

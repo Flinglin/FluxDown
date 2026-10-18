@@ -13,8 +13,9 @@ use super::patch::RequestTarget;
 use super::{ActivityNotes, InterceptAbort, InterceptStage, ProtocolKind, TaskInterceptor, wants};
 use crate::downloader::{DownloadParams, RequestSpec};
 
-/// 单次运行内最多成功刷新的次数，防止凭据始终无效时无限换发。
-pub const MAX_REFRESHES_PER_RUN: u32 = 5;
+/// 连续换发凭据却都没换来成功响应的上限：凭据始终无效时停止换发，避免无限刷新。
+/// 被拒身份此前成功过（凭据被正常消耗，如每请求一个令牌）时计数归零。
+pub const MAX_UNCONFIRMED_REFRESHES: u32 = 5;
 
 /// 触发 `refresh` 的响应状态：凭据缺失 / 失效 / 已作废。
 pub fn is_refresh_status(status: reqwest::StatusCode) -> bool {

@@ -5702,6 +5702,7 @@ async fn do_segment(
         }
     };
     let resp = resp.error_for_status()?;
+    spec.confirm(&used);
     if reuse_redirect
         && direct.is_none()
         && resp.status() == reqwest::StatusCode::PARTIAL_CONTENT

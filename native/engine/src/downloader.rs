@@ -1642,6 +1642,8 @@ pub struct DownloadSpec {
     refresher: Option<crate::intercept::Refresher>,
     /// 凭据刷新单飞闸门：持有期间其他被拒请求排队，拿到闸门后先看是否已被刷新。
     refresh_gate: tokio::sync::Mutex<RefreshLedger>,
+    /// 已取得成功响应的最新身份代际 + 1（0 = 尚无）。见 [`Self::confirm`]。
+    confirmed_generation: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Debug)]
@@ -1657,8 +1659,11 @@ struct SpecState {
 
 #[derive(Debug, Default)]
 struct RefreshLedger {
-    /// 本次运行已成功刷新的次数。
-    count: u32,
+    /// 本次运行已成功刷新的次数（插件上下文 `refreshCount`）。
+    total: u32,
+    /// 连续的「换发后尚未取得过成功响应」的刷新次数；达到
+    /// [`crate::intercept::refresh::MAX_UNCONFIRMED_REFRESHES`] 即停止刷新。
+    unconfirmed: u32,
     /// 插件已对该代际表示无可刷新：同代际的后续被拒请求不再询问。
     declined_generation: Option<u64>,
 }
@@ -1676,6 +1681,7 @@ impl DownloadSpec {
             connection_cap: None,
             refresher: None,
             refresh_gate: tokio::sync::Mutex::new(RefreshLedger::default()),
+            confirmed_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -1766,14 +1772,29 @@ impl DownloadSpec {
         Some(neutral)
     }
 
+    /// 记录用 `used` 发出的请求取得了成功响应。此后该身份再被拒属于「凭据被正常
+    /// 消耗」（如每请求一个令牌），不计入连续无效刷新上限。无刷新器时为空操作。
+    pub(crate) fn confirm(&self, used: &std::sync::Arc<RequestSpec>) {
+        if self.refresher.is_none() {
+            return;
+        }
+        let state = self.read_state();
+        if std::sync::Arc::ptr_eq(&state.current, used) {
+            self.confirmed_generation
+                .fetch_max(state.generation + 1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     /// 用 `used` 发出的请求得到 `status`。可刷新（401 / 403 / 410 且有插件声明
     /// `refresh`）时返回应重发所用的新请求身份：
     /// - `used` 已不是当前身份（别的请求刚刷新过 / 已质询脱困）→ 直接返回当前身份，不调用插件；
     /// - 否则单飞调用插件，成功换发则返回新身份；
-    /// - 插件不换发、已达 [`crate::intercept::refresh::MAX_REFRESHES_PER_RUN`] 或不可刷新 → `None`，
+    /// - 插件不换发、连续换发后都没换来成功响应（达
+    ///   [`crate::intercept::refresh::MAX_UNCONFIRMED_REFRESHES`] 次）或不可刷新 → `None`，
     ///   调用方按原错误处理。
     ///
-    /// 调用方须保证同一个请求至多因刷新重发一次。插件以 `onFailure: "fail"` 出错时返回错误。
+    /// 调用方须保证同一个请求至多因刷新重发一次，并在请求成功时调用 [`Self::confirm`]。
+    /// 插件以 `onFailure: "fail"` 出错时返回错误。
     pub(crate) async fn refresh_after_rejection(
         &self,
         used: &std::sync::Arc<RequestSpec>,
@@ -1800,19 +1821,28 @@ impl DownloadSpec {
                 (**used).clone(),
             )
         };
+        // 被拒的身份此前成功过：凭据是被正常用掉的，连续无效计数归零。
+        if self
+            .confirmed_generation
+            .load(std::sync::atomic::Ordering::Relaxed)
+            > generation
+        {
+            ledger.unconfirmed = 0;
+        }
         if ledger.declined_generation == Some(generation)
-            || ledger.count >= crate::intercept::refresh::MAX_REFRESHES_PER_RUN
+            || ledger.unconfirmed >= crate::intercept::refresh::MAX_UNCONFIRMED_REFRESHES
         {
             return Ok(None);
         }
         let changed = refresher
-            .refresh(&mut url, &mut spec, status.as_u16(), ledger.count)
+            .refresh(&mut url, &mut spec, status.as_u16(), ledger.total)
             .await?;
         if !changed {
             ledger.declined_generation = Some(generation);
             return Ok(None);
         }
-        ledger.count += 1;
+        ledger.total += 1;
+        ledger.unconfirmed += 1;
         let fresh = std::sync::Arc::new(spec);
         let mut state = self.write_state();
         state.current = fresh.clone();
@@ -4706,13 +4736,18 @@ async fn resend_after_refresh(
     cancel_token: &CancellationToken,
 ) -> Result<reqwest::Response, DownloadError> {
     if resp.status().is_success() {
+        spec.confirm(used);
         return Ok(resp);
     }
     match spec.refresh_after_rejection(used, resp.status()).await? {
         Some(fresh) => {
             drop(resp);
             *used = fresh;
-            send_cancellable(build(used.as_ref()), cancel_token).await
+            let resp = send_cancellable(build(used.as_ref()), cancel_token).await?;
+            if resp.status().is_success() {
+                spec.confirm(used);
+            }
+            Ok(resp)
         }
         None => Ok(resp),
     }
@@ -6171,10 +6206,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_stops_after_per_run_limit() {
+    async fn refresh_stops_after_unconfirmed_limit() {
         use super::test_support::RefreshScript;
         use std::sync::atomic::Ordering;
-        let limit = crate::intercept::refresh::MAX_REFRESHES_PER_RUN as usize;
+        let limit = crate::intercept::refresh::MAX_UNCONFIRMED_REFRESHES as usize;
         let script =
             std::sync::Arc::new(RefreshScript::new(std::time::Duration::ZERO, token_reply));
         let spec = refreshable_spec(script.clone()).await;
@@ -6194,6 +6229,31 @@ mod tests {
                 .is_none()
         );
         assert_eq!(script.calls.load(Ordering::SeqCst), limit);
+    }
+
+    /// 每请求一个令牌：每次换发的令牌都先成功用过一次再被拒，属于正常消耗，
+    /// 刷新次数不受连续无效上限约束。
+    #[tokio::test]
+    async fn confirmed_identities_keep_refresh_available() {
+        use super::test_support::RefreshScript;
+        use std::sync::atomic::Ordering;
+        let rounds = crate::intercept::refresh::MAX_UNCONFIRMED_REFRESHES as usize * 3;
+        let script =
+            std::sync::Arc::new(RefreshScript::new(std::time::Duration::ZERO, token_reply));
+        let spec = refreshable_spec(script.clone()).await;
+        for round in 0..rounds {
+            let used = spec.current();
+            spec.confirm(&used);
+            let fresh = spec
+                .refresh_after_rejection(&used, reqwest::StatusCode::FORBIDDEN)
+                .await
+                .unwrap();
+            assert!(
+                fresh.is_some(),
+                "refresh {round} refused after confirmed use"
+            );
+        }
+        assert_eq!(script.calls.load(Ordering::SeqCst), rounds);
     }
 
     #[tokio::test]

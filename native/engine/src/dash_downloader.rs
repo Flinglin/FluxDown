@@ -222,6 +222,7 @@ impl SegmentDownloadContext<'_> {
             .send_once(&used, what, header_timeout, url, range)
             .await?;
         if resp.status().is_success() {
+            self.spec.confirm(&used);
             return Ok(resp);
         }
         match self
@@ -232,8 +233,13 @@ impl SegmentDownloadContext<'_> {
         {
             Some(fresh) => {
                 drop(resp);
-                self.send_once(&fresh, what, header_timeout, url, range)
-                    .await
+                let resp = self
+                    .send_once(&fresh, what, header_timeout, url, range)
+                    .await?;
+                if resp.status().is_success() {
+                    self.spec.confirm(&fresh);
+                }
+                Ok(resp)
             }
             None => Ok(resp),
         }
