@@ -2,10 +2,12 @@ import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import type { RulesListEntry } from "@/background/protocol";
 import type { RuleStatus } from "@/rules/engine";
-import type { RuleOverrides, RuleTier } from "@/rules/schema";
+import type { RuleOverrides, RuleTier, SniffRuleV1 } from "@/rules/schema";
 import { Badge } from "@/ui/components/Badge";
 import { Button } from "@/ui/components/Button";
 import { EmptyState } from "@/ui/components/EmptyState";
+import { IconButton } from "@/ui/components/IconButton";
+import { Modal } from "@/ui/components/Modal";
 import { Select } from "@/ui/components/Select";
 import { TextInput } from "@/ui/components/TextInput";
 import { Toggle } from "@/ui/components/Toggle";
@@ -22,6 +24,12 @@ interface RuleTableProps {
 type TierFilter = RuleTier | "all";
 
 const PAGE_SIZE = 100;
+
+/**
+ * 内置规则是否可查看原文。开发与本地构建默认可看；发布流水线（release.yml）构建时
+ * 设 `WXT_HIDE_BUILTIN_RULES=1`，商店 / Release 包不展示内置规则的真实内容。
+ */
+const BUILTIN_RULE_PREVIEW = import.meta.env.WXT_HIDE_BUILTIN_RULES !== "1";
 
 const TIER_TONES: Record<RuleTier, "neutral" | "accent" | "warning" | "success"> = {
   builtin: "neutral",
@@ -55,6 +63,7 @@ export function RuleTable(props: RuleTableProps): JSX.Element {
   const [tier, setTier] = useState<TierFilter>("all");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(PAGE_SIZE);
+  const [previewing, setPreviewing] = useState<SniffRuleV1 | null>(null);
 
   const tierLabels: Record<RuleTier, string> = {
     builtin: t("rules.tier.builtin"),
@@ -147,6 +156,7 @@ export function RuleTable(props: RuleTableProps): JSX.Element {
                 <th>{t("rules.table.colStage")}</th>
                 <th>{t("rules.table.colVersion")}</th>
                 <th>{t("rules.table.colStatus")}</th>
+                {BUILTIN_RULE_PREVIEW ? <th class="opt-col-actions">{t("options.sites.colActions")}</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -186,6 +196,13 @@ export function RuleTable(props: RuleTableProps): JSX.Element {
                       ) : null}
                     </div>
                   </td>
+                  {BUILTIN_RULE_PREVIEW ? (
+                    <td class="opt-col-actions">
+                      {rule.tier === "builtin" ? (
+                        <IconButton icon="eye" label={t("rules.table.viewRule")} onClick={() => setPreviewing(rule)} />
+                      ) : null}
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
@@ -199,6 +216,12 @@ export function RuleTable(props: RuleTableProps): JSX.Element {
             {t("rules.table.showMore", { count: String(filtered.length - visible.length) })}
           </Button>
         </div>
+      ) : null}
+
+      {previewing ? (
+        <Modal title={previewing.title || previewing.id} width={640} onClose={() => setPreviewing(null)}>
+          <pre class="opt-json opt-json-view">{JSON.stringify(previewing, null, 2)}</pre>
+        </Modal>
       ) : null}
     </div>
   );

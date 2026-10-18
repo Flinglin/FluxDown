@@ -579,13 +579,18 @@ jobs:
         run: npm ci
         working-directory: fluxDown
 
+      # 发布包不展示内置嗅探规则原文（见 fluxDown RuleTable 的 BUILTIN_RULE_PREVIEW）
       - name: Build Chrome extension
         run: npm run build
         working-directory: fluxDown
+        env:
+          WXT_HIDE_BUILTIN_RULES: '1'
 
       - name: Build Firefox extension
         run: npm run build:firefox
         working-directory: fluxDown
+        env:
+          WXT_HIDE_BUILTIN_RULES: '1'
 
       - name: Package Chrome extension
         run: |
