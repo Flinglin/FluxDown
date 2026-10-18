@@ -40,10 +40,15 @@ import type {
   HostStatus,
   MessageAction,
   MessageMap,
+  ClassifiedLink,
   PageLink,
   SendChannel,
 } from "./protocol";
 import { getEngine, getRuleSyncStatus, syncRemotePacks } from "./rules-store";
+import { compileWithDraft, engineSettled } from "./rules-store";
+import { getRuleHits } from "./rule-hits";
+import { toListItem } from "./rule-view";
+import { BUILTIN_RULE_PREVIEW } from "@/utils/rule-preview";
 import { getCachedProfiles, getCachedSettings } from "./settings-cache";
 import {
   addManifest,
@@ -197,6 +202,7 @@ const handlers: { [A in MessageAction]: Handler<A> } = {
       frameIsTop: frameId === 0,
       interceptMagnet: settings.enabled && settings.interceptMagnet && profile.intercept !== "never",
       sniffImages: settings.sniffImages,
+      classify: engine.classifyRules(),
     };
     return config;
   },
@@ -378,11 +384,12 @@ const handlers: { [A in MessageAction]: Handler<A> } = {
     const frames = new Set([0, ...framesOf(req.tabId)]);
     const results = await Promise.all([...frames].map((frameId) => collectFrameLinks(req.tabId, frameId)));
     const seen = new Set<string>();
-    const links: PageLink[] = [];
+    const engine = getEngine();
+    const links: ClassifiedLink[] = [];
     for (const link of results.flat()) {
       if (seen.has(link.url)) continue;
       seen.add(link.url);
-      links.push(link);
+      links.push({ ...link, type: engine.classify(link.url) });
       if (links.length >= MAX_LINKS) break;
     }
     return { links };
@@ -400,12 +407,25 @@ const handlers: { [A in MessageAction]: Handler<A> } = {
   },
 
   async rulesTest(req) {
-    const engine = getEngine();
+    const { draft, ...input } = req;
+    const engine = draft ? await compileWithDraft(draft) : getEngine();
+    const response = engine.classifyResponse(input);
+    const allowed = await sniffEnabled(-1, input.pageUrl);
+    const ignored = response.decision === "ignore";
+    // 与 sniff.ts onSniffResponse 的收录条件一致：未被忽略，且命中资源规则或带 attachment。
+    const wouldIngest = allowed && !ignored && (response.decision === "resource" || input.attachment);
+    const own = draft ? engine.listRules().find((e) => e.rule.id === draft.id) : undefined;
     return {
-      response: engine.classifyResponse(req),
-      track: engine.trackKind({ url: req.url, mime: req.mime, pageUrl: req.pageUrl }),
-      dedupeKey: engine.dedupeKey(req.url, req.pageUrl),
-      fileExtension: engine.fileExtension(req.url, req.pageUrl),
+      response,
+      track: engine.trackKind({ url: input.url, mime: input.mime, pageUrl: input.pageUrl }),
+      dedupeKey: engine.dedupeKey(input.url, input.pageUrl),
+      fileExtension: engine.fileExtension(input.url, input.pageUrl),
+      matches: engine.explainResponse(input),
+      sniffAllowed: allowed,
+      wouldIngest,
+      finalType: !wouldIngest ? null : response.decision === "resource" ? response.type : engine.classify(input.url, input.mime),
+      ignoredBy: response.decision === "ignore" ? response.rule : null,
+      ...(own ? { draft: { status: own.status, detail: own.detail, code: own.code, param: own.param } } : {}),
     };
   },
 
@@ -428,7 +448,24 @@ const handlers: { [A in MessageAction]: Handler<A> } = {
   },
 
   async rulesList() {
-    return getEngine().listRules();
+    await engineSettled();
+    const hits = await getRuleHits();
+    return getEngine()
+      .listRules()
+      .map((entry) => toListItem(entry, hits.get(entry.rule.id), entry.rule.tier === "builtin" && !BUILTIN_RULE_PREVIEW));
+  },
+
+  async ruleGet(req) {
+    await engineSettled();
+    const entry = getEngine()
+      .listRules()
+      .find((e) => e.rule.id === req.id);
+    if (!entry || (entry.rule.tier === "builtin" && !BUILTIN_RULE_PREVIEW)) return null;
+    return entry.rule;
+  },
+
+  async rulesSyncStatus() {
+    return getRuleSyncStatus();
   },
 
   async getDebugLog(req) {

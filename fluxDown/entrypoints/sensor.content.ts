@@ -34,7 +34,7 @@ import {
   type ScanContext,
 } from "@/page/dom-scan";
 import { MediaTracker } from "@/page/media-tracker";
-import { compileBundled } from "@/rules/engine";
+import { compileBundled, createClassifier } from "@/rules/engine";
 import { createFloatButton, type FloatButtonController } from "@/ui/features/FloatButton";
 import { normalizeDashManifest, parseDashManifestText } from "@/utils/dash-manifest";
 import { isHttpUrl } from "@/utils/media-sniff";
@@ -100,7 +100,8 @@ export default defineContentScript({
     const shared = globalThis as { __fluxdownSensorAlive?: () => boolean };
     if (!top && shared.__fluxdownSensorAlive?.() === true) return;
     shared.__fluxdownSensorAlive = () => !ctx.isInvalid;
-    const rules = compileBundled();
+    // 收到 PageConfig 前用随包规则；之后换成用户实际生效的 classifier。
+    let classify = compileBundled().classify;
 
     let config: PageConfig | null = null;
     const sniffImages = (): boolean => config?.sniffImages === true;
@@ -108,7 +109,7 @@ export default defineContentScript({
     let navCount = 0;
 
     const scanCtx: ScanContext = {
-      classify: (url) => rules.classify(url),
+      classify: (url) => classify(url),
       get sniffImages() {
         return sniffImages();
       },
@@ -378,6 +379,13 @@ export default defineContentScript({
 
     function applyConfig(next: PageConfig): void {
       config = next;
+      if (Array.isArray(next.classify)) {
+        try {
+          classify = createClassifier(next.classify);
+        } catch {
+          /* 形状不对：沿用当前 classifier */
+        }
+      }
       try {
         document.dispatchEvent(
           new CustomEvent(EV_CONFIG, { detail: encodeDetail({ ...next, sid: tracker.sid, nav: navCount }) }),
@@ -425,7 +433,7 @@ export default defineContentScript({
           reportResources([
             {
               url: detail.url,
-              type: rules.classify(detail.url, detail.mime),
+              type: classify(detail.url, detail.mime),
               mimeType: detail.mime,
               size: detail.size,
               detectedBy: detail.via === "xhr" ? "xhr-intercept" : detail.via === "json" ? "api-scan" : "fetch-intercept",
