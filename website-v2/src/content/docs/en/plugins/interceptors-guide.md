@@ -121,7 +121,7 @@ Pick the recipe by credential type:
 
 Limits:
 
-- At most **5 refreshes per run**.
+- Refreshing stops after **5 consecutive refreshes that never produced a successful response** (credentials that never work). A credential that succeeded at least once before being rejected counts as normally used, which resets the counter — so one-token-per-request schemes can refresh as often as needed.
 - Concurrent rejections are **single-flighted**: one plugin call serves them all; a request already sent with an outdated identity is simply resent with the current one. If the plugin changes nothing, that identity generation is marked rejected and is not asked again.
 - Refreshed credentials are **not persisted**; the next run starts from `prepare` again.
 - Non-HTTP tasks cannot refresh `url` (other credential fields work). `refresh` cannot change `method`, `body`, `segments`, `maxConnections`, `fileName` or `ephemeral`.
