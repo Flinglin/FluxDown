@@ -77,6 +77,7 @@ import type {
   RssValidateResponse,
   SelectionResolutionDto,
   SetSeedLimitsParams,
+  TaskVerifyResult,
   SiteAuthCredentialDto,
   SiteAuthDeleteParams,
   SiteAuthEntryDto,
@@ -104,6 +105,9 @@ import type {
 /** 服务端逐源串行拉取镜像（每源 20s），最坏远超默认 30s。 */
 const SLOW_MIRROR_TIMEOUT_MS = 120_000;
 
+/** BT 完整性校验需读盘比对全部分块，耗时随数据量增长。 */
+const VERIFY_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+
 const task = {
   list: () => call<TaskDto[]>(METHOD.DAEMON_TASK_LIST),
   get: (params: TaskIdParams) => call<TaskDto>(METHOD.DAEMON_TASK_GET, params),
@@ -128,6 +132,9 @@ const task = {
   rescan: () => call<OkResult>(METHOD.DAEMON_TASK_RESCAN),
   setSeedLimits: (params: SetSeedLimitsParams) =>
     call<OkResult>(METHOD.DAEMON_TASK_SET_SEED_LIMITS, params),
+  /** BT 完整性校验：耗时与数据量成正比，使用 6 小时超时。 */
+  verify: (params: TaskIdParams) =>
+    call<TaskVerifyResult>(METHOD.DAEMON_TASK_VERIFY, params, { timeoutMs: VERIFY_TIMEOUT_MS }),
   /** 批量操作：一次请求、整批只推一次任务快照（逐条调用会撞上 agent 的通道上限）。 */
   pauseMany: (taskIds: string[]) => {
     const params: TaskIdsParams = { taskIds };

@@ -21,6 +21,9 @@ pub mod bt_seeding;
 /// 存储包装仅 `bt` feature 下编译。
 #[cfg(target_os = "windows")]
 pub mod bt_sparse;
+/// 已完成 BT 任务的完整性校验（按 piece 表重哈希落盘数据）。
+#[cfg(feature = "bt")]
+pub mod bt_verify;
 pub mod cdn;
 pub mod components;
 pub mod dash_downloader;

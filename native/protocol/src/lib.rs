@@ -88,9 +88,10 @@ pub use daemon::{
     SettingFieldDto, SettingOptionDto, SetupRequest, SetupStatusResponse, SiteAuthCredentialDto,
     SiteAuthDeleteParams, SiteAuthEntryDto, SiteAuthGetParams, SiteAuthMatchParams,
     SiteAuthSaveRequest, StatsResponse, StorageProbeDto, StorageProbeFailure, StorageProbeRole,
-    StorageProbeTarget, SystemProxyDto, TaskDto, TokenResponse, TrackerSubRefreshResponse,
-    UpdateQueueRequest, WebhookDeliveriesResponse, WebhookDeliveryDto, WebhookPresetDto,
-    WebhookSimulateResponse, WebhookTestRequest, WebhookTestResponse, WsClientMsg, WsServerMsg,
+    StorageProbeTarget, SystemProxyDto, TaskDto, TaskVerifyResult, TaskVerifyStatus, TokenResponse,
+    TrackerSubRefreshResponse, UpdateQueueRequest, WebhookDeliveriesResponse, WebhookDeliveryDto,
+    WebhookPresetDto, WebhookSimulateResponse, WebhookTestRequest, WebhookTestResponse,
+    WsClientMsg, WsServerMsg,
 };
 pub use daemon_config::{
     BT_MSE_MODES, BT_SEED_LIMIT_OPERATORS, BT_SEED_THEN_ACTIONS, BT_SEED_TIME_UNITS,

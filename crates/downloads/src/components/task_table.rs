@@ -419,6 +419,11 @@ impl TaskMenuFacts {
     pub(crate) fn can_change_segments(&self) -> bool {
         self.is_local && !self.is_bt && self.state != TaskState::Completed
     }
+
+    /// 「完整性校验」可用：本地已完成、产物仍在的 BT 任务（按种子 piece 表重哈希）。
+    pub(crate) fn can_verify_integrity(&self) -> bool {
+        self.is_local && self.is_bt && self.state == TaskState::Completed && !self.file_missing
+    }
 }
 
 /// 由任务行计算菜单事实：右键菜单、应用菜单与详情面板按钮共用同一事实源。
@@ -453,6 +458,8 @@ pub(crate) enum MenuEntry {
     ChangeUrl,
     /// 修改线程数（单选；条件见 [`TaskMenuFacts::can_change_segments`]）。
     ChangeSegments,
+    /// 完整性校验（单选；条件见 [`TaskMenuFacts::can_verify_integrity`]）。
+    VerifyIntegrity,
     Redownload,
     CopyUrl,
     MoveToQueue,
@@ -520,6 +527,9 @@ pub(crate) fn context_menu_items(selection: &[TaskMenuFacts]) -> Vec<MenuEntry> 
         }
         if only.can_change_segments() {
             items.push(MenuEntry::ChangeSegments);
+        }
+        if only.can_verify_integrity() {
+            items.push(MenuEntry::VerifyIntegrity);
         }
     }
     if selection.iter().all(|task| {
@@ -2392,6 +2402,11 @@ impl DownloadTableDelegate {
                 self.strings.edit_threads.clone(),
                 FluxIcon::Layers,
                 Box::new(crate::actions::ChangeSelectedSegments),
+            ),
+            MenuEntry::VerifyIntegrity => menu.menu_with_icon(
+                self.strings.verify_integrity.clone(),
+                FluxIcon::Shield,
+                Box::new(crate::actions::VerifySelected),
             ),
             MenuEntry::Redownload => menu.menu_with_icon(
                 self.strings.redownload_task.clone(),
@@ -4942,6 +4957,37 @@ mod context_menu_tests {
         );
         let pair = [task(true, TaskState::Paused), task(true, TaskState::Failed)];
         assert!(!context_menu_items(&pair).contains(&MenuEntry::ChangeSegments));
+    }
+
+    #[test]
+    fn verify_integrity_needs_single_local_completed_bt_task_with_files() {
+        let mut bt = task(true, TaskState::Completed);
+        bt.is_bt = true;
+        let items = context_menu_items(&[bt]);
+        let at = items
+            .iter()
+            .position(|entry| *entry == MenuEntry::VerifyIntegrity)
+            .expect("completed BT task offers verification");
+        assert_eq!(items.get(at + 1), Some(&MenuEntry::Redownload));
+
+        let mut missing = bt;
+        missing.file_missing = true;
+        let mut unfinished = bt;
+        unfinished.state = TaskState::Paused;
+        let mut remote = bt;
+        remote.is_local = false;
+        for facts in [
+            missing,
+            unfinished,
+            remote,
+            task(true, TaskState::Completed),
+        ] {
+            assert!(
+                !context_menu_items(&[facts]).contains(&MenuEntry::VerifyIntegrity),
+                "{facts:?}"
+            );
+        }
+        assert!(!context_menu_items(&[bt, bt]).contains(&MenuEntry::VerifyIntegrity));
     }
 
     #[test]

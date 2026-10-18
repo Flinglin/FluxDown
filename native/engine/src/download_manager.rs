@@ -3215,6 +3215,9 @@ pub struct DownloadManager {
     /// 见 [`decide_bt_session_release`]。
     #[cfg(feature = "bt")]
     bt_paused_idle_since: Option<std::time::Instant>,
+    /// 已完成 BT 任务的在途完整性校验（删除任务 / 关停时取消）。
+    #[cfg(feature = "bt")]
+    integrity_checks: crate::bt_verify::IntegrityChecks,
     /// System 代理模式下按系统代理指纹缓存的全局 client（见 `global_client`）。
     system_client: std::sync::Mutex<Option<(String, Client)>>,
     /// 专属（任务级代理 / UA / 忽略 TLS / 队列默认 UA / Auto 代理）HTTP client 缓存，
@@ -3419,6 +3422,8 @@ impl DownloadManager {
             last_seed_time_persist: Mutex::new(std::time::Instant::now()),
             #[cfg(feature = "bt")]
             bt_paused_idle_since: None,
+            #[cfg(feature = "bt")]
+            integrity_checks: crate::bt_verify::IntegrityChecks::default(),
             system_client: std::sync::Mutex::new(None),
             task_clients: std::sync::Mutex::new(HashMap::new()),
             probe_gate: Arc::new(Semaphore::new(META_PROBE_CONCURRENCY)),
@@ -10511,6 +10516,8 @@ impl DownloadManager {
         self.retry_unschedule(task_id);
         self.clear_pending_resolve(task_id);
 
+        #[cfg(feature = "bt")]
+        self.integrity_checks.cancel(task_id);
         // Remove from pending queue if queued.
         if let Some(pos) = self.pending_queue.iter().position(|q| q.task_id == task_id) {
             self.pending_queue.remove(pos);
@@ -10938,6 +10945,8 @@ impl DownloadManager {
         let mut workers = Vec::with_capacity(task_ids.len());
         for task_id in task_ids {
             hls_downloader::request_discard(task_id);
+            #[cfg(feature = "bt")]
+            self.integrity_checks.cancel(task_id);
             let handle = self
                 .active_tasks
                 .remove(task_id.as_str())
@@ -11743,6 +11752,8 @@ impl DownloadManager {
         // 做种时长平时只在状态迁移/顺带写/30 分钟兜底时落库，正常关机在此结算。
         #[cfg(feature = "bt")]
         self.flush_seed_times().await;
+        #[cfg(feature = "bt")]
+        self.integrity_checks.cancel_all();
         let mut handles = Vec::new();
         for (_task_id, entry) in self.active_tasks.drain() {
             entry.token.cancel();
@@ -11783,6 +11794,8 @@ impl Drop for DownloadManager {
             entry.token.cancel();
         }
         self.pending_queue.clear();
+        #[cfg(feature = "bt")]
+        self.integrity_checks.cancel_all();
 
         // Shut down the BT session on a dedicated thread to avoid deadlock.
         // `SharedBtSession::shutdown()` calls `runtime.block_on()`, which
@@ -12714,6 +12727,105 @@ impl DownloadManager {
             let spec = crate::downloader::RequestSpec::empty_get();
             crate::meta_prober::probe_link_kind(&url, &client, &spec).await
         }
+    }
+
+    /// 已完成 BT 任务的完整性校验（`daemon.task.verify`）：按种子 piece 表全量重哈希
+    /// 落盘数据，只读、不改任务状态。前置校验与元数据收集在 actor 内完成，返回的
+    /// future 在阻塞线程上哈希、可在 actor 之外 `await`；同一任务同时只跑一个，
+    /// 删除任务或引擎关停时取消。
+    #[cfg(feature = "bt")]
+    pub async fn bt_integrity_check_future(
+        &self,
+        task_id: &str,
+    ) -> Result<
+        impl Future<
+            Output = Result<
+                crate::bt_verify::BtIntegrityReport,
+                crate::bt_verify::BtIntegrityError,
+            >,
+        > + Send
+        + use<>,
+        crate::bt_verify::BtIntegrityError,
+    > {
+        use crate::bt_verify::{BtIntegrityError, LandedCheck, MetadataSources};
+
+        let db_error = |error: DbError| BtIntegrityError::Internal(format!("{error:#}"));
+        let task = self
+            .db
+            .load_task_by_id(task_id)
+            .await
+            .map_err(db_error)?
+            .ok_or(BtIntegrityError::NotFound)?;
+        if task.status != 3 || !is_bt_url(&task.url) {
+            return Err(BtIntegrityError::NotEligible);
+        }
+        let guard = self
+            .integrity_checks
+            .begin(task_id)
+            .ok_or(BtIntegrityError::Busy)?;
+
+        let live = match &self.bt_session {
+            Some(bt) => match bt.cached_handle(task_id).await {
+                Some(handle) => match handle.with_metadata(|meta| meta.torrent_bytes.clone()) {
+                    Ok(bytes) => Some(bytes),
+                    Err(error) => {
+                        log_info!(
+                            "[manager] integrity check {}: live metadata unavailable: {:#}",
+                            task_id,
+                            error
+                        );
+                        None
+                    }
+                },
+                None => None,
+            },
+            None => None,
+        };
+        let stored = if live.is_none() {
+            self.db
+                .load_torrent_file_bytes(task_id)
+                .await
+                .map_err(db_error)?
+                .map(bytes::Bytes::from)
+        } else {
+            None
+        };
+        let cached = if is_magnet(&task.url) {
+            TorrentSource::Magnet(task.url.clone())
+                .info_hash_hex()
+                .map(|hash| {
+                    (
+                        crate::bt_partfile::persistence_dir(&self.app_data_dir)
+                            .join(format!("{hash}.torrent")),
+                        hash,
+                    )
+                })
+        } else {
+            None
+        };
+        let selection = self
+            .db
+            .load_bt_selected_files(task_id)
+            .await
+            .map_err(db_error)?
+            .filter(|list| !list.is_empty() && list.iter().all(|&index| index >= 0))
+            .map(|list| list.into_iter().map(|index| index as usize).collect());
+
+        Ok(crate::bt_verify::run(
+            LandedCheck {
+                task_id: task_id.to_owned(),
+                save_dir: PathBuf::from(&task.save_dir),
+                file_name: task.file_name.clone(),
+                selection,
+                sidecar_path: crate::bt_partfile::sidecar_path(&self.app_data_dir, task_id),
+                metadata: MetadataSources {
+                    live,
+                    stored,
+                    cached,
+                },
+            },
+            guard,
+        ))
     }
 
     /// RSS off-actor 回流的唯一入口（宿主 actor 的 `rss_rx` 分支调用）。

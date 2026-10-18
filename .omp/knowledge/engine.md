@@ -89,6 +89,14 @@
   免 VDL 零填充写放大）。完成期全量重哈希只在 fastresume 污点时执行（add 时
   存在既有 `.bitv` / 经缓存句柄跨暂停恢复 / 完成重试）；无污点任务的 have-bits
   全部有磁盘依据（全量初检读盘 / Live 写盘后读回校验），完成即时。
+- **已完成 BT 任务完整性校验**（`daemon.task.verify`，慢方法，右键「完整性校验」）：
+  `bt_verify.rs` 只读、不改任务状态、不碰 librqbit 会话。元数据按缓存句柄
+  `torrent_bytes` → DB `torrent_files` → 会话目录 `{info_hash}.torrent`（磁力，校验
+  info-hash）取，全无则 `unverifiable`。落盘映射优先 parts 边车（选中文件最终路径 +
+  未选文件边界字节，`bt_partfile::load_sidecar_layout`），无边车按完成布局推断，缺字节的
+  边界 piece 记跳过而非损坏。复用 `bt_downloader::verify_pieces_core`（spawn_blocking，
+  逐 piece 检查取消）；`IntegrityChecks` 同任务互斥（`conflict`），删除任务 / 关停 /
+  调用方丢弃 future 即取消。
 - **ED2K**：eDonkey2000 纯 leech。源发现 = 服务器 `GETSOURCES`（手动 `ed2k_server_list` + 订阅 `server.met` 缓存）+ Kad DHT 兜底 + UPnP-IGD 争 HighID + LowID 回调中继。逐块 MD4 + hashset 自校验（违规拉黑 peer）；分块 MD4 root hash（PART_SIZE=9.28MB，幻影尾处理）。进程级共享 `Ed2kClient` 持久服务器会话：读循环处理 IDCHANGE/EOF；`OP_CALLBACK_FAIL` 不带 client_id，按服务器顺序立即失败最早的待决回调；有活跃 ED2K 任务时断线后台重连（1→30s 指数退避封顶），无活跃任务不重连，不发协议外心跳。链接大小上限 256 GiB；建块/预分配前做磁盘余量预检（不足即失败、不建文件与块行）。块状态以内存快照为准供 200ms 上报读取，DB 只在启动恢复与终验坏块时全量读；块完成按批事务落库，且数据 `sync_data` 与 hashset 落库先于 verified 标记提交。
 - **HTTP 临时文件独占**：多段与单流写临时文件前按规范化路径（Windows 忽略大小写）取进程内 RAII 独占；同一下载运行的嵌套调用与 worker 共享，另一任务撞同一路径时以 `DownloadError::Io(WouldBlock)` 失败进入错误态，不截断/覆盖对方数据，占用方结束后可重试。
 - **文件已存在策略**（config `file_exists_behavior` = `rename` / `overwrite` / `skip` / `ask`；纯决策 `file_exists.rs::decide`，副作用在启动序幕 `finalize_start_file_name`）：只在目标路径已有**普通最终文件**时生效。优先级：跳过（逐任务决定或全局 skip，只看最终文件）→ 硬冲突（`.fdownloading` / 兄弟预订 / 同名目录，恒编号改名）→ `tasks.exists_decision` → 全局策略 → `ask` 降级（协议不可询问 HLS / BT / DASH 轨对、`tasks.unattended=1`、`HostSelection::can_prompt()=false` 均按重命名）→ 询问。可询问：HTTP/HTTPS/FTP（含跳过）、ED2K 与 DASH `.mpd`（无跳过）；非 GET 请求不询问。询问时任务**让出并发槽**挂起（`awaiting_decision`，DB 状态保持 0，`has_capacity` 不计），序幕 task 经 `HostSelection::select_file_exists`（60s）等待，答复经既有 `TaskDone` 通道以 `TaskDonePhase::{AwaitingDecision, DecisionReady}` 回流（宿主无需新增 drain 通道，只有 `Finished` 表示任务结束）；取消 = 暂停，其余答复落 `exists_decision` 后以队首重排，重入不重复触发 onStart / `task.started`。覆盖授权 `OverwritePolicy::{Never, Any, Only(name)}`：逐任务覆盖只绑定询问时的名字（完成期精修成别名则不覆盖），旧文件只在完成认领时替换。跳过 = 「采纳」已有文件：任务记 `exists_decision='skip'`，不拥有该文件（重新下载 / 删除任务和文件不删它，不打 MOTW、不发插件 Done，仍发 webhook completed）。用户改名与重新下载清空决定。

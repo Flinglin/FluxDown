@@ -24,6 +24,10 @@ pub const DAEMON_TASK_PAUSE_ALL: &str = "daemon.task.pauseAll";
 pub const DAEMON_TASK_RESUME_ALL: &str = "daemon.task.resumeAll";
 pub const DAEMON_TASK_RESCAN: &str = "daemon.task.rescan";
 pub const DAEMON_TASK_SET_SEED_LIMITS: &str = "daemon.task.setSeedLimits";
+/// 已完成 BT 任务的完整性校验（`{taskId}` → `TaskVerifyResult`）：按种子 piece 表全量
+/// 重哈希落盘数据，只读。慢方法：耗时与数据量成正比，同一任务同时只跑一个（`conflict`），
+/// 非已完成 BT 任务返回 `invalidArgument`，任务不存在返回 `notFound`。
+pub const DAEMON_TASK_VERIFY: &str = "daemon.task.verify";
 /// 批量暂停 / 恢复（`{taskIds}`）：整批只推一次任务快照；未知 id 忽略，空列表为空操作。
 pub const DAEMON_TASK_PAUSE_MANY: &str = "daemon.task.pauseMany";
 pub const DAEMON_TASK_RESUME_MANY: &str = "daemon.task.resumeMany";
@@ -339,6 +343,7 @@ pub const ALL_METHODS: &[&str] = &[
     DAEMON_TASK_RESUME_ALL,
     DAEMON_TASK_RESCAN,
     DAEMON_TASK_SET_SEED_LIMITS,
+    DAEMON_TASK_VERIFY,
     DAEMON_TASK_PAUSE_MANY,
     DAEMON_TASK_RESUME_MANY,
     DAEMON_TASK_DELETE_MANY,
@@ -553,6 +558,7 @@ pub const SLOW_DAEMON_METHODS: &[&str] = &[
     DAEMON_FS_LIST,
     DAEMON_DIAGNOSTICS_PROBE,
     DAEMON_DIAGNOSTICS_FIX_COMPONENT,
+    DAEMON_TASK_VERIFY,
 ];
 
 /// 是否属于 [`SLOW_DAEMON_METHODS`]。

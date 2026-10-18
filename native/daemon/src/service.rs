@@ -272,6 +272,18 @@ impl DaemonService {
                 })
                 .await
             }
+            method::DAEMON_TASK_VERIFY => {
+                let params = parse_params::<IdParams>(params)?;
+                match self
+                    .actor
+                    .execute(ActorOperation::VerifyTask { task_id: params.id })
+                    .await
+                {
+                    Ok(ActorResult::TaskVerify(result)) => to_value(result),
+                    Ok(_) => Err(internal_error("unexpected actor result".to_owned())),
+                    Err(error) => Err(actor_error(error)),
+                }
+            }
             method::DAEMON_TASK_PAUSE_MANY => {
                 let params = parse_params::<DaemonTaskIdsParams>(params)?;
                 self.execute_unit(ActorOperation::PauseTasks {
@@ -2201,6 +2213,10 @@ fn actor_error(error: ActorCallError) -> RpcErrorObject {
             )
         }
         ActorCallError::Operation(ActorError::NotFound) => not_found(),
+        ActorCallError::Operation(ActorError::Conflict(message)) => RpcErrorObject::application(
+            message,
+            RpcErrorData::new(ApplicationErrorCode::Conflict, false),
+        ),
     }
 }
 

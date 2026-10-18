@@ -102,6 +102,8 @@ pub(crate) struct DownloadStrings {
     pub(crate) edit_threads_zero_hint: SharedString,
     pub(crate) edit_threads_invalid: SharedString,
     pub(crate) threads_changed: SharedString,
+    /// 右键「完整性校验」（已完成 BT 任务）。
+    pub(crate) verify_integrity: SharedString,
     pub(crate) redownload_task: SharedString,
     pub(crate) copy_url: SharedString,
     /// 复制下载地址后的成功提示。
@@ -248,6 +250,7 @@ impl DownloadStrings {
             edit_threads_zero_hint: shared(translator.text("queueDefaultSegmentsHint")),
             edit_threads_invalid: shared(translator.text("editThreadsInvalid")),
             threads_changed: shared(translator.text("threadsChanged")),
+            verify_integrity: shared(translator.text("verifyTaskIntegrity")),
             redownload_task: shared(translator.text("redownloadTask")),
             copy_url: shared(translator.text("copyUrl")),
             url_copied: shared(translator.text("urlCopied")),

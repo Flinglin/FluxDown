@@ -29,6 +29,7 @@ public enum HostMethod {
     public static let daemonTaskResumeAll = "daemon.task.resumeAll"
     public static let daemonTaskRescan = "daemon.task.rescan"
     public static let daemonTaskSetSeedLimits = "daemon.task.setSeedLimits"
+    public static let daemonTaskVerify = "daemon.task.verify"
     /// 批量暂停 / 恢复（`{taskIds}`）：整批只推一次任务快照；未知 id 忽略，空列表为空操作。
     public static let daemonTaskPauseMany = "daemon.task.pauseMany"
     public static let daemonTaskResumeMany = "daemon.task.resumeMany"

@@ -17,6 +17,7 @@ import {
   SquareCheck,
   RotateCw,
   Rows3,
+  ShieldCheck,
   Trash2,
   Zap,
 } from 'lucide-react'
@@ -48,9 +49,10 @@ import {
   retryFailedInGroup,
   revealTaskFile,
   toggleBoost,
+  verifyTaskIntegrity,
 } from '../model/actions'
 import { remoteCan } from '../model/batchPlan'
-import { canChangeSegments, canChangeUrl } from '../model/taskEdit'
+import { canChangeSegments, canChangeUrl, canVerifyIntegrity } from '../model/taskEdit'
 import type { DownloadTaskView } from '../model/task'
 import type { GroupSummary } from '../state'
 import { openChangeSegments, openChangeUrl, openGroupDetail, openRename } from '../dialogs'
@@ -167,6 +169,15 @@ export function buildTaskMenu({ t, views, queues, queueName, showDetail, selecti
       label: t('editThreads'),
       icon: Layers,
       onSelect: () => openChangeSegments(only.taskId),
+    })
+  }
+  if (only && canVerifyIntegrity(only)) {
+    entries.push({
+      type: 'item',
+      key: 'verify-integrity',
+      label: t('verifyTaskIntegrity'),
+      icon: ShieldCheck,
+      onSelect: () => void verifyTaskIntegrity(only),
     })
   }
   if (views.every(canRedownload)) {

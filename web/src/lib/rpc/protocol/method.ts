@@ -25,6 +25,7 @@ export const METHOD = {
   DAEMON_TASK_RESUME_ALL: 'daemon.task.resumeAll',
   DAEMON_TASK_RESCAN: 'daemon.task.rescan',
   DAEMON_TASK_SET_SEED_LIMITS: 'daemon.task.setSeedLimits',
+  DAEMON_TASK_VERIFY: 'daemon.task.verify',
   DAEMON_TASK_PAUSE_MANY: 'daemon.task.pauseMany',
   DAEMON_TASK_RESUME_MANY: 'daemon.task.resumeMany',
   DAEMON_TASK_DELETE_MANY: 'daemon.task.deleteMany',

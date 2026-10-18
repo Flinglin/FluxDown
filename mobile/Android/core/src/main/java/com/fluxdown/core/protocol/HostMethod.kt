@@ -29,6 +29,7 @@ object HostMethod {
     const val daemonTaskResumeAll = "daemon.task.resumeAll"
     const val daemonTaskRescan = "daemon.task.rescan"
     const val daemonTaskSetSeedLimits = "daemon.task.setSeedLimits"
+    const val daemonTaskVerify = "daemon.task.verify"
     /** 批量暂停 / 恢复（`{taskIds}`）：整批只推一次任务快照；未知 id 忽略，空列表为空操作。 */
     const val daemonTaskPauseMany = "daemon.task.pauseMany"
     const val daemonTaskResumeMany = "daemon.task.resumeMany"

@@ -994,6 +994,38 @@ pub struct SetTaskSegmentsParams {
     pub segments: i32,
 }
 
+/// `daemon.task.verify` 结论。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub enum TaskVerifyStatus {
+    /// 全部需要的 piece 哈希一致。
+    Intact,
+    /// 至少一个需要的 piece 哈希不符或数据缺失 / 截断。
+    Damaged,
+    /// 本地没有种子元数据（磁力任务未在做种且无缓存），或没有可比对的 piece。
+    Unverifiable,
+}
+
+/// `daemon.task.verify` 结果：已完成 BT 任务的完整性校验报告。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct TaskVerifyResult {
+    pub status: TaskVerifyStatus,
+    /// 种子 piece 总数（未取得元数据时为 0）。
+    pub total_pieces: u64,
+    /// 哈希一致的 piece 数。
+    pub verified_pieces: u64,
+    /// 损坏的 piece 数。
+    pub bad_pieces: u64,
+    /// 未校验的 piece 数：不属于所选文件，或缺少可比对的字节。
+    pub skipped_pieces: u64,
+    /// 被损坏 piece 覆盖的选中文件（种子内相对路径，`/` 分隔，种子顺序）。
+    #[serde(default)]
+    pub damaged_files: Vec<String>,
+}
+
 /// 设置插件启用状态请求体。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
