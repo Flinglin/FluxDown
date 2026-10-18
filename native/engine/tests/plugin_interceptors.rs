@@ -809,3 +809,32 @@ async fn failed_stage_retry_works_with_auto_retry_disabled() {
 
     cleanup(&work).await;
 }
+
+/// 拦截器入口有语法错误：安装期即以编译失败拒绝，而不是等到下载时才出错。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn broken_interceptor_script_is_rejected_at_install() {
+    let work = std::env::temp_dir().join(format!("fluxdown-intercept-compile-{}", uniq()));
+    let dir = work.join("plugin_src");
+    tokio::fs::create_dir_all(&dir).await.expect("mkdir plugin");
+    let manifest = r#"{
+      "identity": "tester@broken",
+      "name": "Broken Interceptor",
+      "version": "1.0.0",
+      "permissions": ["intercept"],
+      "interceptors": { "entry": "intercept.js", "stages": ["prepare"], "match": { "urls": ["*"] } }
+    }"#;
+    tokio::fs::write(dir.join("manifest.json"), manifest)
+        .await
+        .expect("write manifest");
+    tokio::fs::write(dir.join("intercept.js"), "globalThis.intercept = (;")
+        .await
+        .expect("write intercept.js");
+    let engine = make_engine(&work).await;
+    let pm = engine.manager.plugin_manager().expect("pm installed");
+    let err = pm.install_dev(&dir).await.expect_err("broken script");
+    assert!(
+        matches!(err, fluxdown_engine::plugin::PluginError::CompileFailed(_)),
+        "got {err:?}"
+    );
+    cleanup(&work).await;
+}

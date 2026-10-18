@@ -1340,6 +1340,7 @@ impl PluginManager {
             p.hooks_source().await,
             p.auth_source().await,
             p.subscription_source().await,
+            p.intercept_source().await,
         ]
         .into_iter()
         .flatten()
