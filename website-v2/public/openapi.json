@@ -718,15 +718,15 @@
         "tags": [
           "link"
         ],
-        "summary": "已配对设备经已认证链路交换设备信息（默认下载目录 / 路径风格）。",
-        "description": "数据面：已配对设备交换设备信息（默认下载目录 / 路径风格）。**无 management token**，鉴权靠 `X-FluxLink-*` 头（同 `/api/v1/link/tasks`）。请求体与响应体都是 AEAD 密文（`application/octet-stream`）；旧版对端没有该端点（404）。",
+        "summary": "已配对设备经已认证链路双向交换设备信息。",
+        "description": "数据面（v2）：已配对设备双向交换设备信息（名称 / 平台 / 版本 / 回连地址 ≤4 / 云设备 ID / 默认下载目录 / 路径风格）。**无 management token**，鉴权与封装规则同 `/api/v1/link/tasks`。请求体与成功响应体都是 AEAD 密文（`application/octet-stream`，响应头 `X-FluxLink-Enc: v2`）。",
         "operationId": "api_link_info",
         "responses": {
           "200": {
-            "description": "用链路密钥加密的本机信息（二进制）"
+            "description": "用链路密钥封装的本机信息（二进制）"
           },
           "401": {
-            "description": "缺少/无效链路鉴权头",
+            "description": "鉴权失败。JSON `{\"reason\":\"notPaired\"|\"clockSkew\"|\"unauthorized\",\"serverTime\":秒}`，未认证、仅作诊断",
             "content": {
               "application/json": {
                 "schema": {
@@ -1123,18 +1123,11 @@
           "link"
         ],
         "summary": "已配对设备下发下载任务：从 `X-FluxLink-*` 头取鉴权凭据 → 校验 → 建任务。",
-        "description": "数据面：已配对设备下发下载任务。**无 management token**，鉴权靠 `X-FluxLink-Device`/`X-FluxLink-Ts`/`X-FluxLink-Nonce`/`X-FluxLink-Auth` 头做每对设备独立密钥的 HMAC 校验。\n\n请求体是对明文 JSON 任务描述做 AEAD 加密后的**二进制密文**（`Content-Type: application/octet-stream`），非普通 JSON；宿主校验鉴权头后解密再反序列化。",
+        "description": "数据面（v2）：已配对设备下发下载任务（一次性投递）。**无 management token**，鉴权靠 `X-FluxLink-Device`/`X-FluxLink-Ts`/`X-FluxLink-Nonce`/`X-FluxLink-Tag`/`X-FluxLink-Enc: v2` 头：Tag 是每对设备独立密钥对 `fluxlink-v2\\n{METHOD}\\n{path}\\n{ts}\\n{nonce}\\n{sender_fp}\\n{receiver_fp}\\n{hex(sha256(密文 body))}` 的 HMAC-SHA256（绑定收发双方指纹）。\n\n请求体是对明文 JSON 任务描述做 ChaCha20-Poly1305 加密后的**二进制密文**（`Content-Type: application/octet-stream`，AAD 绑定方向、方法、路径、收发双方指纹与 nonce），非普通 JSON。**成功响应同样是封装后的二进制密文**（响应头 `X-FluxLink-Enc: v2`，AAD 绑定方向与请求 nonce，明文为 `{\"taskId\":…}`），发起方解封失败按鉴权失败处理。`Enc` 缺失或不是 `v2`（含旧的 `v1`）一律 401。",
         "operationId": "api_link_create_task",
         "responses": {
           "200": {
-            "description": "创建成功",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CreatedTask"
-                }
-              }
-            }
+            "description": "创建成功：封装后的 `{\"taskId\":…}`（二进制）"
           },
           "400": {
             "description": "载荷非法（含解密失败）",
@@ -1147,7 +1140,32 @@
             }
           },
           "401": {
-            "description": "缺少/无效链路鉴权头",
+            "description": "鉴权失败。JSON `{\"reason\":\"notPaired\"|\"clockSkew\"|\"unauthorized\",\"serverTime\":秒}`，未认证、仅作诊断",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultMessage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/link/unpair": {
+      "post": {
+        "tags": [
+          "link"
+        ],
+        "summary": "已配对设备通知本机「我已解除与你的配对」。",
+        "description": "数据面（v2）：已配对设备通知本机它已解除与本机的配对。**无 management token**，鉴权与封装规则同 `/api/v1/link/tasks`。收到后本机把该设备记录标记为已撤销（拒绝其入站请求、不再向它下发），幂等；请求与成功响应体都是 AEAD 密文（`application/octet-stream`，响应头 `X-FluxLink-Enc: v2`）。",
+        "operationId": "api_link_unpair",
+        "responses": {
+          "200": {
+            "description": "用链路密钥封装的确认（二进制）"
+          },
+          "401": {
+            "description": "鉴权失败。JSON `{\"reason\":\"notPaired\"|\"clockSkew\"|\"unauthorized\",\"serverTime\":秒}`，未认证、仅作诊断",
             "content": {
               "application/json": {
                 "schema": {
@@ -3746,6 +3764,27 @@
           "lastSeenAt"
         ],
         "properties": {
+          "appVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "对端自报的客户端版本（经已认证链路获取）。"
+          },
+          "cloudDeviceId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "对端已登录云账号时经已认证链路自报的云设备 id。客户端仅当本机云设备名册里存在同 id\n设备时把两者合并为同一台设备展示；直连设备本身永不注册到云端、不占云端设备名额。"
+          },
+          "customName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "本机给该设备设置的备注名（`agent.link.rename`，仅本机可见）；`name` 已是生效名\n（备注名优先，否则对端自报名）。"
+          },
           "defaultSaveDir": {
             "type": [
               "string",
@@ -3787,6 +3826,10 @@
               "string",
               "null"
             ]
+          },
+          "revoked": {
+            "type": "boolean",
+            "description": "对端已解除与本机的配对（对端经已认证链路通知）：不可再下发，只能删除或重新配对。"
           }
         }
       },
@@ -4586,7 +4629,7 @@
           },
           "portable": {
             "type": "boolean",
-            "description": "是否有可移植实现（manifest 声明了 `main`，视图由 main 内的 `flux.ui.view` 提供）。"
+            "description": "是否有可移植实现（由 main 内的 `flux.ui.view` 提供）：无 `desktop` 的视图恒为 true，\n带 `desktop` 的视图仅在 manifest 显式 `portable: true` 时为 true。"
           },
           "title": {
             "type": "string"
@@ -5094,13 +5137,21 @@
       },
       "RssValidateRequest": {
         "type": "object",
-        "description": "验证一个 feed 地址（`POST /api/v1/rss/validate`，只读、不落库）。",
+        "description": "验证一个订阅地址（`POST /api/v1/rss/validate`，只读、不落库）。",
         "required": [
           "url"
         ],
         "properties": {
           "cookies": {
             "type": "string"
+          },
+          "providerConfig": {
+            "type": "string",
+            "description": "provider 专属配置 JSON；缺省为空。"
+          },
+          "providerId": {
+            "type": "string",
+            "description": "订阅来源 provider；缺省/空为内置 RSS provider。"
           },
           "proxyUrl": {
             "type": "string"
@@ -5529,7 +5580,7 @@
     },
     {
       "name": "link",
-      "description": "设备互联（配对/发现/数据面下发；`pair/hello`·`pair/reveal`·`pair/confirm`·`link/tasks` 无 token，由一次性码/会话/链路 HMAC 守卫，其余强制 management token）"
+      "description": "设备互联（配对/发现/数据面下发；`pair/hello`·`pair/reveal`·`pair/confirm`·`link/tasks`·`link/info`·`link/unpair` 无 token，由一次性码/会话/链路 HMAC 守卫，其余强制 management token）"
     }
   ]
 }
