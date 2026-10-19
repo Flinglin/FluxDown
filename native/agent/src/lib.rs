@@ -22,6 +22,8 @@ pub mod egress;
 pub mod embedded;
 pub mod event_hub;
 pub mod gateway;
+#[cfg(feature = "desktop")]
+mod hotkey;
 mod http_client;
 pub mod lifecycle;
 pub mod link;
