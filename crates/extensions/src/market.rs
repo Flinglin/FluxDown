@@ -38,7 +38,12 @@ pub fn latest_per_plugin(entries: &[MarketEntryDto]) -> Vec<MarketEntryDto> {
     }
     order
         .into_iter()
-        .filter_map(|id| best.get(id).copied().filter(|entry| installable(entry)).cloned())
+        .filter_map(|id| {
+            best.get(id)
+                .copied()
+                .filter(|entry| installable(entry))
+                .cloned()
+        })
         .collect()
 }
 
