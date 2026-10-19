@@ -52,11 +52,12 @@ keepawake = "0.6"
 # TLS 后端按平台区分（对齐 engine）：Windows 用系统 Schannel（reqwest 默认 native-tls）；
 # 其余平台用 rustls，native roots 保留本地 CA，bundled WebPKI roots 作公共 CA 兜底——
 # NAS / 精简发行版的系统根证书缺失时 FluxCloud HTTPS 也不会全部 UnknownIssuer。
+# `socks`：统一出口（`egress.rs`）可能给出用户配置的 SOCKS 代理；tokio-socks 已随 engine 在依赖树中。
 [target.'cfg(not(windows))'.dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "charset", "http2", "system-proxy", "macos-system-configuration", "rustls-tls-native-roots", "rustls-tls-webpki-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "charset", "http2", "system-proxy", "macos-system-configuration", "rustls-tls-native-roots", "rustls-tls-webpki-roots", "socks"] }
 
 [target.'cfg(windows)'.dependencies]
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "socks"] }
 # ShellExecuteW("open")：open/reveal 回退的标准「打开」调用（见 platform/mod.rs）
 # Win32_UI_Shell_Common：SHParseDisplayName / SHOpenFolderAndSelectItems（ITEMIDLIST 类型，见 platform/mod.rs）
 # Win32_UI_Controls / Win32_Graphics_Gdi / Win32_Storage_FileSystem：系统文件图标提取

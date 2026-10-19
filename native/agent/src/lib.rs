@@ -18,6 +18,7 @@ mod demo;
 mod device_identity;
 pub mod device_meta;
 pub mod diagnostics;
+pub mod egress;
 pub mod embedded;
 pub mod event_hub;
 pub mod gateway;
