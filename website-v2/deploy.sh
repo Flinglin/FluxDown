@@ -48,6 +48,10 @@ echo "------------------------------------------"
 echo "[1/4] 拉取最新代码..."
 git -C "${REPO_DIR}" fetch origin "${BRANCH}"
 git -C "${REPO_DIR}" reset --hard "origin/${BRANCH}"
+# bash 边读边执行：reset 若改写了本脚本，继续跑会执行新旧拼接的内容，重新执行一次新版本
+if [ -z "${DEPLOY_REEXEC-}" ]; then
+  DEPLOY_REEXEC=1 exec bash "${SCRIPT_DIR}/deploy.sh" "$@"
+fi
 HEAD_SHA="$(git -C "${REPO_DIR}" rev-parse HEAD)"
 TREE="$(git -C "${REPO_DIR}" rev-parse "HEAD:${SUBDIR}")"
 echo "      HEAD ${HEAD_SHA:0:8}，${SUBDIR}/ 子树 ${TREE:0:8}"
