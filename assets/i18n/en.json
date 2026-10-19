@@ -2132,6 +2132,8 @@
   "webhookCopied": "Copied to clipboard",
   "detailCopyError": "Copy error message",
   "detailErrorCopied": "Copied",
+  "detailCopyLog": "Copy all",
+  "detailLogCopied": "Copied",
   "webhookFieldAllowHttp": "Allow plaintext HTTP",
   "webhookAllowHttpDesc": "Only recommended for LAN devices (Home Assistant, NAS…).",
   "webhookFieldUseProxy": "Send through the global proxy",
