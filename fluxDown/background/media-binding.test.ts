@@ -538,4 +538,37 @@ describe("Service Worker 合成的地址", () => {
     const view = composeTabView(tg({ elements: [element({ currentSrc: "https://web.telegram.org/a/video.mp4" })] }));
     expect(view.playing[0].candidate.browserOnly).toBeUndefined();
   });
+
+  test("规则声明的资源（插件 dom 规则把播放页交给桌面端解析）不受 SW 作用域判定影响", () => {
+    const YT_PAGE = "https://www.youtube.com/watch?v=v6Db0r0L1UU";
+    const ytScopes = new ServiceWorkerScopes();
+    ytScopes.add("https://www.youtube.com/");
+    const pageResource = (ruleIds?: string[]): DetectedResource => ({
+      id: YT_PAGE,
+      url: YT_PAGE,
+      filename: "",
+      type: "video",
+      size: -1,
+      detectedBy: "dom-scan",
+      detectedAt: 1,
+      tabId: 1,
+      pageUrl: YT_PAGE,
+      confidence: "high",
+      elementKey: "f1:1",
+      ...(ruleIds ? { ruleIds } : {}),
+    });
+    const view = (resource: DetectedResource) =>
+      composeTabView(
+        input({
+          pageUrl: YT_PAGE,
+          serviceWorkerScopes: ytScopes,
+          resources: [resource],
+          elements: [element()],
+        }),
+      );
+    const declared = view(pageResource(["plugin.fluxdown.youtube-down.watch-page"])).playing;
+    expect(declared.map((r) => [r.candidate.variants[0].videoUrl, r.candidate.browserOnly])).toEqual([[YT_PAGE, undefined]]);
+    // 没有规则担保的同一地址仍按 SW 合成处理
+    expect(view(pageResource()).playing.map((r) => r.candidate.browserOnly)).toEqual([true]);
+  });
 });

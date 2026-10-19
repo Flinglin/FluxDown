@@ -380,6 +380,9 @@ export function composeTabView(input: ViewModelInput): TabView {
   // webRequest 嗅探到的资源本身就是网络证据（请求头缓存只保留 60 s）。
   const networkSeen = new Set(resources.filter((r) => r.detectedBy === "webRequest").map((r) => key(r.url)));
   const evidenceOf = (url: string) => (networkSeen.has(key(url)) || input.sawNetworkRequest(url) ? "network" : "none");
+  // 规则（含桌面端插件下发的 plugin 层）显式声明的资源：地址由规则作者担保可交给 FluxDown
+  // （如 YouTube 播放页 URL 交给桌面端插件解析），SW 合成判定只针对没有规则覆盖的站点。
+  const ruleDeclared = new Set(resources.filter((r) => (r.ruleIds?.length ?? 0) > 0).map((r) => key(r.url)));
   /**
    * 关联到元素的候选带上元素的事实：元素标题（比页面标题准确，如推荐流 / 弹窗播放器里的单个视频）
    * 与 DRM 状态（EME 加密的内容下载得到的是密文）。
@@ -393,7 +396,10 @@ export function composeTabView(input: ViewModelInput): TabView {
       candidate.variants.length > 0 &&
       candidate.variants.every((v) =>
         [v.videoUrl, v.audioUrl].some(
-          (url) => url !== undefined && browserOnlyReason([url], input.serviceWorkerScopes, evidenceOf) === "service-worker",
+          (url) =>
+            url !== undefined &&
+            !ruleDeclared.has(key(url)) &&
+            browserOnlyReason([url], input.serviceWorkerScopes, evidenceOf) === "service-worker",
         ),
       );
     if (!title && !encrypted && !browserOnly) return candidate;
