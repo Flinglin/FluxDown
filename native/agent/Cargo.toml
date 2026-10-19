@@ -69,9 +69,11 @@ windows = { version = "0.61.3", features = ["Data_Xml_Dom", "Foundation", "UI_No
 
 # notify-rust 仅用于 Linux D-Bus 通知（macOS / Windows 用原生通知；Android / iOS 不编译）。
 # x11rb（X11 XGrabKey + XInput2 原始键盘事件）与 ashpd（Wayland GlobalShortcuts portal）
-# 承载全局快捷键（见 platform/hotkey），随 `desktop` 启用。
+# 承载全局快捷键（见 platform/hotkey），随 `desktop` 启用。ashpd 必须与 GPUI（gpui_linux / gpui-base）
+# 同用 `async-io`：发布流水线把 agent 与桌面端放在同一次 cargo 构建里，特性合并后 ashpd 不允许
+# `tokio` 与 `async-io` 同开（compile_error）。
 [target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "global_shortcuts"], optional = true }
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "global_shortcuts"], optional = true }
 gtk = { version = "0.18", optional = true }
 notify-rust = "4.11"
 x11rb = { version = "0.13.2", features = ["xinput"], optional = true }
