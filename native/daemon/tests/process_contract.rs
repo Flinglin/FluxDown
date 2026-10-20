@@ -258,6 +258,35 @@ fn authenticated_shutdown_exits_cleanly_and_releases_the_data_dir() {
     std::fs::remove_dir_all(&data_dir).expect("remove daemon test data dir");
 }
 
+/// 运行中的 daemon 在数据目录发布实际监听地址，优雅退出后删除该文件。
+#[test]
+fn running_daemon_publishes_its_endpoint_and_removes_it_on_shutdown() {
+    let address = reserve_loopback_address();
+    let data_dir = unique_temp_dir("fluxdown-daemon-endpoint-contract");
+    std::fs::create_dir_all(&data_dir).expect("create daemon test data dir");
+    std::fs::write(data_dir.join("daemon.token"), format!("{TOKEN}\n"))
+        .expect("write daemon test token");
+    let endpoint_path = data_dir.join("daemon-endpoint.json");
+
+    let mut daemon = ProcessGuard::spawn(address, &data_dir);
+    wait_until_listening(address, Duration::from_secs(30));
+    let endpoint: fluxdown_protocol::local_service::LocalEndpoint =
+        serde_json::from_slice(&std::fs::read(&endpoint_path).expect("read endpoint file"))
+            .expect("parse endpoint file");
+    assert_eq!(endpoint.rpc_url, format!("ws://{address}/rpc"));
+
+    let mut socket = open_websocket(address);
+    authenticate(&mut socket, TOKEN);
+    let response = rpc_call(&mut socket, 3, method::SYSTEM_SHUTDOWN, None);
+    assert_eq!(response["result"]["ok"], json!(true), "{response}");
+    daemon.wait_for_success(Duration::from_secs(30));
+    assert!(
+        !endpoint_path.exists(),
+        "endpoint file must be removed on exit"
+    );
+    std::fs::remove_dir_all(&data_dir).expect("remove daemon test data dir");
+}
+
 /// 慢调用（连通性测试要等十几秒才超时）期间，同一连接上的后续请求立即得到应答，事件照常推送。
 #[test]
 fn slow_call_does_not_block_inline_requests_or_event_delivery() {

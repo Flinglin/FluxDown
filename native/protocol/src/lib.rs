@@ -11,6 +11,7 @@ mod digest;
 pub mod error;
 pub mod event;
 pub mod handshake;
+pub mod local_service;
 pub mod method;
 pub mod plugin_view;
 pub mod rpc;
