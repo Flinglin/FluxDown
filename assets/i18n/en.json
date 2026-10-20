@@ -249,6 +249,8 @@
   "resume": "Resume",
   "boostDownload": "Boost Download",
   "cancelBoost": "Cancel Boost",
+  "boostTaskCompleted": "This task is already completed — only unfinished tasks can be boosted",
+  "boostTaskEnded": "This task has ended — retry it before boosting",
   "boostBannerActive": "⚡ Boost: {fileName} — {count} task(s) will resume on completion",
   "boostBannerCancel": "Cancel",
   "openFile": "Open File",
