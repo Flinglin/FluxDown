@@ -270,6 +270,7 @@ fn running_daemon_publishes_its_endpoint_and_removes_it_on_shutdown() {
 
     let mut daemon = ProcessGuard::spawn(address, &data_dir);
     wait_until_listening(address, Duration::from_secs(30));
+    wait_for_file(&endpoint_path, Duration::from_secs(30));
     let endpoint: fluxdown_protocol::local_service::LocalEndpoint =
         serde_json::from_slice(&std::fs::read(&endpoint_path).expect("read endpoint file"))
             .expect("parse endpoint file");
@@ -464,6 +465,19 @@ fn wait_until_listening(address: SocketAddr, timeout: Duration) {
         thread::sleep(Duration::from_millis(20));
     }
     panic!("fluxdownd did not listen on {address}");
+}
+
+/// 端点文件在监听套接字绑定之后才发布（临时文件 + rename，出现即完整），
+/// 能连上端口不代表文件已存在，需要轮询等待。
+fn wait_for_file(path: &Path, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if path.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("{} was not published", path.display());
 }
 
 fn http_request(address: SocketAddr, headers: &str, body: Option<&[u8]>) -> String {
