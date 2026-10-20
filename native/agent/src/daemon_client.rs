@@ -885,10 +885,20 @@ async fn open_socket(target: &DaemonTarget) -> Result<Socket, ConnectError> {
         .as_str()
         .into_client_request()
         .map_err(|error| ConnectError::Fatal(invalid_argument(error.to_string())))?;
-    let (socket, _) = tokio_tungstenite::connect_async(request)
-        .await
-        .map_err(classify_connect_error)?;
+    let (socket, _) =
+        tokio_tungstenite::connect_async_with_config(request, Some(inbound_ws_config()), false)
+            .await
+            .map_err(classify_connect_error)?;
     Ok(socket)
+}
+
+/// 全量快照随任务数增长且单帧发出：帧上限与消息上限一同放宽（见
+/// [`fluxdown_protocol::MAX_INBOUND_RPC_MESSAGE_BYTES`]）。
+fn inbound_ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+    let limit = Some(fluxdown_protocol::MAX_INBOUND_RPC_MESSAGE_BYTES);
+    tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_frame_size(limit)
+        .max_message_size(limit)
 }
 
 /// 双向挑战应答：先校验 daemon 对 token 持有权的证明，通过后才提交自己的证明。
@@ -1760,6 +1770,65 @@ mod tests {
         })
         .await
         .expect("daemon error forwarding");
+    }
+
+    /// 快照随任务数增长且单帧发出；超过 tungstenite 默认 16 MiB 帧上限时连接仍须建立
+    /// （现网 38 MB 快照即因此在旧客户端永远重连失败）。
+    #[tokio::test]
+    async fn snapshot_larger_than_default_frame_limit_is_accepted() {
+        use fluxdown_protocol::{
+            DaemonConfigSnapshot, DaemonSnapshot, ServiceHello, ServiceRole, Snapshot, SnapshotBody,
+        };
+
+        const BIG: usize = 24 * 1024 * 1024;
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            let (listener, url) = loopback_listener().await;
+            let server = tokio::spawn(async move {
+                let (tcp, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                daemon_handshake(&mut ws, TOKEN).await;
+                let hello = read_request(&mut ws).await;
+                let reply =
+                    ServiceHello::new(ServiceRole::Daemon, "daemon", "test", "instance", vec![]);
+                send_response(
+                    &mut ws,
+                    RpcResponse::success(hello.id, serde_json::to_value(reply).unwrap()),
+                )
+                .await;
+                let snapshot_request = read_request(&mut ws).await;
+                let snapshot = Snapshot {
+                    epoch: "e".into(),
+                    sequence: 1,
+                    body: SnapshotBody::Daemon(Box::new(DaemonSnapshot {
+                        config: DaemonConfigSnapshot {
+                            revision: 1,
+                            values: [("big".to_owned(), "x".repeat(BIG))].into(),
+                        },
+                        ..DaemonSnapshot::default()
+                    })),
+                };
+                send_response(
+                    &mut ws,
+                    RpcResponse::success(
+                        snapshot_request.id,
+                        serde_json::to_value(snapshot).unwrap(),
+                    ),
+                )
+                .await;
+                ws
+            });
+            let config = super::DaemonClientConfig::new(url.clone(), TOKEN);
+            let (_socket, snapshot, _buffered) = super::connect(&config, &fixed(&url))
+                .await
+                .unwrap_or_else(|_| panic!("oversized snapshot must not break the handshake"));
+            let SnapshotBody::Daemon(daemon) = snapshot.body else {
+                panic!("daemon snapshot");
+            };
+            assert_eq!(daemon.config.values.get("big").map(String::len), Some(BIG));
+            server.await.unwrap();
+        })
+        .await
+        .expect("oversized snapshot handshake");
     }
 
     #[tokio::test]

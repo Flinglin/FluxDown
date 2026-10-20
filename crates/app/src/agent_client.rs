@@ -591,9 +591,18 @@ async fn dial(
 }
 
 async fn upgrade(request: Request, stream: TcpStream) -> Result<Socket, ConnectError> {
-    let (socket, _) = tokio_tungstenite::client_async(request, MaybeTlsStream::Plain(stream))
-        .await
-        .map_err(classify_connect_error)?;
+    // 代理快照内嵌完整 daemon 快照，随任务数增长且单帧发出：帧与消息上限一同放宽。
+    let limit = Some(fluxdown_protocol::MAX_INBOUND_RPC_MESSAGE_BYTES);
+    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_frame_size(limit)
+        .max_message_size(limit);
+    let (socket, _) = tokio_tungstenite::client_async_with_config(
+        request,
+        MaybeTlsStream::Plain(stream),
+        Some(config),
+    )
+    .await
+    .map_err(classify_connect_error)?;
     Ok(socket)
 }
 
