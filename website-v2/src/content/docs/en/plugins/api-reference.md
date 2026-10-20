@@ -316,6 +316,7 @@ Guard rails, all enforced host-side:
 |---|---|
 | Schemes | `http` / `https` only |
 | Destinations | Publicly routable addresses only. Loopback, LAN, link-local, CGNAT, documentation/benchmark ranges and cloud-metadata IPs are blocked — checked against the literal URL, at DNS resolution (so DNS rebinding is covered), and again on every redirect hop. When the user has configured a proxy in the app, DNS is resolved by the proxy and only the literal-IP and redirect checks apply. |
+| Dev-mode exception | Plugins loaded through "Install from directory (developer mode)" are not subject to the public-address restriction: they can reach `localhost`, LAN hosts, etc. (direct connection, bypassing the global proxy) so they can talk to local services during development. Normally installed plugins are unchanged. |
 | Response body cap | 8 MB, then truncated |
 | Per-request timeout | 10 s |
 | Concurrent requests | 8, shared across all plugins |

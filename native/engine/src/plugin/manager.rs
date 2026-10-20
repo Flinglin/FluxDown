@@ -638,7 +638,7 @@ impl PluginManager {
         mut req: ResolveRequest,
     ) -> Result<Option<ResolveResult>, PluginError> {
         // 从快照克隆所需（避免跨 await 持锁）。
-        let (manifest, streak, source, dev_ver) = {
+        let (manifest, streak, source, dev_ver, dev_mode) = {
             let snapshot = self.plugins.read().await.clone();
             let Some(p) = snapshot.iter().find(|p| p.manifest.identity == identity) else {
                 return Err(PluginError::Runtime(format!(
@@ -661,6 +661,7 @@ impl PluginManager {
                 p.timeout_streak.clone(),
                 source,
                 p.manifest.version.clone(),
+                p.dev,
             )
         };
         let Some(source) = source else {
@@ -716,6 +717,7 @@ impl PluginManager {
                     // resolve 平面授予 yt-dlp（直链提取的主战场）；ffmpeg 无产物牢笼故不授予。
                     ytdlp_permitted: manifest.has_permission(PERMISSION_YTDLP),
                     auth_permitted: manifest.has_permission(PERMISSION_AUTH),
+                    private_network_allowed: dev_mode,
                     ..Default::default()
                 },
             )
@@ -764,7 +766,7 @@ impl PluginManager {
             ));
         }
 
-        let (manifest, source, version, enabled) = {
+        let (manifest, source, version, enabled, dev_mode) = {
             let snapshot = self.plugins.read().await.clone();
             let Some(plugin) = snapshot.iter().find(|p| p.manifest.identity == identity) else {
                 return Err(PluginError::Runtime(format!("插件 {identity} 不存在")));
@@ -780,6 +782,7 @@ impl PluginManager {
                 source,
                 plugin.manifest.version.clone(),
                 plugin.enabled,
+                plugin.dev,
             )
         };
 
@@ -841,6 +844,7 @@ impl PluginManager {
                 self.auth_budget_for(&manifest),
                 HostContext {
                     auth_permitted: true,
+                    private_network_allowed: dev_mode,
                     ..Default::default()
                 },
             )
@@ -871,7 +875,7 @@ impl PluginManager {
         provider_id: &str,
         request: SubscriptionFetchRequest,
     ) -> Result<ParsedFeed, PluginError> {
-        let (manifest, streak, source, version, identity) = {
+        let (manifest, streak, source, version, identity, dev_mode) = {
             let snapshot = self.plugins.read().await.clone();
             let Some(p) = snapshot
                 .iter()
@@ -895,6 +899,7 @@ impl PluginManager {
                 source,
                 p.manifest.version.clone(),
                 p.manifest.identity.clone(),
+                p.dev,
             )
         };
         let Some(source) = source else {
@@ -947,6 +952,7 @@ impl PluginManager {
                 HostContext {
                     ytdlp_permitted: manifest.has_permission(PERMISSION_YTDLP),
                     auth_permitted: manifest.has_permission(PERMISSION_AUTH),
+                    private_network_allowed: dev_mode,
                     ..Default::default()
                 },
             )
@@ -1026,6 +1032,7 @@ impl PluginManager {
                 ffmpeg_root,
                 ytdlp_permitted,
                 auth_permitted,
+                private_network_allowed: p.dev,
             };
             // 授权外部工具（ffmpeg 有产物牢笼 / yt-dlp 任意上下文）→ 抬升墙钟预算。
             let budget = if (ffmpeg_permitted && host.ffmpeg_root.is_some()) || ytdlp_permitted {
