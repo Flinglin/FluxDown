@@ -199,7 +199,10 @@ pub(crate) fn install(cx: &mut App) {
             fluxdown_ui_plugin_ui::portable::resync_all(cx);
         }
         SessionSignal::Event(frame) => handle_event(&frame.event, cx),
-        SessionSignal::Stale | SessionSignal::Fatal(_) | SessionSignal::ServiceStopped => {}
+        SessionSignal::Stale
+        | SessionSignal::Fatal(_)
+        | SessionSignal::ServiceStopped
+        | SessionSignal::ServiceFailed(_) => {}
     })
     .detach();
 }
