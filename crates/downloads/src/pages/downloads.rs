@@ -112,6 +112,8 @@ pub struct PluginTaskCommand {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginTaskTab {
     pub title: SharedString,
+    /// 内容修订号：变化即旧视图作废、须按工厂重建（插件包代码被替换时由 app 递增）。
+    pub revision: u64,
 }
 
 /// app 注入的跨窗口 / 跨能力入口；未注入的入口对应按钮无动作。

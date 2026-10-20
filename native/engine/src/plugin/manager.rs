@@ -257,6 +257,8 @@ pub struct PluginInfo {
     pub consent_pending: Vec<String>,
     /// 尚未授权的网络主机。
     pub consent_pending_hosts: Vec<String>,
+    /// 插件包修订号：包代码被替换（安装 / 升级 / dev 安装 / dev 重载）后变化，只做相等比较。
+    pub package_revision: u64,
     /// 插件包绝对目录；仅已加载插件为 Some。
     pub package_dir: Option<String>,
 }
@@ -295,6 +297,8 @@ pub struct PluginManager {
     host: host_manager::HostState,
     /// 多插件选择框按站点串行化（见 [`routing`]）。
     site_prompts: routing::SitePromptLocks,
+    /// 插件包修订号（见 [`super::package_revision`]）。
+    package_revisions: super::package_revision::PackageRevisions,
 }
 
 impl PluginManager {
@@ -337,6 +341,7 @@ impl PluginManager {
             audit,
             host: host_manager::HostState::new(),
             site_prompts: routing::SitePromptLocks::default(),
+            package_revisions: super::package_revision::PackageRevisions::new(),
         }
     }
 
@@ -1200,6 +1205,7 @@ impl PluginManager {
             self.load_all().await;
             return Err(error);
         }
+        self.package_revisions.bump(&identity);
         self.audit_event(&identity, "install", manifest.version.clone(), "dev");
         Ok(identity)
     }
@@ -1247,7 +1253,9 @@ impl PluginManager {
         if let Some(error) = self.dev_load_failure(identity).await {
             return Err(error);
         }
-        self.validate_loaded(identity).await
+        self.validate_loaded(identity).await?;
+        self.package_revisions.bump(identity);
+        Ok(())
     }
 
     async fn finish_install_outcome(
@@ -1272,6 +1280,7 @@ impl PluginManager {
             self.load_all().await;
             return Err(error);
         }
+        self.package_revisions.bump(&identity);
         let new_version = self.installed_version(&identity).await.unwrap_or_default();
         match previous_version {
             Some(previous) if previous != new_version => self.audit_event(
@@ -1787,6 +1796,7 @@ impl PluginManager {
                 network_hosts: p.manifest.network_hosts(),
                 consent_pending: loaded_pending.0,
                 consent_pending_hosts: loaded_pending.1,
+                package_revision: self.package_revisions.get(&p.manifest.identity),
                 package_dir: Some(p.dir.to_string_lossy().into_owned()),
             });
         }
@@ -1873,6 +1883,7 @@ impl PluginManager {
                     .unwrap_or_default(),
                 consent_pending: failed_pending.0,
                 consent_pending_hosts: failed_pending.1,
+                package_revision: self.package_revisions.get(&p.identity),
                 package_dir: None,
             });
         }
