@@ -7,7 +7,9 @@ let cdnConfigured = true;
 const MAINLAND_IP = "114.114.114.114";
 const signatures: string[] = [];
 mock.module("astro:env/server", () => ({ GITHUB_TOKEN: "", GITHUB_REPO: "owner/repo" }));
-mock.module("../src/lib/geoip", () => ({ isMainlandChinaIp: (ip: string) => ip === MAINLAND_IP }));
+// mock.module 在 bun test 进程内全局生效且不会被 mock.restore 撤销：必须保留真实导出，否则后运行的 geoip.test.ts 取不到 Ip2RegionV4。
+const realGeoip = await import("../src/lib/geoip");
+mock.module("../src/lib/geoip", () => ({ ...realGeoip, isMainlandChinaIp: (ip: string) => ip === MAINLAND_IP }));
 const ossMock = () => ({
   ossConfigured: configured,
   cdnConfigured,
