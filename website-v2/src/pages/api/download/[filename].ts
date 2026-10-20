@@ -9,6 +9,7 @@ import type { APIRoute } from "astro";
 import { GITHUB_TOKEN, GITHUB_REPO } from "astro:env/server";
 import { getCached, setCached } from "@/lib/api-cache";
 import { getClientIp } from "@/lib/client-ip";
+import { recordDownload } from "@/lib/download-ban";
 import { mayUseMirror } from "@/lib/download-gate";
 import { isMainlandChinaIp } from "@/lib/geoip";
 import { cdnConfigured, cdnDownloadUrl, ossConfigured, presignOssHeadUrl, releaseObjectKey } from "@/lib/oss";
@@ -106,6 +107,17 @@ export const GET: APIRoute = async ({ params, url, request, clientAddress }) => 
   const tag = url.searchParams.get("tag")?.trim() || "";
   const source = downloadSource(url.searchParams.get("source"));
   const ip = getClientIp(request, clientAddress);
+  const banned = recordDownload(ip, `${tag}/${filename}`);
+  if (banned > 0) {
+    return new Response(JSON.stringify({ error: "Too many downloads from this IP; try again later." }), {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "Retry-After": String(Math.ceil(banned / 1000)),
+      },
+    });
+  }
   const wantsMirror = source !== "github" && isMainlandChinaIp(ip) &&
     mayUseMirror(ip, request.headers.get("user-agent"));
 
