@@ -4760,6 +4760,45 @@ mod tests {
         ));
     }
 
+    /// #935：批量「继续」不得把已完成的本地任务交给 daemon（引擎对完成态的 resume 会从头重下）；
+    /// 暂停 / 失败的本地任务照常继续，已完成任务的删除 / 打开不受影响。
+    #[test]
+    fn local_resume_skips_completed_tasks() {
+        let row = |status: i32| {
+            let task = serde_json::from_value::<fluxdown_protocol::TaskDto>(serde_json::json!({
+                "taskId": "t1",
+                "url": "https://example.com/file",
+                "fileName": "f.bin",
+                "saveDir": "/tmp",
+                "status": status,
+                "downloadedBytes": 1,
+                "totalBytes": 1,
+                "errorMessage": "",
+                "createdAt": "100",
+                "proxyUrl": "",
+                "queueId": "main",
+                "checksum": ""
+            }))
+            .expect("task");
+            DownloadTaskView::local(&task, None, false)
+        };
+        assert!(task_command(&row(3), ToolbarCommand::Resume).is_none());
+        for status in [2, 4] {
+            assert!(matches!(
+                task_command(&row(status), ToolbarCommand::Resume),
+                Some(DownloadsCommand::Resume { task_id }) if task_id == "t1"
+            ));
+        }
+        assert!(matches!(
+            task_command(&row(3), ToolbarCommand::Delete),
+            Some(DownloadsCommand::Delete { .. })
+        ));
+        assert!(matches!(
+            task_command(&row(3), ToolbarCommand::Open),
+            Some(DownloadsCommand::OpenTask { .. })
+        ));
+    }
+
     #[test]
     fn percent_label_floors_and_marks_sub_percent_progress() {
         assert_eq!(percent_label(0.).as_ref(), "0%");
