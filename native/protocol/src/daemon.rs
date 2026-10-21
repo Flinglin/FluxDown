@@ -864,6 +864,69 @@ pub struct PluginSniffRulesDto {
     pub pack: Option<Value>,
 }
 
+/// 插件页面脚本索引（`daemon.plugin.pageScripts`）。只列「启用、已加载、已授权」插件声明的
+/// `contributes.pageScripts`；`sequence` / `epoch` 语义同 [`PluginSniffRulesDto`]：索引内容
+/// （含每条脚本的 `sha256`）变化才递增，数据库重置后 `epoch` 必变。源码不随索引下发，
+/// 浏览器扩展按需经 `daemon.plugin.pageScriptSource` 逐条拉取（NMH 单帧 1 MiB）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPageScriptsDto {
+    pub sequence: u64,
+    #[serde(default)]
+    pub epoch: String,
+    #[serde(default)]
+    pub scripts: Vec<PluginPageScriptDto>,
+}
+
+/// 页面脚本索引条目。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPageScriptDto {
+    /// 插件 identity（`author@name`）。
+    pub identity: String,
+    pub plugin_name: String,
+    pub plugin_version: String,
+    /// manifest 内的脚本 id（插件内唯一）。
+    pub id: String,
+    pub title: String,
+    /// 浏览器 match pattern。
+    pub matches: Vec<String>,
+    #[serde(default)]
+    pub exclude_matches: Vec<String>,
+    /// `document_start` / `document_end` / `document_idle`。
+    pub run_at: String,
+    /// `isolated`（扩展 USER_SCRIPT world，可用 `fluxdown` 桥）/ `main`（页面 world，无桥）。
+    pub world: String,
+    #[serde(default)]
+    pub all_frames: bool,
+    /// 拼接后源码（UTF-8）的 SHA-256 小写十六进制。
+    pub sha256: String,
+    /// 拼接后源码字节数。
+    pub bytes: u64,
+}
+
+/// `daemon.plugin.pageScriptSource` 参数。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPageScriptSourceParams {
+    pub identity: String,
+    pub id: String,
+}
+
+/// 单条页面脚本源码：manifest `js` 各文件按声明顺序以 `"\n;\n"` 拼接。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPageScriptSourceDto {
+    pub identity: String,
+    pub id: String,
+    pub sha256: String,
+    pub code: String,
+}
+
 /// 已安装插件视图（列表/设置表单）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -937,6 +1000,21 @@ pub struct PluginContributionsDto {
     /// 是否贡献浏览器扩展嗅探规则。
     #[serde(default)]
     pub sniff_rules: bool,
+    /// 浏览器页面脚本声明（供授权 / 详情界面展示将在哪些网站运行脚本）。
+    #[serde(default)]
+    pub page_scripts: Vec<PluginPageScriptDeclDto>,
+}
+
+/// 页面脚本贡献声明（镜像 manifest `contributes.pageScripts[]` 的展示字段）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPageScriptDeclDto {
+    pub id: String,
+    pub title: String,
+    pub matches: Vec<String>,
+    /// `isolated` / `main`。
+    pub world: String,
 }
 
 /// 视图贡献声明。

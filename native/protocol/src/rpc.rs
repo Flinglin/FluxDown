@@ -20,8 +20,9 @@ pub const JSONRPC_VERSION: &str = "2.0";
 /// `SelectionOutcome::Plugin`）与站点默认插件方法（`daemon.plugin.siteDefaults` /
 /// `daemon.plugin.setSiteDefault`），v15 增加队列顺序增量（`WsServerMsg::QueueOrderChanged`、
 /// `QueuePositionDto.order`）与落后订阅者的帧合并（`EventFrame.previous`，按
-/// [`crate::judge_frame`] 判定），v17 取消全量任务单帧：快照与替换事件只带任务总数
-/// （`DaemonSnapshot.taskTotal` / `queueTotal`），任务表经 `system.taskPage` 分页载入（`DaemonEvent::TablesReloading`），
+/// [`crate::judge_frame`] 判定），v16 增加外部恢复任务通知（`AgentEvent::CaptureTasksResumed`），
+/// v17 取消全量任务单帧：快照与替换事件只带任务总数（`DaemonSnapshot.taskTotal` /
+/// `queueTotal`），任务表经 `system.taskPage` 分页载入（`DaemonEvent::TablesReloading`），
 /// `TaskDto` 默认值字段不再上线（反序列化须容忍缺省）。
 pub const PROTOCOL_VERSION: u32 = 17;
 /// 旧客户端不能解析新增事件，必须在握手时拒绝混用而非运行中断连。

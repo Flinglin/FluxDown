@@ -152,8 +152,10 @@ export type AgentEvent =
   | { type: 'pendingCapturesChanged'; data: PendingCaptureDto[] }
   | { type: 'shellChanged'; data: ShellStatusDto }
   | { type: 'powerChanged'; data: PowerStatusDto }
-  /** 外部捕获未经确认直接建成的任务 ID（一次性通知，不进快照）。 */
+  /** 外部来源未经确认直接建成的任务 ID（含插件页面脚本新建；一次性通知，不进快照）。 */
   | { type: 'captureTasksStarted'; data: string[] }
+  /** 外部来源恢复的已有任务 ID（插件页面脚本恢复；一次性通知，不进快照）。 */
+  | { type: 'captureTasksResumed'; data: string[] }
   /** 云端推送状态整体替换。 */
   | { type: 'cloudNotifyChanged'; data: CloudNotifyStateDto };
 

@@ -226,6 +226,7 @@ impl Projection {
             | AgentEvent::CloudNotifyChanged(_)
             | AgentEvent::UpdateChanged(_)
             | AgentEvent::CaptureTasksStarted(_)
+            | AgentEvent::CaptureTasksResumed(_)
             | AgentEvent::SessionRevoked(_) => {
                 apply_agent_event(&mut self.snapshot, event);
                 Vec::new()

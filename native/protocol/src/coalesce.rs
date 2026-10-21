@@ -198,6 +198,7 @@ fn touch(frame: &EventFrame) -> Touch<'_> {
             | AgentEvent::UpdateChanged(_)
             | AgentEvent::CloudNotifyChanged(_)
             | AgentEvent::CaptureTasksStarted(_)
+            | AgentEvent::CaptureTasksResumed(_)
             | AgentEvent::SessionRevoked(_) => Touch::None,
         },
     }

@@ -534,7 +534,8 @@ fn plugin_contributions_to_dto(
     contributes: &fluxdown_engine::plugin::manifest::ContributesDecl,
 ) -> fluxdown_protocol::daemon::PluginContributionsDto {
     use fluxdown_protocol::daemon::{
-        PluginCommandDeclDto, PluginContributionsDto, PluginDesktopEntryDto, PluginViewDeclDto,
+        PluginCommandDeclDto, PluginContributionsDto, PluginDesktopEntryDto,
+        PluginPageScriptDeclDto, PluginViewDeclDto,
     };
     PluginContributionsDto {
         views: contributes
@@ -564,6 +565,16 @@ fn plugin_contributions_to_dto(
             })
             .collect(),
         sniff_rules: contributes.sniff_rules.is_some(),
+        page_scripts: contributes
+            .page_scripts
+            .iter()
+            .map(|s| PluginPageScriptDeclDto {
+                id: s.id.clone(),
+                title: s.title.clone(),
+                matches: s.matches.clone(),
+                world: s.world.as_str().to_owned(),
+            })
+            .collect(),
     }
 }
 

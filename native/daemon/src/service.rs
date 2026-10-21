@@ -787,6 +787,56 @@ impl DaemonService {
                 })
             }
             #[cfg(feature = "plugins")]
+            method::DAEMON_PLUGIN_PAGE_SCRIPTS => {
+                let manager = self.plugin_manager()?;
+                let plugins = manager.list().await;
+                let result = fluxdown_engine::plugin::page_scripts::query(&plugins, &self.db)
+                    .await
+                    .map_err(|error| internal_error(format!("{error:#}")))?;
+                to_value(fluxdown_protocol::PluginPageScriptsDto {
+                    sequence: result.sequence,
+                    epoch: result.epoch,
+                    scripts: result
+                        .scripts
+                        .into_iter()
+                        .map(|s| fluxdown_protocol::PluginPageScriptDto {
+                            identity: s.identity,
+                            plugin_name: s.plugin_name,
+                            plugin_version: s.plugin_version,
+                            id: s.id,
+                            title: s.title,
+                            matches: s.matches,
+                            exclude_matches: s.exclude_matches,
+                            run_at: s.run_at,
+                            world: s.world,
+                            all_frames: s.all_frames,
+                            sha256: s.sha256,
+                            bytes: s.bytes,
+                        })
+                        .collect(),
+                })
+            }
+            #[cfg(feature = "plugins")]
+            method::DAEMON_PLUGIN_PAGE_SCRIPT_SOURCE => {
+                let params =
+                    parse_params::<fluxdown_protocol::PluginPageScriptSourceParams>(params)?;
+                let manager = self.plugin_manager()?;
+                let plugins = manager.list().await;
+                let source = fluxdown_engine::plugin::page_scripts::source(
+                    &plugins,
+                    &params.identity,
+                    &params.id,
+                )
+                .await
+                .map_err(|error| invalid_argument("id", &error.to_string()))?;
+                to_value(fluxdown_protocol::PluginPageScriptSourceDto {
+                    identity: params.identity,
+                    id: params.id,
+                    sha256: source.sha256,
+                    code: source.code,
+                })
+            }
+            #[cfg(feature = "plugins")]
             method::DAEMON_PLUGIN_AUTH => {
                 let request = parse_params::<fluxdown_protocol::PluginAuthRequest>(params)?;
                 let result = self
@@ -1079,7 +1129,8 @@ impl DaemonService {
             | method::DAEMON_PLUGIN_VIEW_SNAPSHOT
             | method::DAEMON_PLUGIN_VIEW_KEEPALIVE
             | method::DAEMON_PLUGIN_COMMAND
-            | method::DAEMON_PLUGIN_INVOKE => self.plugin_host_call(method_name, params).await,
+            | method::DAEMON_PLUGIN_INVOKE
+            | method::DAEMON_PLUGIN_PAGE_INVOKE => self.plugin_host_call(method_name, params).await,
             #[cfg(not(feature = "plugins"))]
             method::DAEMON_PLUGIN_VIEW_OPEN
             | method::DAEMON_PLUGIN_VIEW_EVENT
@@ -1087,12 +1138,15 @@ impl DaemonService {
             | method::DAEMON_PLUGIN_VIEW_SNAPSHOT
             | method::DAEMON_PLUGIN_VIEW_KEEPALIVE
             | method::DAEMON_PLUGIN_COMMAND
-            | method::DAEMON_PLUGIN_INVOKE => {
+            | method::DAEMON_PLUGIN_INVOKE
+            | method::DAEMON_PLUGIN_PAGE_INVOKE => {
                 Err(unsupported_error("daemon was built without plugin support"))
             }
             #[cfg(not(feature = "plugins"))]
             method::DAEMON_PLUGIN_LIST
             | method::DAEMON_PLUGIN_SNIFF_RULES
+            | method::DAEMON_PLUGIN_PAGE_SCRIPTS
+            | method::DAEMON_PLUGIN_PAGE_SCRIPT_SOURCE
             | method::DAEMON_PLUGIN_SET_ENABLED
             | method::DAEMON_PLUGIN_UPDATE_SETTINGS
             | method::DAEMON_PLUGIN_INSTALL

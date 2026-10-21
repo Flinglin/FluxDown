@@ -529,9 +529,13 @@ pub enum AgentEvent {
     UpdateChanged(crate::UpdateStatusDto),
     /// 云端推送状态整体替换（`AgentSnapshot.cloud_notify`）。
     CloudNotifyChanged(crate::CloudNotifyStateDto),
-    /// 外部捕获未经确认直接建成的任务（免打扰下载 / 系统打开链接 / 拖入）。一次性通知，
-    /// 不进快照；官方 UI 据此为单任务弹出进度窗口。失败条目不在列表中。
+    /// 外部来源未经确认直接建成的任务（免打扰下载 / 系统打开链接 / 拖入 / 插件页面脚本经
+    /// `flux.tasks.create` 新建）。一次性通知，不进快照；官方 UI 据此为单任务弹出进度窗口。
+    /// 失败条目不在列表中。
     CaptureTasksStarted(Vec<String>),
+    /// 外部来源恢复的已有任务（插件页面脚本经 `flux.tasks.resume`）。一次性通知，不进快照；
+    /// 官方 UI 对单任务按「重新开始」规则（须见到命令后的新状态）弹出进度窗口。
+    CaptureTasksResumed(Vec<String>),
     /// 会话被非用户主动地结束（设备被移除 / 被替换 → `deviceUntrusted`；令牌失效或被管理员撤销 →
     /// `sessionExpired`；账号停用 → `accountDisabled`）。一次性通知，不进快照；紧随其后会有
     /// `SessionChanged(None)`。用户主动登出 / 删除本设备不发送。
@@ -787,7 +791,9 @@ pub fn apply_agent_event(snapshot: &mut AgentSnapshot, event: &AgentEvent) {
         AgentEvent::PowerChanged(power) => snapshot.power = *power,
         AgentEvent::UpdateChanged(update) => snapshot.update.clone_from(update),
         AgentEvent::CloudNotifyChanged(state) => snapshot.cloud_notify.clone_from(state),
-        AgentEvent::CaptureTasksStarted(_) | AgentEvent::SessionRevoked(_) => {}
+        AgentEvent::CaptureTasksStarted(_)
+        | AgentEvent::CaptureTasksResumed(_)
+        | AgentEvent::SessionRevoked(_) => {}
     }
 }
 

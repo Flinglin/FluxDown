@@ -80,6 +80,8 @@ export const METHOD = {
 
   DAEMON_PLUGIN_LIST: 'daemon.plugin.list',
   DAEMON_PLUGIN_SNIFF_RULES: 'daemon.plugin.sniffRules',
+  DAEMON_PLUGIN_PAGE_SCRIPTS: 'daemon.plugin.pageScripts',
+  DAEMON_PLUGIN_PAGE_SCRIPT_SOURCE: 'daemon.plugin.pageScriptSource',
   DAEMON_PLUGIN_AUTH: 'daemon.plugin.auth',
   DAEMON_PLUGIN_SET_ENABLED: 'daemon.plugin.setEnabled',
   DAEMON_PLUGIN_UPDATE_SETTINGS: 'daemon.plugin.updateSettings',
@@ -103,6 +105,7 @@ export const METHOD = {
   DAEMON_PLUGIN_VIEW_KEEPALIVE: 'daemon.plugin.view.keepalive',
   DAEMON_PLUGIN_COMMAND: 'daemon.plugin.command',
   DAEMON_PLUGIN_INVOKE: 'daemon.plugin.invoke',
+  DAEMON_PLUGIN_PAGE_INVOKE: 'daemon.plugin.pageInvoke',
   DAEMON_COMPONENT_GET: 'daemon.component.get',
   DAEMON_COMPONENT_LIST_VERSIONS: 'daemon.component.listVersions',
   DAEMON_COMPONENT_INSTALL: 'daemon.component.install',

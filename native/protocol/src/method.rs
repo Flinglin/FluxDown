@@ -92,6 +92,10 @@ pub const DAEMON_LINK_PROBE: &str = "daemon.link.probe";
 
 pub const DAEMON_PLUGIN_LIST: &str = "daemon.plugin.list";
 pub const DAEMON_PLUGIN_SNIFF_RULES: &str = "daemon.plugin.sniffRules";
+/// 插件页面脚本索引（`PluginPageScriptsDto`）：浏览器扩展据此注册 / 更新 / 注销用户脚本。
+pub const DAEMON_PLUGIN_PAGE_SCRIPTS: &str = "daemon.plugin.pageScripts";
+/// 读取单个页面脚本源码（`PluginPageScriptSourceParams` → `PluginPageScriptSourceDto`）。
+pub const DAEMON_PLUGIN_PAGE_SCRIPT_SOURCE: &str = "daemon.plugin.pageScriptSource";
 pub const DAEMON_PLUGIN_AUTH: &str = "daemon.plugin.auth";
 pub const DAEMON_PLUGIN_SET_ENABLED: &str = "daemon.plugin.setEnabled";
 pub const DAEMON_PLUGIN_UPDATE_SETTINGS: &str = "daemon.plugin.updateSettings";
@@ -129,6 +133,9 @@ pub const DAEMON_PLUGIN_VIEW_KEEPALIVE: &str = "daemon.plugin.view.keepalive";
 pub const DAEMON_PLUGIN_COMMAND: &str = "daemon.plugin.command";
 /// 调用插件 `flux.rpc.handle` 注册的处理器（`{identity, name, args}`）。慢方法。
 pub const DAEMON_PLUGIN_INVOKE: &str = "daemon.plugin.invoke";
+/// 页面脚本调用插件处理器（`PluginPageInvokeParams` → `PluginPageInvokeResultDto`）：只命中以
+/// `{ page: true }` 注册的处理器，且插件须已授权 `pageScripts`。慢方法。
+pub const DAEMON_PLUGIN_PAGE_INVOKE: &str = "daemon.plugin.pageInvoke";
 pub const DAEMON_COMPONENT_GET: &str = "daemon.component.get";
 pub const DAEMON_COMPONENT_LIST_VERSIONS: &str = "daemon.component.listVersions";
 pub const DAEMON_COMPONENT_INSTALL: &str = "daemon.component.install";
@@ -402,6 +409,8 @@ pub const ALL_METHODS: &[&str] = &[
     DAEMON_LINK_PROBE,
     DAEMON_PLUGIN_LIST,
     DAEMON_PLUGIN_SNIFF_RULES,
+    DAEMON_PLUGIN_PAGE_SCRIPTS,
+    DAEMON_PLUGIN_PAGE_SCRIPT_SOURCE,
     DAEMON_PLUGIN_AUTH,
     DAEMON_PLUGIN_SET_ENABLED,
     DAEMON_PLUGIN_UPDATE_SETTINGS,
@@ -425,6 +434,7 @@ pub const ALL_METHODS: &[&str] = &[
     DAEMON_PLUGIN_VIEW_KEEPALIVE,
     DAEMON_PLUGIN_COMMAND,
     DAEMON_PLUGIN_INVOKE,
+    DAEMON_PLUGIN_PAGE_INVOKE,
     DAEMON_COMPONENT_GET,
     DAEMON_COMPONENT_LIST_VERSIONS,
     DAEMON_COMPONENT_INSTALL,
@@ -564,6 +574,7 @@ pub const SLOW_DAEMON_METHODS: &[&str] = &[
     DAEMON_PLUGIN_VIEW_OPEN,
     DAEMON_PLUGIN_COMMAND,
     DAEMON_PLUGIN_INVOKE,
+    DAEMON_PLUGIN_PAGE_INVOKE,
     DAEMON_GROUP_RESOLVE_PREVIEW,
     DAEMON_RSS_VALIDATE,
     DAEMON_LINK_PROBE,

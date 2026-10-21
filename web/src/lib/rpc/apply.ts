@@ -955,6 +955,7 @@ function applyNonDaemonAgentEvent(snapshot: AgentSnapshot, event: Exclude<AgentE
     case 'cloudNotifyChanged':
       return { ...snapshot, cloudNotify: event.data }
     case 'captureTasksStarted':
+    case 'captureTasksResumed':
     case 'sessionRevoked':
       return snapshot
   }
