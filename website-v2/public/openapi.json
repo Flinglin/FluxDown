@@ -5407,11 +5407,7 @@
           "status",
           "downloadedBytes",
           "totalBytes",
-          "errorMessage",
-          "createdAt",
-          "proxyUrl",
-          "queueId",
-          "checksum"
+          "createdAt"
         ],
         "properties": {
           "autoRoute": {

@@ -559,7 +559,7 @@ globalThis.resolve = async (ctx) => {
 | `flux.rpc.handle(name, handler)` | 你自己的桌面视图可通过 `fluxdown.invoke(name, args)` 调用。 |
 | `flux.events.on(name, handler)` | `name` 是钩子名（`onStart`、`onDone`、`onError`、`onMetaProbed`、`onCancel`），必须列在 `main.events` 中。这类投递**不受** `hooks.match.urls` 过滤。处理器抛异常会被记录并跳过。之后已打开的视图会重新渲染。 |
 | `flux.timers.setTimeout(fn, ms)` / `setInterval(fn, ms)` / `clear(id)` | 最多 64 个存活的定时器（`too many timers (max 64)`）。有视图会话打开时，间隔被限制为 ≥ 1 秒，否则 ≥ 60 秒。它们**不是**全局的 `setTimeout` / `setInterval`。 |
-| `flux.tasks.list()` / `get(id)` / `create(params)` / `pause(id)` / `resume(id)` / `remove(id, deleteFiles?)` | 需要权限 `tasks`。它们调用 daemon 的 `daemon.task.list` / `get` / `create` / `pause` / `resume` / `delete`，参数和结果与 [RPC API](/docs/zh/api/overview/) 相同（`create` 接受 `{ request: { url, … } }`；`get` / `pause` / `resume` / `remove` 接受任务 id 字符串）。只能调用这六个方法。`create` 限制为**每个插件每 60 秒 20 次**（`tasks.create rate limited`）。每次调用都会写入审计日志。 |
+| `flux.tasks.list()` / `get(id)` / `create(params)` / `pause(id)` / `resume(id)` / `remove(id, deleteFiles?)` | 需要权限 `tasks`。它们调用 daemon 的 `daemon.task.list` / `get` / `create` / `pause` / `resume` / `delete`，参数和结果与 [RPC API](/docs/zh/api/overview/) 相同（`create` 接受 `{ request: { url, … } }`；`get` / `pause` / `resume` / `remove` 接受任务 id 字符串）。`list()` 无参返回全部任务，任务数超过 5000 时会被拒绝；此时传 `list({ cursor, limit })` 按 `taskId` 升序分页（`cursor` = 上一页最后一个 `taskId`，`limit` ≤ 5000，返回数不足 `limit` 即末页）。只能调用这六个方法。`create` 限制为**每个插件每 60 秒 20 次**（`tasks.create rate limited`）。每次调用都会写入审计日志。 |
 | `flux.settings.update({ key: "value" })` | 写入你自己插件的设置。**值必须是字符串**；会按 `manifest.settings` 校验，键或值不合法则 reject。 |
 | `flux.ffmpeg`、`flux.ffprobe`、`flux.ytdlp`、`flux.auth` | 见[矩阵](#各入口里有哪些-flux-接口)。`flux.ffmpeg.run` 在 `main` 里总是 reject（没有产物文件）。 |
 

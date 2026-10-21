@@ -5,6 +5,8 @@ export const METHOD = {
   SYSTEM_HELLO: 'system.hello',
   SYSTEM_PING: 'system.ping',
   SYSTEM_SNAPSHOT: 'system.snapshot',
+  /** 任务表 / 队列位置表分页（快照头带 `taskTotal` / `queueTotal` 时用它载入）。 */
+  SYSTEM_TASK_PAGE: 'system.taskPage',
   /** 允许作为连接首帧（握手前）调用。 */
   SYSTEM_SHUTDOWN: 'system.shutdown',
 

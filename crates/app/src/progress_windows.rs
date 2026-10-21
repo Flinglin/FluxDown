@@ -421,8 +421,10 @@ fn observe_all(body: &AgentSnapshot, cx: &mut App) {
     }
 }
 
+/// 任务状态表；任务表仍在分页载入（`tasks` 只是占位）时返回 `None`：用占位表对账会把所有任务
+/// 当成已删除，并让载入后「状态变化」的通知判定失去对照。
 fn snapshot_statuses(body: &AgentSnapshot) -> Option<HashMap<String, i32>> {
-    body.daemon_connected.then(|| {
+    (body.daemon_connected && !body.daemon.tables_loading()).then(|| {
         body.daemon
             .tasks
             .iter()
@@ -507,6 +509,24 @@ fn observe(task_id: &str, status: i32, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::{ProgressWindowPrefs, ProgressWindows, RestartObservation, snapshot_statuses};
+
+    /// 任务表分页载入期间不产出状态表：用占位空表对账会把所有任务当成已删除。
+    #[test]
+    fn statuses_are_withheld_while_the_task_table_is_loading() {
+        let mut body = fluxdown_protocol::AgentSnapshot {
+            daemon_connected: true,
+            ..fluxdown_protocol::AgentSnapshot::default()
+        };
+        assert_eq!(
+            snapshot_statuses(&body).map(|statuses| statuses.len()),
+            Some(0)
+        );
+        body.daemon.task_total = Some(230_000);
+        assert!(snapshot_statuses(&body).is_none());
+        body.daemon.task_total = None;
+        body.daemon.queue_total = Some(3);
+        assert!(snapshot_statuses(&body).is_none());
+    }
 
     #[test]
     fn old_completed_snapshot_does_not_complete_a_restart() {

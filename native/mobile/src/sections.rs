@@ -217,6 +217,8 @@ pub(crate) fn affected(event: &AgentEvent) -> &'static [Section] {
             | DaemonEvent::PluginViewClosed { .. }
             | DaemonEvent::PluginToast { .. }
             | DaemonEvent::SnapshotReplaced(_)
+            // 整表重载宣告：任务 / 队列位置表不属于任何分区，由完整快照信号承载。
+            | DaemonEvent::TablesReloading { .. }
             | DaemonEvent::TaskChanged(_)
             | DaemonEvent::TasksChanged(_)
             | DaemonEvent::TaskDeleted { .. }

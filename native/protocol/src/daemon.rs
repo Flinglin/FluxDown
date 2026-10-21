@@ -535,82 +535,120 @@ pub struct TaskDto {
     pub status: i32,
     pub downloaded_bytes: i64,
     pub total_bytes: i64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub error_message: String,
     /// Unix 秒级时间戳（字符串）。
     pub created_at: String,
     /// 单任务代理 URL（空 = 使用全局代理）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub proxy_url: String,
     /// 命名队列 ID（空 = 默认队列）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub queue_id: String,
     /// Checksum spec，格式 `algo=hexhash`（空 = 跳过校验）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub checksum: String,
     /// 是否显式忽略 HTTPS 证书错误。默认 false（严格验证）。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub ignore_tls_errors: bool,
     /// 文件跟踪：completed 任务的目标文件是否已丢失（被删除/移动）。默认 false。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub file_missing: bool,
     /// 任务结束时间，Unix 秒级时间戳（空 = 尚未完成）。
     /// 记录下载真正完成（status→3）的时刻，不含插件 hook 后处理耗时。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub completed_at: String,
     /// Source page URL captured by the browser extension (empty = none).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub referrer: String,
     /// 所属任务组 ID（空 = 不属于任何组）。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub group_id: String,
     /// 由哪条 RSS 订阅自动创建（空 = 非 RSS 来源）。P5 任务溯源。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub rss_source_id: String,
     /// 展示用原始来源链接（空 = 用 `url`）。`.torrent` 任务的 `url` 是
     /// `torrent-file://local` 哨兵，客户端「复制链接」应优先取本字段。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub origin_url: String,
     /// `ProxyMode::Auto` 的任务级最终链路（可追溯性）：`direct` /
     /// `direct:sampled` / `direct:pinned` / `direct:failover` /
     /// `proxy:cached` / `proxy:sampled` / `proxy:failover`（代理类标签带
     /// 候选来源后缀 `:system`/`:manual`）；空 = 非 Auto 模式。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub auto_route: String,
     /// 加速来源累计字节（多 CDN / 智能代理 / 多网卡）；源站 = 已下载 − 三者之和。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default_source_bytes")]
     pub source_bytes: crate::TaskSourceBytesDto,
     /// 队列内启动顺序（0 = 未显式排序，按创建时间；>0 = 显式顺序）。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub queue_order: i32,
     /// BT 已上传字节数（做种累计，非 BT 任务恒 0）。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
     pub uploaded_bytes: i64,
     /// 下载完成时刻的已上传字节数（做种后分享率基准，非 BT 任务恒 0）。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
     pub uploaded_at_completion: i64,
     /// BT 做种状态：0=无, 1=做种中, 2=达分享率, 3=达时长, 4=用户停止,
     /// 5=任务删除, 6=会话释放, 7=不活跃停止, 8=排队等待做种槽。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub seeding_status: i32,
     /// 做种状态辅助说明（如停止原因，空 = 无）。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub seeding_message: String,
     /// 累计做种秒数（活跃做种期间累加；排队/暂停不计，非 BT 任务恒 0）。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
     pub seeding_time_secs: i64,
     /// 任务级总分享率上限（千分比，1500 = 1.5）。哨兵：-2 = 跟随全局，
     /// -1 = 不限制，>=0 = 自定义（0 视同不限制）。
-    #[serde(default = "default_seed_limit_inherit")]
+    #[serde(
+        default = "default_seed_limit_inherit",
+        skip_serializing_if = "is_seed_limit_inherit"
+    )]
     pub seed_ratio_limit_milli: i64,
     /// 任务级做种后分享率上限（千分比）。哨兵语义同上。
-    #[serde(default = "default_seed_limit_inherit")]
+    #[serde(
+        default = "default_seed_limit_inherit",
+        skip_serializing_if = "is_seed_limit_inherit"
+    )]
     pub seed_post_ratio_limit_milli: i64,
     /// 任务级做种时长上限（分钟）。哨兵语义同上。
-    #[serde(default = "default_seed_limit_inherit")]
+    #[serde(
+        default = "default_seed_limit_inherit",
+        skip_serializing_if = "is_seed_limit_inherit"
+    )]
     pub seed_time_limit_minutes: i64,
     /// 任务级不活跃做种时长上限（分钟）。哨兵语义同上。
-    #[serde(default = "default_seed_limit_inherit")]
+    #[serde(
+        default = "default_seed_limit_inherit",
+        skip_serializing_if = "is_seed_limit_inherit"
+    )]
     pub seed_inactive_time_limit_minutes: i64,
     /// 任务级做种上传限速（字节/秒），0 = 未设置（跟随全局）。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
     pub seed_upload_limit_bps: i64,
+}
+
+// `TaskDto` 默认值字段不上线：二十万任务的全表传输里它们占了约三分之一字节。反序列化端
+// 对应字段都带 `#[serde(default)]`，缺省值与这里判定的「默认」一致。
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn is_zero_i32(value: &i32) -> bool {
+    *value == 0
+}
+
+fn is_zero_i64(value: &i64) -> bool {
+    *value == 0
+}
+
+fn is_seed_limit_inherit(value: &i64) -> bool {
+    *value == default_seed_limit_inherit()
+}
+
+fn is_default_source_bytes(value: &crate::TaskSourceBytesDto) -> bool {
+    *value == crate::TaskSourceBytesDto::default()
 }
 
 /// 命名队列信息（`GET /api/v1/queues` 响应）。
@@ -1980,14 +2018,30 @@ pub struct CdnNodeDto {
     pub active: i32,
 }
 
-/// 任务在队列中的位置（`queuePositionsChanged` 载荷）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 任务在等待队列中的位置（`queuePositionsChanged` 载荷 / 快照 `queuePositions`）。
+///
+/// 全量列表按 `order` 升序排列，`position` = 下标 + 1。增量见
+/// [`WsServerMsg::QueueOrderChanged`]。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct QueuePositionDto {
     pub task_id: String,
     /// 1-based，0 = 不在队列中。
     pub position: i32,
+    /// 引擎分配的排序键：升序即启动顺序；任务留在队列期间不变（队首出队不改其余任务的键），
+    /// 只有用户调整顺序时整表重排。客户端排序用它，展示序号按键的名次计算。
+    #[serde(default)]
+    pub order: i64,
+}
+
+/// 队列顺序增量的单项（[`WsServerMsg::QueueOrderChanged`]）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct QueueOrderEntryDto {
+    pub task_id: String,
+    pub order: i64,
 }
 
 /// 文件跟踪扫描判定的产物文件存在性变化（`fileMissingChanged` 载荷）。
@@ -2119,8 +2173,15 @@ pub enum WsServerMsg {
     /// `ProxyMode::Auto` 任务的链路决策落定/变更（详情面板「链路」行）。
     /// `route` wire 标签同 `TaskDto.autoRoute`；恒非空。
     TaskRouteChanged { task_id: String, route: String },
-    /// 队列内位置批量更新。
+    /// 队列位置全量替换（首次发布 / 用户调整顺序导致整表重排）；按 `order` 升序。
     QueuePositionsChanged { positions: Vec<QueuePositionDto> },
+    /// 队列顺序增量：先移除 `removed`，再按 `order` 插入 / 更新 `added`；结果按键升序，
+    /// 位置为名次（见 [`crate::event::apply_queue_order`]）。队首出队只发被移除的任务，
+    /// 其余任务的键不变，客户端不必逐行重算。
+    QueueOrderChanged {
+        removed: Vec<String>,
+        added: Vec<QueueOrderEntryDto>,
+    },
     /// 文件跟踪扫描结果增量：已完成任务的产物文件在磁盘上消失/回归。
     /// 只带本轮变化项，客户端按 taskId patch `fileMissing`，不重发全量快照。
     FileMissingChanged { updates: Vec<FileMissingUpdateDto> },

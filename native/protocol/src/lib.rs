@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod capture_link;
 pub mod cloud_notify;
+pub mod coalesce;
 pub mod daemon;
 pub mod daemon_config;
 mod digest;
@@ -18,6 +19,7 @@ pub mod rpc;
 pub mod settings;
 pub mod shell_open;
 pub mod shortcuts;
+pub mod table_sync;
 pub mod task_activity;
 pub mod update_prompt;
 pub use task_activity::{
@@ -83,12 +85,12 @@ pub use daemon::{
     PluginCommandDeclDto, PluginConsentParams, PluginContributionsDto, PluginDesktopEntryDto,
     PluginDto, PluginSetSiteDefaultParams, PluginSiteDefaultDto, PluginSniffRulesDto,
     PluginViewDeclDto, PreviewItemDto, PreviewVariantDto, ProxyTestRequest, ProxyTestResponse,
-    QueueDto, QueuePositionDto, QueueScheduleRequest, RenameTaskRequest, ReorderQueueRequest,
-    RequestBody, ResolvePreviewRequest, ResolvePreviewResponse, ResolveVariantOptionDto,
-    ResultMessage, RssItemActionRequest, RssItemDto, RssSourceDto, RssValidateRequest,
-    RssValidateResponse, SegmentDetailDto, SelectionKind, SelectionOutcome, SelectionRequestDto,
-    SelectionResolutionDto, SetPluginEnabledRequest, SetTaskSegmentsParams, SettingFieldDto,
-    SettingOptionDto, SetupRequest, SetupStatusResponse, SiteAuthCredentialDto,
+    QueueDto, QueueOrderEntryDto, QueuePositionDto, QueueScheduleRequest, RenameTaskRequest,
+    ReorderQueueRequest, RequestBody, ResolvePreviewRequest, ResolvePreviewResponse,
+    ResolveVariantOptionDto, ResultMessage, RssItemActionRequest, RssItemDto, RssSourceDto,
+    RssValidateRequest, RssValidateResponse, SegmentDetailDto, SelectionKind, SelectionOutcome,
+    SelectionRequestDto, SelectionResolutionDto, SetPluginEnabledRequest, SetTaskSegmentsParams,
+    SettingFieldDto, SettingOptionDto, SetupRequest, SetupStatusResponse, SiteAuthCredentialDto,
     SiteAuthDeleteParams, SiteAuthEntryDto, SiteAuthGetParams, SiteAuthMatchParams,
     SiteAuthSaveRequest, StatsResponse, StorageProbeDto, StorageProbeFailure, StorageProbeRole,
     StorageProbeTarget, SystemProxyDto, TaskDto, TaskVerifyResult, TaskVerifyStatus, TokenResponse,
@@ -110,9 +112,10 @@ pub use error::{
     RpcErrorData, RpcErrorObject,
 };
 pub use event::{
-    AgentEvent, AgentSnapshot, DaemonEvent, DaemonSnapshot, EventFrame, ServiceEvent, Snapshot,
-    SnapshotBody, WEBHOOK_DELIVERY_LIMIT, accepted_runtime_status, apply_agent_event,
-    apply_daemon_event, merge_webhook_deliveries,
+    AgentEvent, AgentSnapshot, DaemonEvent, DaemonSnapshot, EventFrame, FrameVerdict, ServiceEvent,
+    Snapshot, SnapshotBody, TABLE_INLINE_LIMIT, WEBHOOK_DELIVERY_LIMIT, accepted_runtime_status,
+    apply_agent_event, apply_daemon_event, apply_queue_order, judge_frame,
+    merge_webhook_deliveries, runtime_retained,
 };
 pub use plugin_view::{
     PluginCommandParams, PluginInvokeParams, PluginViewEventParams, PluginViewFrameDto,
@@ -134,4 +137,9 @@ pub use settings::{
     custom_theme_id, custom_theme_key, daemon_config_to_value, is_custom_theme_id,
     is_icon_pack_ref, setting_spec, setting_value_kind, sync_scope_key, validate_value,
     value_to_daemon_config,
+};
+pub use table_sync::{
+    InvalidPageCursor, LoadedTables, TABLE_SYNC_BACKLOG_LIMIT, TASK_PAGE_DEFAULT_LIMIT,
+    TASK_PAGE_MAX_LIMIT, TablePage, TablePageParams, TableSection, TableSync, TableSyncError,
+    TaskListParams,
 };

@@ -358,14 +358,33 @@ impl NmhService {
     }
 
     async fn task_list(&self, msg_id: u64) -> PipeResponse {
-        let tasks = match self
-            .daemon
-            .call::<Value, Vec<TaskDto>>(fluxdown_protocol::method::DAEMON_TASK_LIST, None)
-            .await
-        {
-            Ok(tasks) => tasks,
-            Err(error) => return PipeResponse::error(msg_id, format!("{:?}", error.code)),
-        };
+        // 大任务表不能一次取回：分页拉取，每页只留简报需要的行（未完成的全部 + 最近完成的
+        // 若干），内存与任务总数无关。
+        let limit = fluxdown_protocol::TASK_PAGE_MAX_LIMIT;
+        let mut kept: Vec<TaskDto> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let params = serde_json::json!({ "cursor": cursor, "limit": limit });
+            let page = match self
+                .daemon
+                .call::<Value, Vec<TaskDto>>(
+                    fluxdown_protocol::method::DAEMON_TASK_LIST,
+                    Some(params),
+                )
+                .await
+            {
+                Ok(page) => page,
+                Err(error) => return PipeResponse::error(msg_id, format!("{:?}", error.code)),
+            };
+            let last = page.len() < limit;
+            cursor = page.last().map(|task| task.task_id.clone());
+            kept.extend(page);
+            kept = trim_completed(kept);
+            if last || cursor.is_none() {
+                break;
+            }
+        }
+        let tasks = kept;
         let speeds = self
             .task_events
             .as_ref()
@@ -493,18 +512,22 @@ fn resolver_infos(plugins: Vec<PluginDto>) -> Vec<Value> {
         .collect()
 }
 
-fn select_task_briefs(
-    tasks: Vec<TaskDto>,
-    speeds: &std::collections::HashMap<String, LiveSpeed>,
-) -> Vec<TaskBrief> {
+/// 只留简报需要的行：未完成的全部，加上最近完成的 `MAX_COMPLETED_TASKS` 个（未完成在前）。
+fn trim_completed(tasks: Vec<TaskDto>) -> Vec<TaskDto> {
     let (mut completed, active): (Vec<_>, Vec<_>) =
         tasks.into_iter().partition(|task| task.status == 3);
     completed
         .sort_by_key(|task| std::cmp::Reverse(task.created_at.parse::<i64>().unwrap_or_default()));
     completed.truncate(MAX_COMPLETED_TASKS);
-    active
+    active.into_iter().chain(completed).collect()
+}
+
+fn select_task_briefs(
+    tasks: Vec<TaskDto>,
+    speeds: &std::collections::HashMap<String, LiveSpeed>,
+) -> Vec<TaskBrief> {
+    trim_completed(tasks)
         .into_iter()
-        .chain(completed)
         .map(|task| TaskBrief {
             speed: speeds
                 .get(&task.task_id)

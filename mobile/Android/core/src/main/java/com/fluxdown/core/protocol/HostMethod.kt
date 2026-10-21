@@ -11,6 +11,8 @@ object HostMethod {
     const val systemHello = "system.hello"
     const val systemPing = "system.ping"
     const val systemSnapshot = "system.snapshot"
+    /** 任务表 / 队列位置表分页（协议 v17）：`{section:"tasks"|"queue", cursor?, limit?}`。分页载入由 Rust 会话完成，Kotlin 不直接调用。 */
+    const val systemTaskPage = "system.taskPage"
     /** 让服务优雅退出：daemon 关停引擎后退出；agent 先关停 daemon 再退出（完全退出）。允许作为连接首帧（握手前）调用。 */
     const val systemShutdown = "system.shutdown"
     const val daemonTaskList = "daemon.task.list"

@@ -3,6 +3,10 @@
 pub const SYSTEM_HELLO: &str = "system.hello";
 pub const SYSTEM_PING: &str = "system.ping";
 pub const SYSTEM_SNAPSHOT: &str = "system.snapshot";
+/// 分页拉取 `system.snapshot` / 重载事件宣告「待载入」的任务表与队列位置表
+/// （[`crate::TablePageParams`] → [`crate::TablePage`]）。与 `system.snapshot` 同权限、同服务：
+/// 页应答自带服务端当时的 `(epoch, sequence)`，客户端按 [`crate::TableSync`] 载入并回放。
+pub const SYSTEM_TASK_PAGE: &str = "system.taskPage";
 /// 让服务优雅退出：daemon 关停引擎后退出；agent 先关停 daemon 再退出（完全退出）。
 ///
 /// 允许作为连接首帧（握手前）调用：协议版本不兼容的新旧进程替换只能靠它完成。
@@ -335,6 +339,7 @@ pub const ALL_METHODS: &[&str] = &[
     SYSTEM_HELLO,
     SYSTEM_PING,
     SYSTEM_SNAPSHOT,
+    SYSTEM_TASK_PAGE,
     SYSTEM_SHUTDOWN,
     DAEMON_TASK_LIST,
     DAEMON_TASK_GET,

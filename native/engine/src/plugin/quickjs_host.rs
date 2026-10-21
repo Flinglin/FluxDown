@@ -591,7 +591,8 @@ const HOST_PRELUDE: &str = r#"
       return r.value;
     });
     flux.tasks = {
-      list: () => call('daemon.task.list', {}),
+      // 任务数超过 5000 时无参调用会被拒绝：传 `{ cursor, limit }`（cursor = 上一页最后一个 taskId）分页。
+      list: (params) => call('daemon.task.list', params && typeof params === 'object' ? params : {}),
       get: (id) => call('daemon.task.get', { taskId: String(id) }),
       create: (params) => call('daemon.task.create', params),
       pause: (id) => call('daemon.task.pause', { taskId: String(id) }),
