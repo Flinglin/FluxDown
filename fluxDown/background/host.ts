@@ -165,6 +165,11 @@ export function getCapabilities(force = false): Promise<HostCapabilities> {
   return inflight;
 }
 
+/** 最近一次探测结果（可能已过期，不触发探测）；从未探测过为 null。 */
+export function peekCapabilities(): HostCapabilities | null {
+  return cached?.value ?? null;
+}
+
 /** 查询 capture 事务状态；任何失败返回空表（调用方视为「暂无结论」）。 */
 export async function captureStatus(ids: string[]): Promise<Record<string, CaptureState>> {
   const out: Record<string, CaptureState> = {};
