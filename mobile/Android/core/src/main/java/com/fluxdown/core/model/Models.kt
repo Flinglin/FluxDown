@@ -253,7 +253,16 @@ sealed interface HostRef {
         }
     }
 
-    data class Remote(override val id: String, override val displayName: String, val endpoint: String) : HostRef
+    /**
+     * [linkFingerprint] 非空 = 经局域网配对加入的主机：保存的「访问密钥」其实是本机对该主机的设备专属控制凭据，
+     * 值为主机在本机配对名册里的指纹（64 位小写 hex）；null = 手输访问密钥加入。
+     */
+    data class Remote(
+        override val id: String,
+        override val displayName: String,
+        val endpoint: String,
+        val linkFingerprint: String? = null,
+    ) : HostRef
 }
 
 /** RSS 订阅（`RssSourceDto` 的 UI 子集）。 */
@@ -306,4 +315,8 @@ data class LinkDevice(
     val pairedAt: Long = 0,
     /** 最近一次确认在线的时间（Unix 毫秒，0 = 未知）。 */
     val lastSeenAt: Long = 0,
+    /** 该设备被本机批准过完全控制（对方可凭设备凭据控制本机，`LinkDeviceInfo.grantsControl`）。 */
+    val grantsControl: Boolean = false,
+    /** 本机可控制该设备（本机以请求控制发起并配对完成，`LinkDeviceInfo.controllable`）。 */
+    val controllable: Boolean = false,
 )

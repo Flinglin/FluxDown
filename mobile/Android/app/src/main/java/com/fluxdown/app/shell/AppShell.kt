@@ -405,7 +405,7 @@ private fun Sheets() {
     MoveToQueueSheet(route = sheet as? SheetRoute.MoveToQueue, onDismiss = nav::closeSheet)
     ViewOptionsSheet(visible = sheet == SheetRoute.ViewOptions, onDismiss = nav::closeSheet)
     HostSwitchSheet(visible = sheet == SheetRoute.HostSwitch, onDismiss = nav::closeSheet)
-    AddHostSheet(visible = sheet == SheetRoute.AddHost, onDismiss = nav::closeSheet)
+    AddHostSheet(route = sheet as? SheetRoute.AddHost, onDismiss = nav::closeSheet)
     AddDeviceSheet(visible = sheet == SheetRoute.AddDevice, onDismiss = nav::closeSheet)
     ActivitySheet(visible = sheet == SheetRoute.Activity, onDismiss = nav::closeSheet)
     val rss = sheet as? SheetRoute.RssEditor

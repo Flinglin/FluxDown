@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateSet
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.fluxdown.core.capture.ExternalDownload
+import com.fluxdown.core.model.HostRef
 
 /** 顶层目的地（浮动导航坞 / Rail）。 */
 enum class AppTab { Downloads, Rss, Devices, Settings }
@@ -43,8 +44,8 @@ sealed interface SheetRoute {
     data object ViewOptions : SheetRoute
     /** 主机切换器。 */
     data object HostSwitch : SheetRoute
-    /** V2：添加远程（`--server`）主机。 */
-    data object AddHost : SheetRoute
+    /** V2：添加远程主机（局域网配对 / 访问密钥）；[repair] = 重新配对这台已保存、被拒的主机（预填地址，成功后更新同一主机）。 */
+    data class AddHost(val repair: HostRef.Remote? = null) : SheetRoute
     /** V4：添加设备（账户自动 / 直连配对）。 */
     data object AddDevice : SheetRoute
     /** D9：全局活动面板。 */
