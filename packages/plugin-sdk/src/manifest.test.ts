@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   networkHostsOf,
+  reviewOf,
   riskOf,
+  validatePackage,
   validateManifest,
   validatePageScriptFiles,
   validateViewIcon,
@@ -153,5 +155,55 @@ describe("validateViewIcon", () => {
     const pad = (n: number) => enc(svg + " ".repeat(n - svg.length));
     expect(validateViewIcon("v", pad(16384)).ok).toBe(true);
     expect(validateViewIcon("v", pad(16385)).errors).toEqual(["view 'v' icon 超过 16384 字节"]);
+  });
+});
+
+describe("validatePackage", () => {
+  const base = { identity: "a@b", name: "N", version: "1.0.0", main: { entry: "main.js" } };
+  const files = (entries: Record<string, string>) => new Map(Object.entries(entries));
+
+  test("checks the contents of every referenced file, not just their presence", () => {
+    const manifest = {
+      ...base,
+      permissions: ["browserRules", "pageScripts"],
+      contributes: {
+        views: [{ id: "v", title: "V", location: "activity", icon: "v.svg" }],
+        sniffRules: "rules.json",
+        pageScripts: [{ id: "p", title: "P", matches: ["https://*.example.com/*"], js: ["p.js"] }],
+      },
+    };
+    const good = files({ "main.js": "", "v.svg": "<svg/>", "rules.json": '{"format":"fluxdown-sniff-pack","rules":[]}', "p.js": "1" });
+    expect(validatePackage(manifest, good)).toEqual({ ok: true, errors: [] });
+    const bad = files({ "main.js": "", "v.svg": "<html/>", "rules.json": "{}", "p.js": "1" });
+    expect(validatePackage(manifest, bad).errors).toEqual(["sniffRules format 须为 fluxdown-sniff-pack", "view 'v' icon 不是 SVG 文档"]);
+  });
+
+  test("backslash paths resolve to the forward-slash package entry", () => {
+    const manifest = { ...base, contributes: { views: [{ id: "v", title: "V", location: "activity", icon: "i\\v.svg" }] } };
+    expect(validatePackage(manifest, files({ "main.js": "", "i/v.svg": "<html/>" })).errors).toEqual(["view 'v' icon 不是 SVG 文档"]);
+  });
+
+  test("enforces the client's entry-count limit", () => {
+    const many = files(Object.fromEntries([["main.js", ""], ...Array.from({ length: 200 }, (_, i) => [`f${i}`, ""])]));
+    expect(validatePackage(base, many).errors).toEqual(["包内文件数 201 超过上限 200"]);
+  });
+});
+
+describe("reviewOf", () => {
+  test("collects every URL scope a reviewer approves, sorted and de-duplicated", () => {
+    const review = reviewOf({
+      permissions: ["intercept", "pageScripts"],
+      resolvers: [{ match: { urls: ["*://b.example/*"] } }],
+      hooks: { match: { urls: ["*://a.example/*", "*://b.example/*"] } },
+      interceptors: { match: { urls: ["*://c.example/*"] } },
+      contributes: { pageScripts: [{ matches: ["https://z.example/*"] }, { matches: ["https://y.example/*"] }] },
+    });
+    expect(review).toEqual({
+      permissions: ["intercept", "pageScripts"],
+      risk: "full",
+      networkHosts: [],
+      downloadUrls: ["*://a.example/*", "*://b.example/*", "*://c.example/*"],
+      pageScriptMatches: ["https://y.example/*", "https://z.example/*"],
+    });
   });
 });
