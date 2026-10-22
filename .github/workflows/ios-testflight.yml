@@ -17,7 +17,7 @@
 name: iOS TestFlight
 run-name: >-
   ${{ inputs.version != ''
-  && format('iOS TestFlight {0}{1}', inputs.version, inputs.upload && '' || '（仅校验）')
+  && format('iOS TestFlight {0}{1}', inputs.version, !inputs.upload && '（仅校验）' || '')
   || format('iOS TestFlight {0}', github.ref_name) }}
 on:
   push:
