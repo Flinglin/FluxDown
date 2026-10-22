@@ -165,11 +165,6 @@ export function getCapabilities(force = false): Promise<HostCapabilities> {
   return inflight;
 }
 
-/** 供 App 已确认可达（ping 成功）时使旧的「未连接」缓存立刻失效。 */
-export function invalidateCapabilities(): void {
-  cached = null;
-}
-
 /** 查询 capture 事务状态；任何失败返回空表（调用方视为「暂无结论」）。 */
 export async function captureStatus(ids: string[]): Promise<Record<string, CaptureState>> {
   const out: Record<string, CaptureState> = {};

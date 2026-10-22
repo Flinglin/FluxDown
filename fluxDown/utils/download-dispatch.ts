@@ -366,6 +366,14 @@ export async function checkFluxDownAvailable(): Promise<boolean> {
   return nmhUp || remoteUp;
 }
 
+/** 远程通道（已配置且已验证、remoteMode 非 off）当前是否可达；不探测 NMH。 */
+export async function checkRemoteAvailable(): Promise<boolean> {
+  const cfg = toRoutingConfig(await getRoutingSettings());
+  if (effectiveMode(cfg) === "off") return false;
+  const result = await remotePing(cfg.remote);
+  return result.success === true;
+}
+
 /**
  * 带一次重连重试的可用性探测（NMH 侧沿用原重试语义）。
  * fallback 模式同样取"NMH 或 remote 任一可达"。
