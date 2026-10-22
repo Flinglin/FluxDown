@@ -4694,6 +4694,13 @@
               }
             ]
           },
+          "iconSvg": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "视图图标 SVG 文本（manifest `icon` 指向的包内文件，加载期读入并校验）；客户端\n只把它当单色蒙版按主题着色渲染。未声明时为 `None`，客户端用默认图标。"
+          },
           "id": {
             "type": "string"
           },

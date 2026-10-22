@@ -1033,6 +1033,10 @@ pub struct PluginViewDeclDto {
     /// 桌面增强实现（仅 GPUI 桌面端经 gpui-shell 运行，daemon 不执行）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub desktop: Option<PluginDesktopEntryDto>,
+    /// 视图图标 SVG 文本（manifest `icon` 指向的包内文件，加载期读入并校验）；客户端
+    /// 只把它当单色蒙版按主题着色渲染。未声明时为 `None`，客户端用默认图标。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_svg: Option<String>,
 }
 
 /// 视图的桌面增强入口。
