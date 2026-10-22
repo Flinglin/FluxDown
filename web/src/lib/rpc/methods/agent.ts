@@ -76,10 +76,12 @@ import type {
   RegisterVerifyParams,
   LinkAddressParams,
   LinkApproveParams,
+  LinkControlCredentialDto,
   LinkDeviceInfo,
   LinkDeviceParams,
   LinkDiscoveredPeer,
   LinkDiscoveryParams,
+  LinkStopPairingParams,
   LinkDispatchParams,
   LinkDispatchResult,
   LinkPairBeginParams,
@@ -195,7 +197,7 @@ const sync = {
 const link = {
   /** 展示本机配对码并开始广播。 */
   pairingCode: () => call<LinkPairingCodeDto>(METHOD.AGENT_LINK_PAIRING_CODE),
-  stopPairing: () => call<OkResult>(METHOD.AGENT_LINK_STOP_PAIRING),
+  stopPairing: (params?: LinkStopPairingParams) => call<OkResult>(METHOD.AGENT_LINK_STOP_PAIRING, params),
   discoverySet: (params: LinkDiscoveryParams) =>
     call<OkResult>(METHOD.AGENT_LINK_DISCOVERY_SET, params),
   probe: (params: LinkAddressParams) => call<LinkDiscoveredPeer>(METHOD.AGENT_LINK_PROBE, params),
@@ -207,6 +209,8 @@ const link = {
   remove: (params: LinkDeviceParams) => call<OkResult>(METHOD.AGENT_LINK_REMOVE, params),
   rename: (params: LinkRenameParams) => call<LinkDeviceInfo>(METHOD.AGENT_LINK_RENAME, params),
   refresh: () => call<LinkDeviceInfo[]>(METHOD.AGENT_LINK_REFRESH),
+  controlCredential: (params: LinkDeviceParams) =>
+    call<LinkControlCredentialDto>(METHOD.AGENT_LINK_CONTROL_CREDENTIAL, params),
   dispatch: (params: LinkDispatchParams) =>
     call<LinkDispatchResult>(METHOD.AGENT_LINK_DISPATCH, params),
 };
@@ -246,16 +250,16 @@ const referral = {
     call<CloudReferralValidateResult>(METHOD.AGENT_REFERRAL_VALIDATE, params),
 };
 
-const capture = {
-  submit: (params: CaptureSubmitParams) =>
-    call<CaptureSubmitResult>(METHOD.AGENT_CAPTURE_SUBMIT, params),
-  /** 等待确认的外部捕获队列。 */
 const pluginFavorite = {
   list: () => call<PluginFavoritesDto>(METHOD.AGENT_PLUGIN_FAVORITE_LIST),
   set: (params: PluginFavoriteSetRequest) =>
     call<PluginFavoriteResultDto>(METHOD.AGENT_PLUGIN_FAVORITE_SET, params),
 };
 
+const capture = {
+  submit: (params: CaptureSubmitParams) =>
+    call<CaptureSubmitResult>(METHOD.AGENT_CAPTURE_SUBMIT, params),
+  /** 等待确认的外部捕获队列。 */
   list: () => call<PendingCaptureDto[]>(METHOD.AGENT_CAPTURE_LIST),
   resolve: (params: CaptureResolveParams) =>
     call<CaptureResolveResult>(METHOD.AGENT_CAPTURE_RESOLVE, params),
@@ -341,11 +345,11 @@ export const agent = {
   plan,
   order,
   referral,
+  pluginFavorite,
   capture,
   diagnostics,
   update,
   power,
-  pluginFavorite,
   cloudNotify,
   platform,
 };
