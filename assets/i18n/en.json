@@ -2736,6 +2736,7 @@
   "mobileLicenseLoadFailed": "Couldn't load the license text",
   "mobileNoBrowser": "No app can open this link",
   "mobileNoSettingsApp": "Couldn't open system settings",
+  "mobileNoFilePicker": "This device has no system file picker. Install a file manager that can pick files, or paste the links instead.",
   "mobilePreview": "Preview",
   "mobileProtocolPill": "Protocol v{v}",
   "mobileSaveDirUnset": "Not set · using Download/FluxDown",

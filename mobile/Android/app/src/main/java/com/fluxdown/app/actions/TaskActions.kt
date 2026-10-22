@@ -243,7 +243,15 @@ class TaskActions(
             overlays.toast(s(R.string.mobileFileNotFound), FluxToastKind.Warn, FluxIcons.FileWarning)
             return
         }
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val uri = try {
+            FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        } catch (e: IllegalArgumentException) {
+            // 文件不在 FileProvider 任何已声明根目录内（异常存储布局）：提示而不是崩溃
+            android.util.Log.w("FluxDown", "open: ${file.path} is outside the FileProvider roots: ${e.message}")
+            haptics.reject()
+            overlays.toast(s(R.string.mobileOpenFileFailed), FluxToastKind.Error, FluxIcons.FileWarning)
+            return
+        }
         val mime = mimeForFile(file.name)
         fun view(type: String) = Intent(Intent.ACTION_VIEW).setDataAndType(uri, type)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
