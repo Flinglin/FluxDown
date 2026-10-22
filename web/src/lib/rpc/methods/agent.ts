@@ -43,6 +43,9 @@ import type {
   CloudReferralRecordsResult,
   CloudReferralSummary,
   CloudReferralValidateResult,
+  PluginFavoriteResultDto,
+  PluginFavoriteSetRequest,
+  PluginFavoritesDto,
   DeviceIdParams,
   DeviceRenameParams,
   DiagnosticRepairParams,
@@ -247,6 +250,12 @@ const capture = {
   submit: (params: CaptureSubmitParams) =>
     call<CaptureSubmitResult>(METHOD.AGENT_CAPTURE_SUBMIT, params),
   /** 等待确认的外部捕获队列。 */
+const pluginFavorite = {
+  list: () => call<PluginFavoritesDto>(METHOD.AGENT_PLUGIN_FAVORITE_LIST),
+  set: (params: PluginFavoriteSetRequest) =>
+    call<PluginFavoriteResultDto>(METHOD.AGENT_PLUGIN_FAVORITE_SET, params),
+};
+
   list: () => call<PendingCaptureDto[]>(METHOD.AGENT_CAPTURE_LIST),
   resolve: (params: CaptureResolveParams) =>
     call<CaptureResolveResult>(METHOD.AGENT_CAPTURE_RESOLVE, params),
@@ -336,6 +345,7 @@ export const agent = {
   diagnostics,
   update,
   power,
+  pluginFavorite,
   cloudNotify,
   platform,
 };

@@ -201,6 +201,8 @@ export const METHOD = {
   AGENT_REFERRAL_LIST_RECORDS: 'agent.referral.listRecords',
   AGENT_REFERRAL_VALIDATE: 'agent.referral.validate',
 
+  AGENT_PLUGIN_FAVORITE_LIST: 'agent.pluginFavorite.list',
+  AGENT_PLUGIN_FAVORITE_SET: 'agent.pluginFavorite.set',
   // 以下方法读写宿主机路径 / 桌面集成，Web 不使用。
   AGENT_PLATFORM_OPEN_TASK: 'agent.platform.openTask',
   AGENT_PLATFORM_REVEAL_TASK: 'agent.platform.revealTask',

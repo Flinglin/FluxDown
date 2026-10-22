@@ -439,6 +439,12 @@ impl GatewayService {
             ),
             method::AGENT_REFERRAL_DELETE_CODE => {
                 self.referral_delete_code(params_or_empty(request.params))
+            method::AGENT_PLUGIN_FAVORITE_LIST => cloud_value(self.cloud.plugin_favorites().await),
+            method::AGENT_PLUGIN_FAVORITE_SET => {
+                let request =
+                    parse_params::<fluxdown_protocol::PluginFavoriteSetRequest>(request.params)?;
+                cloud_value(self.cloud.set_plugin_favorite(request).await)
+            }
                     .await
             }
             method::AGENT_REFERRAL_LIST_RECORDS => {
@@ -2164,6 +2170,7 @@ impl RequestLanes {
             daemon_slow,
             local,
             icon,
+        "agent.pluginFavorite.",
             slow,
             repair,
             tasks,
@@ -4183,6 +4190,12 @@ mod tests {
             fluxdown_protocol::method::DAEMON_TASK_CREATE_MANY,
             fluxdown_protocol::method::DAEMON_CONFIG_PATCH,
         ] {
+        for name in [
+            fluxdown_protocol::method::AGENT_PLUGIN_FAVORITE_LIST,
+            fluxdown_protocol::method::AGENT_PLUGIN_FAVORITE_SET,
+        ] {
+            assert!(matches!(lane_for(name), Lane::Cloud), "{name}");
+        }
             assert!(matches!(lane_for(name), Lane::Daemon), "{name}");
         }
     }

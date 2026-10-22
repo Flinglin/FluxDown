@@ -421,6 +421,35 @@ pub struct CloudReferralValidateResult {
     pub reason: Option<String>,
 }
 
+/// 插件市场收藏概览：全站计数 + 本人收藏。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginFavoritesDto {
+    /// 仅含收藏数大于 0 的插件。
+    pub counts: std::collections::BTreeMap<String, u64>,
+    /// 本人收藏的插件 id（最近收藏在前）；未登录为空。
+    pub mine: Vec<String>,
+    pub signed_in: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginFavoriteSetRequest {
+    pub plugin_id: String,
+    pub favorited: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PluginFavoriteResultDto {
+    pub plugin_id: String,
+    pub favorited: bool,
+    pub count: u64,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]

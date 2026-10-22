@@ -254,6 +254,10 @@ pub const AGENT_REFERRAL_VALIDATE: &str = "agent.referral.validate";
 
 /// 云端推送状态 → `CloudNotifyStateDto`（读本机缓存；过期时后台刷新并经 `CloudNotifyChanged` 推送）。
 pub const AGENT_CLOUD_NOTIFY_GET: &str = "agent.cloudNotify.get";
+/// 插件市场收藏：公开计数 + （已登录时）本人收藏 → `PluginFavoritesDto`。
+pub const AGENT_PLUGIN_FAVORITE_LIST: &str = "agent.pluginFavorite.list";
+/// 收藏 / 取消收藏单个插件 → `PluginFavoriteResultDto`。
+pub const AGENT_PLUGIN_FAVORITE_SET: &str = "agent.pluginFavorite.set";
 /// 立即向 FluxCloud 拉取概览 → `CloudNotifyStateDto`。
 pub const AGENT_CLOUD_NOTIFY_REFRESH: &str = "agent.cloudNotify.refresh";
 /// `CloudNotifyReportingParams` → `CloudNotifyStateDto`：本设备上报开关（设备本地）。
@@ -524,6 +528,8 @@ pub const ALL_METHODS: &[&str] = &[
     AGENT_CLOUD_NOTIFY_REFRESH,
     AGENT_CLOUD_NOTIFY_SET_REPORTING,
     AGENT_CLOUD_NOTIFY_SET_PRIVACY,
+    AGENT_PLUGIN_FAVORITE_LIST,
+    AGENT_PLUGIN_FAVORITE_SET,
     AGENT_CLOUD_NOTIFY_CREATE_CHANNEL,
     AGENT_CLOUD_NOTIFY_UPDATE_CHANNEL,
     AGENT_CLOUD_NOTIFY_DELETE_CHANNEL,

@@ -253,6 +253,24 @@ export interface CloudReferralValidateResult {
   reason: string | null;
 }
 
+/** 插件市场收藏概览：`counts` 仅含收藏数大于 0 的插件；未登录时 `mine` 为空。 */
+export interface PluginFavoritesDto {
+  counts: Record<string, number>;
+  mine: string[];
+  signedIn: boolean;
+}
+
+export interface PluginFavoriteSetRequest {
+  pluginId: string;
+  favorited: boolean;
+}
+
+export interface PluginFavoriteResultDto {
+  pluginId: string;
+  favorited: boolean;
+  count: number;
+}
+
 // ── 跨设备任务 ──
 
 /** 远端任务状态；未识别的值 Rust 端解析为 `unknown`（不接单、不控制）。 */
