@@ -42,8 +42,6 @@
 ### `native/mobile`（原生 Android/iOS 的 UniFFI 入口）
 `FluxCore` / `HostSession` 提供本机与远端主机会话。本机复用进程内 daemon 与 agent 嵌入模式，远端通过 WebSocket `/rpc`；握手、游标、重同步与重连只在 Rust 实现，Kotlin / Swift 应用已接受的信号。工程与生成命令见 `clients.md`「原生移动端」及「原生 iOS」。
 
-### `native/server`（`fluxdown_server`）：**已冻结**，不构建、不发布、不接收改动；headless 由 `fluxdown-agent --server` + `fluxdownd` 承担 → 见本文「Headless 服务器」
-
 ### `native/cli`（`fluxdown_cli`，二进制 `fluxdown`）
 aria2c 风格。命令：ping/info/add(get)/list(ls)/status(stat)/pause/resume/rm/pause-all/resume-all/queue/watch/**config**(set/unset/get/list/path)。
 - **A 模式**（默认）：typed HTTP client（复用 api `routes`+`types`），连运行中的 App/server。

@@ -114,6 +114,7 @@ internal fun StatusFolder.label(): String = stringResource(
         StatusFolder.All -> R.string.tabAll
         StatusFolder.Active -> R.string.tabDownloading
         StatusFolder.Completed -> R.string.tabCompleted
+        StatusFolder.Seeding -> R.string.statusSeeding
         StatusFolder.Failed -> R.string.tabError
         StatusFolder.Paused -> R.string.tabPaused
     },

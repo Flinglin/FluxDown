@@ -11,10 +11,9 @@ use gpui_component::{Icon, h_flex, tooltip::Tooltip};
 
 use crate::{pages::downloads::DownloadView, strings::DownloadStrings};
 
-/// 角标。`relaxed` 与状态列主文案同字号档（宽松密度用 sm，其余 xs）。
+/// 角标：与状态列主文案同字号档（xs）。
 pub(crate) fn conflict_badge(
     task_id: &str,
-    relaxed: bool,
     strings: &DownloadStrings,
     host: Option<&WeakEntity<DownloadView>>,
     cx: &App,
@@ -22,11 +21,7 @@ pub(crate) fn conflict_badge(
     let theme = active_theme(cx);
     let tokens = theme.tokens();
     let warning = theme.extended().colors.warning;
-    let text = if relaxed {
-        &tokens.typography.sm
-    } else {
-        &tokens.typography.xs
-    };
+    let text = &tokens.typography.xs;
     let tooltip = strings.conflict_pending_tooltip.clone();
     let host = host.cloned();
     h_flex()

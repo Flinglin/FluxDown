@@ -92,6 +92,30 @@
   免 VDL 零填充写放大）。完成期全量重哈希只在 fastresume 污点时执行（add 时
   存在既有 `.bitv` / 经缓存句柄跨暂停恢复 / 完成重试）；无污点任务的 have-bits
   全部有磁盘依据（全量初检读盘 / Live 写盘后读回校验），完成即时。
+- **做种交互（对齐 qBittorrent）**（`bt_seeding.rs`）：完成即自动做种（`bt_seed_enabled`，默认开；
+  关闭时完成即落 `seeding_status=4` UserStopped）。完成态 BT 任务的「暂停」= 停止做种（1 / 8 → 4），
+  「继续」= 恢复做种（2..=7，达限停止的恢复后下一 tick 会再停，与 qBit 同），其余完成态的继续一律
+  忽略（#935）。`daemon.task.pauseAll` 同时停做种中 / 排队做种（daemon `pause_all_task_ids`）；
+  `resumeAll` 另恢复 UserStopped 且文件在的任务（`resume_user_stopped_seeds`，自动做种关闭或 BT
+  禁用时跳过，达限停止的不纳入）。重启只续上次退出时仍在做种 / 排队的任务（`bt_auto_reseed`）。
+  客户端判定：做种中 = status 3 且 seeding_status ∈ {1, 8}（侧栏「做种中」文件夹，同时计入
+  「已完成」）；可恢复做种 = status 3 且 2..=7 且文件未丢失；仅本机任务，远程任务不变。
+- **做种上传帧节奏**（#939）：限速本身在 librqbit 会话 / torrent 级 `ratelimits`，实测准确且热生效。
+  宿主总上传速率（状态栏 ↑）由 daemon `event_hub` 用相邻进度帧的累计上传增量折算，要求每任务帧间隔
+  ≤ ~500ms（单帧最多摊 1 秒、窗口滞后 700ms）。所以做种上传由 `tick_seeding_upload` 每
+  `SEEDING_UPLOAD_SAMPLE_INTERVAL`（500ms）采样发帧、只写内存（`SeedingEntry::unpersisted_upload`），
+  5 秒的 `tick_seeding_evaluation` 先合并落库再 reconcile / 求限额，关机经 `flush_seed_times` 落库。
+  不要把发帧挪回 5 秒 tick：5 秒一帧会让状态栏在约 5 倍真实速率与 0 之间跳，看似突破限速。
+- **改设置不打断任务（对齐 qBittorrent）**：tracker 列表（自定义 / 订阅开关、地址、刷新结果）不进
+  `SessionOptions::trackers`，由 `SharedBtSession::add_input` 在每次 add 注入（种子文件走
+  `AddTorrentOptions::trackers`，磁力并入 `tr=`，librqbit 对磁力不认 opts.trackers），`set_bt_config`
+  热更新，只作用于新加入的种子，**不重建会话**。只有监听类键（`bt_enabled` / DHT / UPnP / uTP / 端口 /
+  MSE）走 `invalidate_bt_session`：先 cancel `closing` 令在途重新挂载放弃旧会话，合并「在途挂载
+  （`reseeding_task_ids`，先读）+ 做种表」，关停旧会话（取消 librqbit 会话释放端口、在同步线程等最后
+  引用释放），新会话上重新挂载全部做种并 `batch_resume` 被暂停的下载；禁用 BT 时才落「会话释放」/
+  暂停。`SharedBtSession` 的 runtime 在 Drop 里按上下文关停（async 上下文 `shutdown_background`），
+  新增持有 `Arc<SharedBtSession>` 的 runtime 任务无需再担心「drop runtime in async context」panic。
+  所有向会话 add 种子的新路径都必须经 `add_input`，否则拿不到追加 tracker。
 - **已完成 BT 任务完整性校验**（`daemon.task.verify`，慢方法，右键「完整性校验」）：
   `bt_verify.rs` 只读、不改任务状态、不碰 librqbit 会话。元数据按缓存句柄
   `torrent_bytes` → DB `torrent_files` → 会话目录 `{info_hash}.torrent`（磁力，校验
@@ -126,7 +150,7 @@
 - `proxy_config.rs`：无/系统（Windows 注册表）/手动/**自动**（`ProxyMode::Auto`）；HTTP/HTTPS/SOCKS4/5；`test_proxy_connection` 测延迟。
 - `egress.rs`：**宿主自身外网请求的唯一出口**（受管组件、插件市场包、tracker / server.met / nodes.dat 订阅；agent 的自更新与嗅探规则包经 `daemon.egress.plan` 取同一方案）。客户端一律 `egress::client_builder`（= 下载任务同一装配，跟随全局代理，`Egress` 每次读最新配置）；内容有独立来源哈希 / 签名的载荷经 `Egress::route_verified` 按下载任务同一 resolver URL 规则交给插件改写（如 GitHub 加速，多插件命中按无人值守规则定案、不弹框），只接受单一 https 直链，改写地址失败或内容不符回退原地址。校验和、索引、版本清单等完整性锚只走代理、不交给插件。下载任务的拦截器阶段不作用于宿主自身下载。插件 `flux.fetch` / yt-dlp 的代理在 `set_proxy_config` 时随之重建（`EngineBridge::set_proxy_config`）。
 - `auto_proxy.rs` + `path_scheduler.rs` + `cdn/node_pool.rs`：`ProxyMode::Auto` 是**多路径调度**，没有「采样→一次性热切换」状态机。直连（SYS + 多 CDN 钉定节点）、手动代理、系统代理（同端点去重）都是同一 `NodePool` 的路径；探索即真实分段下载（字节写入文件、零丢弃）。租借规则（`path_scheduler` 纯判据）：冷路径只在 ≥1MiB 的工作上分 1 条探索连接（coordinator 额外放出至多 1 个探索 worker）；失败只降排序不降速率估计（连续 3 次才踢）；单连接估计低于最优一半的路径出竞争集；竞争集内按 cap 分散、按 score 择优；开放式首段/plain GET 只留起飞路径。在途连接按完成时间判据（剩余/本连接速率 > 2×剩余/最优实证速率 + 1s；不设剩余字节下限——建连开销已在交接侧计入，下限会让极慢连接握住拆分最小片以下的尾部碎片拖尾；最优基准只认本任务窗口样本或完成租约，不认先验）在当前字节处抢占交接，整窗零字节即判停滞。代理路径错误归因路径本身（含 Range 失效/错位，翻译为 `CdnNodeFailed` 回收重派），validator 不一致（`VersionChanged` 或 206 路径的 `Other("validator mismatch")`）立即踢除该路径并记 NoSwitch；SYS 上的传输层失败在仍有其它路径存活时同样回收重派（每任务 8 次配额，耗尽后按原语义上抛）；交接窗口抑制 ramp 评估/收缩，用过备选路径的任务不学习域名连接上限/起步提示。跨任务先验 `route_health.rs`：每 (host, 路径) 的单连接速率对数折扣均值（半衰 12h，config `auto_route_health` v2，网络指纹 epoch——换网整表丢弃、**离线=unknown 不清表**），只用于起飞排序（代理先验须领先直连 1.5× 才以代理起飞）与备选路径初值，实测首窗即覆盖。云端只提供 CDN hints 排序先验，不参与路由决策、不新增遥测。failover **独立于通用重试配额**：手动代理、系统代理、本地直连在一个自动恢复周期内各尝试至多一次（先验更快的代理优先），三路均失败后只服从通用重试，杜绝 ping-pong。主导链路（窗口累计字节最多的路径）落 `tasks.auto_route` + `EngineEvent::TaskRouteChanged`（wire 标签不变：`direct[:sampled|:pinned|:failover]` / `proxy:{sampled,cached,failover}:{manual,system}`）。代理设置变更同点清 `route_health` + `domain_conn_caps` + failover 状态。
-- `multi_nic.rs`（config `multi_nic_enabled`，默认关，仅桌面 target 编译 `if-addrs`）：多网卡聚合下载。manager 只折算任务级输入（走代理/Auto 多路径 → `blocked_by_proxy`）；coordinator 起飞后后台 `prepare_links`（解析目标 → UDP connect 探主链路 → 枚举网卡 → 纯判据 `plan_links`），首个完整 ramp 窗口经 `NodePool::add_links` 挂入 `RoutePath::Link(ifindex)` 冷槽位，首连接不等待。规划拒绝：fake-IP（198.18/15，TUN 代理）、局域网/CGNAT 目标、主链路是隧道/点对点（防绕开 VPN）；额外链路排除隧道/虚拟网卡、与已选链路同子网或同 /64（同一路由器 = 同一上游）、目标不具备的地址族、5 分钟内被踢过的网卡（进程内记忆，键含本地地址）。出口绑定：Linux/macOS `interface`（SO_BINDTODEVICE/IP_BOUND_IF），Windows `local_address`（强主机模型，单地址族），链路 client 的 DNS 只返回该链路地址族。调度：链路之间按独立容量注水（容量 = 单连接估计 × 上窗连接数，新租约给「容量/(在途+1)」最高者，≥5% 总容量的空闲链路保底 1 条），不走竞争集；链路最后一条连接只在停滞时抢占；链路路径不写 `route_health` 先验、计入 `alternates_used`（不学域名连接上限）。事件：`TaskCdnEvent` kind `links`/`links_off`（原因码 `multi_nic::off_reason`），节点标签 `NIC:<网卡名>`；单节点池无 sink 时事件暂存，由 `Multipath::poll_links` 每窗转发。`native/server` 不接线（废弃路径），生产宿主为 daemon；GPUI（`crates/settings` 下载页「连接与性能」，`SettingsRow::explain` 点击「?」出说明对话框）提供开关。
+- `multi_nic.rs`（config `multi_nic_enabled`，默认关，仅桌面 target 编译 `if-addrs`）：多网卡聚合下载。manager 只折算任务级输入（走代理/Auto 多路径 → `blocked_by_proxy`）；coordinator 起飞后后台 `prepare_links`（解析目标 → UDP connect 探主链路 → 枚举网卡 → 纯判据 `plan_links`），首个完整 ramp 窗口经 `NodePool::add_links` 挂入 `RoutePath::Link(ifindex)` 冷槽位，首连接不等待。规划拒绝：fake-IP（198.18/15，TUN 代理）、局域网/CGNAT 目标、主链路是隧道/点对点（防绕开 VPN）；额外链路排除隧道/虚拟网卡、与已选链路同子网或同 /64（同一路由器 = 同一上游）、目标不具备的地址族、5 分钟内被踢过的网卡（进程内记忆，键含本地地址）。出口绑定：Linux/macOS `interface`（SO_BINDTODEVICE/IP_BOUND_IF），Windows `local_address`（强主机模型，单地址族），链路 client 的 DNS 只返回该链路地址族。调度：链路之间按独立容量注水（容量 = 单连接估计 × 上窗连接数，新租约给「容量/(在途+1)」最高者，≥5% 总容量的空闲链路保底 1 条），不走竞争集；链路最后一条连接只在停滞时抢占；链路路径不写 `route_health` 先验、计入 `alternates_used`（不学域名连接上限）。事件：`TaskCdnEvent` kind `links`/`links_off`（原因码 `multi_nic::off_reason`），节点标签 `NIC:<网卡名>`；单节点池无 sink 时事件暂存，由 `Multipath::poll_links` 每窗转发。生产宿主为 daemon；GPUI（`crates/settings` 下载页「连接与性能」，`SettingsRow::explain` 点击「?」出说明对话框）提供开关。
 - `disk_space.rs`：跨平台余量查询（HLS remux/DASH mux ENOSPC 预检）；Unix 原始块数与块大小经 `Into<u64>` 无损扩展后饱和相乘，兼容不同 ABI 的字段宽度，避免同类型强转触发 Clippy。
 - `proc.rs`：`no_console_window` —— **每个 console 子进程 spawn 都必须包裹**（ffmpeg/ffprobe/yt-dlp/tar/探版），防 Windows 闪窗。
 - `data_dir.rs`：数据目录解析（Windows 便携 `<exe>/portable_data` via `portable` 标记 vs 安装 `%LOCALAPPDATA%`；Linux XDG；macOS App Support；Android files dir）+ 旧版迁移。已有数据迁移不随旧客户端工程退役删除。

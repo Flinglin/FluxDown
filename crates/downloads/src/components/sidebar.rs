@@ -42,6 +42,7 @@ fn folder_id(status: DownloadStatusFilter) -> &'static str {
         DownloadStatusFilter::All => "download-folder-all",
         DownloadStatusFilter::Incomplete => "download-folder-incomplete",
         DownloadStatusFilter::Completed => "download-folder-completed",
+        DownloadStatusFilter::Seeding => "download-folder-seeding",
         DownloadStatusFilter::Failed => "download-folder-failed",
         DownloadStatusFilter::Paused => "download-folder-paused",
     }
@@ -53,6 +54,7 @@ fn status_icon(status: DownloadStatusFilter) -> FluxIcon {
         DownloadStatusFilter::All => FluxIcon::Layers,
         DownloadStatusFilter::Incomplete => FluxIcon::CircleArrowDown,
         DownloadStatusFilter::Completed => FluxIcon::CircleCheck,
+        DownloadStatusFilter::Seeding => FluxIcon::ArrowUp,
         DownloadStatusFilter::Failed => FluxIcon::CircleAlert,
         DownloadStatusFilter::Paused => FluxIcon::CirclePause,
     }
@@ -517,6 +519,7 @@ impl DownloadView {
             DownloadStatusFilter::All => self.strings.status_all.clone(),
             DownloadStatusFilter::Incomplete => self.strings.status_incomplete.clone(),
             DownloadStatusFilter::Completed => self.strings.status_completed.clone(),
+            DownloadStatusFilter::Seeding => self.strings.status_seeding.clone(),
             DownloadStatusFilter::Failed => self.strings.tab_failed.clone(),
             DownloadStatusFilter::Paused => self.strings.status_paused.clone(),
         }

@@ -1,7 +1,7 @@
 # FluxDown — AI 工作契约（核心）
 
 多协议下载管理器（IDM 的免费替代）。官网 <https://fluxdown.com>（旧域名 `fluxdown.zerx.dev` 长期保留；域名与服务器站点见 `.omp/knowledge/ops.md`「域名与服务器站点」）。Rust 发行物版本由 CI 按 `v*` tag 注入 `FLUXDOWN_APP_VERSION`，运行期基准为 `fluxdown_protocol::APP_VERSION`；protocol 与引擎本地版本均回退 `CARGO_PKG_VERSION`。GPUI macOS 打包默认版本从 `cargo metadata` 的 `fluxdown_ui_app.version` 取得。
-**一套 Rust 下载引擎 `fluxdown_engine` + 多宿主 + 多客户端**：PC 为 GPUI（`fluxdown-desktop → fluxdown-agent → fluxdownd → fluxdown_engine`）；移动端为 `mobile/Android`（Jetpack Compose + Flux Lumen，零 Material）与 `mobile/FluxDown`（SwiftUI + Liquid Glass），均经 UniFFI（`native/mobile`）连接同一 Rust 核心。NAS/服务器端 = `fluxdown-agent --server` + `fluxdownd`（React Web SPA 经 agent `/rpc`）。另有 CLI、WXT 浏览器扩展、Tampermonkey 用户脚本、JS 插件系统与 MCP/REST/aria2 API。旧 Flutter 工程及 hub 已移除；共享 `assets/`、现有客户端需要的旧数据/主题/升级兼容与官网旧主题编辑器保留。Android 正式发布使用 `ANDROID_NATIVE_*` 签名，不能覆盖安装旧 Flutter APK。`native/server` 已冻结（不构建/发布，新实现不得依赖它）。
+**一套 Rust 下载引擎 `fluxdown_engine` + 多宿主 + 多客户端**：PC 为 GPUI（`fluxdown-desktop → fluxdown-agent → fluxdownd → fluxdown_engine`）；移动端为 `mobile/Android`（Jetpack Compose + Flux Lumen，零 Material）与 `mobile/FluxDown`（SwiftUI + Liquid Glass），均经 UniFFI（`native/mobile`）连接同一 Rust 核心。NAS/服务器端 = `fluxdown-agent --server` + `fluxdownd`（React Web SPA 经 agent `/rpc`）。另有 CLI、WXT 浏览器扩展、Tampermonkey 用户脚本、JS 插件系统与 MCP/REST/aria2 API。旧 Flutter 工程、hub 及其配套的旧 headless 宿主 `native/server` 已移除；共享 `assets/`、现有客户端需要的旧数据/主题/升级兼容与官网旧主题编辑器保留。Android 正式发布使用 `ANDROID_NATIVE_*` 签名，不能覆盖安装旧 Flutter APK。
 
 ---
 
@@ -71,7 +71,7 @@
 ```bash
 # ── 构建 / 静态检查 ──
 cargo check -p <crate> --lib          # 验证编译按 crate（不要整 workspace）
-cargo fmt --check && cargo clippy --workspace --exclude fluxdown_server --all-targets -- -D warnings   # 提交前必过；含测试目标，冻结的 server 不构建
+cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings   # 提交前必过；含测试目标
 
 # ── 测试（按 crate/过滤，不要 --workspace）──
 cargo nextest run -p fluxdown_engine <filter>   # 引擎单测（协议/分段/DB）
@@ -121,7 +121,7 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 | `ApiHost` | `native/api/src/service.rs` | 客户端→引擎（HTTP 契约） | REST/aria2/MCP 的能力面；必需方法 + 可默认降级方法 |
 
 - 当前生产链路：GPUI 桌面 `fluxdown-desktop → fluxdown-agent → fluxdownd`、headless/NAS `fluxdown-agent --server → fluxdownd`；原生 Android/iOS 经 `native/mobile` 复用进程内 daemon + agent 或远端 `/rpc`。`fluxdown_api` 只依赖 `&dyn ApiHost`，agent 侧 `AgentApiHost` 转发 daemon RPC。CLI 默认 HTTP 连宿主，`add --local` 内嵌引擎。
-- **服务边界**：`native/daemon` 是纯下载核心；`native/agent` 常驻承载账户/云同步/设备协同、官方 UI Gateway 与系统外壳（托盘、关闭 UI 后的驻留策略；GPUI 界面进程本身不驻留）；两者共享 `native/protocol` 的 JSON-RPC 语义。`native/server` 已冻结：不构建、不发布、不接收任何改动，新实现不得依赖它。
+- **服务边界**：`native/daemon` 是纯下载核心；`native/agent` 常驻承载账户/云同步/设备协同、官方 UI Gateway 与系统外壳（托盘、关闭 UI 后的驻留策略；GPUI 界面进程本身不驻留）；两者共享 `native/protocol` 的 JSON-RPC 语义。
 - **并发模型**：current_thread tokio actor 串行化写；每个下载 spawn 独立 task + CancellationToken；插件 resolve 永不阻塞 actor（off-actor spawn + 通道回流）。
 - 客户端捕获三条并行前端进同一本机 RPC（`:17800/download`）：扩展、用户脚本、桌面确认框。
 
@@ -180,8 +180,10 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 | `crates/downloads/src/model/new_download.rs::parse_entries` / `parse_input` + `model/aria2c.rs`（aria2c 命令切词 / 续行合并 / 镜像 URI 只取首个、`-Z` 拆分 / 带值选项表 / 头部回填 `plan_field_fill`） | `web/src/pages/downloads/dialogs/model.ts::parseEntries` + `aria2c.ts`（`parseCommand` / `joinContinuations` / `planFieldFill`）逐条对齐，`aria2c.test.ts` 覆盖同组行为；TXT 导入两端都用「原文保留、按 URL 去重追加」（`append_entries` ↔ `appendEntries`） |
 | `crates/downloads/src/components/task_table.rs::TaskMenuFacts::{can_change_url, can_change_segments, can_verify_integrity}`（`task_menu_facts_for` 为右键 / 应用菜单与详情常规页按钮共用事实源）+ `pages/task_edit.rs`（`open_change_url_dialog` / `open_change_segments_dialog`，下载页与 `task_detail.rs` 常规页共用；失败任务换链 / 改线程数成功后串行 Resume）+ `pages/task_verify.rs`（BT 完整性校验结果通知：损坏文件列前 3 个、其余折叠计数，`conflict` = 已在校验） | `web/src/pages/downloads/model/taskEdit.ts::{canChangeUrl, canChangeSegments, canVerifyIntegrity, parseTaskSegments}` + `table/menus.ts` 与 `detail/GeneralTab.tsx` 两处入口 + `dialogs/TaskEditDialogs.tsx`（`resumeIfFailed`）+ `model/actions.ts::verifyTaskIntegrity`；换链源仅 http(s)/ftp（对齐引擎 `change_task_url`） |
 | `crates/downloads/src/model/dispatch.rs::remote_action_applies`（远程命令适用状态） | `web/src/pages/downloads/model/batchPlan.ts::remoteCan`；未知状态一律不可控制 |
+| `crates/downloads/src/model/mod.rs::DownloadTaskView::{is_seeding, can_resume_seeding, is_resume_all_seed}` + `DownloadStatusFilter::Seeding`（做种交互对齐 qBittorrent：做种中 = 完成且 `seeding_status` ∈ {1, 8}，侧栏「做种中」紧随「已完成」且同时计入后者；可恢复做种 = 完成且 2..=7 且文件在；仅本机任务；做种行可暂停、可恢复行可继续，其余完成态继续仍禁止 #935；引擎侧见 `.omp/knowledge/engine.md`「做种交互」） | Web `web/src/pages/downloads/model/task.ts::{isSeeding, canResumeSeeding}` + `filters.ts`、Android `core/.../model/Models.kt`（`Task.isSeeding` / `canResumeSeeding` / `allTasksPaused`）+ `feature/downloads/DownloadsModel.kt::StatusFolder.Seeding`、iOS `FluxDomain/Model/Models.swift`（`isSeeding` / `canResumeSeeding` / `isAllPaused`）+ `Features/Downloads/DownloadsModel.swift::StatusFolder.seeding`；各端测试覆盖同一组成员 / 资格用例 |
 | `crates/downloads/src/model/view_prefs.rs::compare`（智能排序档位 / 平局 / 自然序 / 表头三档）+ `model/row_order.rs`（行顺序保持期） | `web/src/pages/downloads/model/viewPrefs.ts::compareViews` + `rowOrder.ts`（保持期判定）+ `rowEngine.ts`（增量行引擎，与 GPUI `task_table.rs` 的变更日志重放同构；逐条对齐，`viewPrefs.test.ts` / `rowOrder.test.ts` / `rowEngine.test.ts` 覆盖同一组行为） |
-| `crates/downloads/src/components/task_table.rs` 宽松密度列表视图（`DownloadColumnKind::shown` 并列规则 / `relaxed_meta` / `relaxed_status_detail`） | `web/src/pages/downloads/model/viewPrefs.ts::columnShown` + `table/text.ts::relaxedMeta` / `relaxedStatusDetail` + `table/cells.tsx`：主列恒显示、大小 / 进度 / 速度 / 剩余时间并入主列、元信息字段与顺序逐条对齐 |
+| `crates/downloads/src/model/group_tree.rs`（任务组文件夹行纯模型：成员计数 / 聚合状态、`member_dir`、`flatten` 目录树、`group_sort_view` 排序代理）+ `components/task_table_groups.rs`（归组并入顶层排序、展开、整组选择） | `web/src/pages/downloads/model/groupTree.ts` + `groupRows.ts`：逐条对齐，纯模型两端测试共用 `crates/downloads/tests/fixtures/group_tree_cases.json`（改规则先改用例）；聚合只覆盖当前筛选 + 搜索范围内的成员，组命令与停靠面板组概览按全组 |
+| `crates/downloads/src/components/task_table.rs` 宽松密度列表视图（`relaxed_meta` 副标题；宽松不合并列、状态列同舒适，行高 = max(64, 舒适)） | `web/src/pages/downloads/table/text.ts::relaxedMeta` + `table/cells.tsx` / `rowMetrics.ts`：副标题字段与顺序逐条对齐（`text.test.ts`） |
 | `crates/downloads/src/model/source_composition.rs`（详情常规页「来源构成」区块：P2P 判定 / 超额按比例缩放 / 行纳入规则 / 百分比格式；常规页信息列 300 + 来源区块 360 按可用宽度折行） | `web/src/pages/downloads/model/sourceComposition.ts` + `detail/GeneralTab.tsx` / `SourcesSection.tsx`（逐条对齐，`sourceComposition.test.ts` 复用同一组用例）；数据源 `tasks.src_{cdn,proxy,nic}_bytes` 只记加速路径，源站 = 已下载 − 三者之和，进度复位时同步清零 |
 | `crates/theme` 的 token 注册表 / 解析 / 迁移 / 导出（`registry.rs`、`resolve.rs`、`migrate.rs`、`document.rs`、`flutter.rs`） | 重跑 `cargo run -p fluxdown_ui_theme --example gen_theme_registry` → `website-v2/src/lib/gpui-theme/registry.json` + `website-v2/public/schemas/gpui-theme.v2.json` + fixtures `*.resolved.json`；`website-v2/src/lib/gpui-theme/*.ts` 逐项对齐并过 `cd website-v2 && bun test tests`。token **只加不改**，改名只走声明式 rename 迁移，已发布 fixtures 永不删除 |
 | `crates/icon_pack`（`pack.rs` 解析 / `svg_is_safe` / 匹配，`registry.rs` 回退链）、`assets/icon-packs/*`（内置包由 `bun scripts/gen_icon_packs.ts` 生成，勿手改；`kinds.json` 扩展名 → 大类） | `web/src/lib/icon-pack/{pack,registry}.ts` 逐条对齐，Rust `tests/fixtures.rs` 与 TS `pack.test.ts` 共用 `crates/icon_pack/tests/fixtures/cases.json`；格式只加不改（`schemaVersion` 递增、旧字段保留），偏好值规则 = `fluxdown_protocol::is_icon_pack_ref` ↔ TS `isPackRef` |
@@ -232,7 +234,7 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 
 **Rust**
 - Edition 2024；Clippy **deny**：`unwrap_used`/`expect_used`/`wildcard_imports`。非测试代码禁 `.unwrap()`/`.expect()`，用 `?` + `thiserror`；根 `clippy.toml` 允许测试 unwrap/expect，其余 lint 同样执行 `--all-targets` 门禁。禁 `use foo::*`。Rust 默认安全，只有经审查、无**语义等价**安全替代的平台 FFI 及其必要 ABI/借用/输出读取边界可例外（`rule://no-unsafe-in-rust`）；必须最小 unsafe + SAFETY + 健全类型/生命周期 + RAII/线程约束。workspace deny `unsafe_op_in_unsafe_fn` 与 `clippy::undocumented_unsafe_blocks`，禁止消音绕过。
-- 禁 `todo!`/`unimplemented!` 与静默忽略错误（`let _ = <Result/Future>`、`.ok();`、裸 `fallible();`）：根 `[workspace.lints]` deny `clippy::{todo,unimplemented,let_underscore_must_use,let_underscore_future,unused_result_ok}` + rustc `unused_must_use`，所有活动 crate 经 `[lints] workspace = true` 继承（冻结的 `native/server` 除外）。禁止忽错 `allow`、`drop(Result)` 或空错误分支绕过；关键操作必须传错或停止，正常生命周期退出需明确处理，细则见 `rule://no-ignored-errors-in-rust`。
+- 禁 `todo!`/`unimplemented!` 与静默忽略错误（`let _ = <Result/Future>`、`.ok();`、裸 `fallible();`）：根 `[workspace.lints]` deny `clippy::{todo,unimplemented,let_underscore_must_use,let_underscore_future,unused_result_ok}` + rustc `unused_must_use`，所有 crate 经 `[lints] workspace = true` 继承。禁止忽错 `allow`、`drop(Result)` 或空错误分支绕过；关键操作必须传错或停止，正常生命周期退出需明确处理，细则见 `rule://no-ignored-errors-in-rust`。
 - snake_case 函数/变量，PascalCase 类型，SCREAMING_SNAKE_CASE 常量；公开 API `///` + doctest。
 - 异步优先，同步阻塞走 `spawn_blocking`；重试指数退避（MAX=3，base=2s）；task panic 用 `AssertUnwindSafe` + `catch_unwind`。
 - 日志宏：`use crate::logger::log_info; log_info!("[mod] ...")`（Rust 2024 无 `#[macro_use]`，每文件显式 use），格式 `HH:MM:SS.mmm [Tag] message`。
@@ -243,7 +245,7 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 
 **通用门槛**
 - **禁止新增 dependency**，需要时先说明理由等确认；**禁止手编 `Cargo.toml` 版本号**，用 cargo 命令。
-- 改动前 `cargo check -p <crate> --lib`；提交前 `cargo fmt --check && cargo clippy --workspace --exclude fluxdown_server --all-targets -- -D warnings`；测试用 `cargo nextest run -p <crate> <filter>`，**测试禁 `--workspace`**。
+- 改动前 `cargo check -p <crate> --lib`；提交前 `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings`；测试用 `cargo nextest run -p <crate> <filter>`，**测试禁 `--workspace`**。
 - 优先复用已有 trait/error 类型，不平行造轮子。单文件 >600 行考虑拆分，单函数 >80 行需说明。
 - 查文档优先级：`cargo path <crate>` 本地源码 > docs.rs > web 搜索。
 - **命中以下任一项前先读 `rust-router` skill**：新增/改 public API/trait/error 类型、unsafe/FFI/性能关键路径、新增 crate/调 workspace、写 doc comment。仅改名/格式/加日志可跳过。
