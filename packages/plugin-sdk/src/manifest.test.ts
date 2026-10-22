@@ -5,6 +5,7 @@ import {
   riskOf,
   validateManifest,
   validatePageScriptFiles,
+  validateViewIcon,
   validateSniffPack,
   VALID_PERMISSIONS,
   type PluginRisk,
@@ -131,5 +132,26 @@ describe("validatePageScriptFiles", () => {
     const big = { id: "demo", js: ["a.js", "b.js"] };
     expect(validatePageScriptFiles(big, () => new Uint8Array(200 * 1024).fill(97)).ok).toBe(false);
     expect(validatePageScriptFiles({ id: "demo", js: ["a.js"] }, () => new Uint8Array(200 * 1024).fill(97)).ok).toBe(true);
+  });
+});
+
+describe("validateViewIcon", () => {
+  const enc = (s: string) => new TextEncoder().encode(s);
+  test("accepts BOM + whitespace prefix and XML declaration", () => {
+    expect(validateViewIcon("v", "\uFEFF \n<SVG viewBox='0 0 24 24'></SVG>").ok).toBe(true);
+    expect(validateViewIcon("v", enc('<?xml version="1.0"?>\n<svg xmlns="x"/>')).ok).toBe(true);
+  });
+  test("rejects non-SVG documents", () => {
+    expect(validateViewIcon("v", "<html></html>").errors).toEqual(["view 'v' icon 不是 SVG 文档"]);
+    expect(validateViewIcon("v", '<?xml version="1.0"?><root/>').ok).toBe(false);
+  });
+  test("rejects non-UTF-8", () => {
+    expect(validateViewIcon("v", new Uint8Array([0xff, 0xfe, 0x3c])).errors).toEqual(["view 'v' icon 不是合法 UTF-8"]);
+  });
+  test("size boundary 16384 / 16385", () => {
+    const svg = "<svg>";
+    const pad = (n: number) => enc(svg + " ".repeat(n - svg.length));
+    expect(validateViewIcon("v", pad(16384)).ok).toBe(true);
+    expect(validateViewIcon("v", pad(16385)).errors).toEqual(["view 'v' icon 超过 16384 字节"]);
   });
 });

@@ -21,6 +21,7 @@ import {
   riskOf,
   networkHostsOf,
   validateManifest,
+  validateViewIcon,
   validatePageScriptFiles,
   validateSniffPack,
 } from "./manifest";
@@ -246,6 +247,14 @@ function validateDist(root: string): string[] {
     const rules = manifest.contributes.sniffRules;
     if (typeof rules === "string" && files.includes(rules)) {
       errors.push(...validateSniffPack(readFileSync(join(dist, rules))).errors);
+    }
+    const views = manifest.contributes.views;
+    if (Array.isArray(views)) {
+      for (const view of views) {
+        if (isRecord(view) && typeof view.icon === "string" && files.includes(view.icon)) {
+          errors.push(...validateViewIcon(String(view.id), readFileSync(join(dist, view.icon))).errors);
+        }
+      }
     }
     const scripts = manifest.contributes.pageScripts;
     if (Array.isArray(scripts)) {
