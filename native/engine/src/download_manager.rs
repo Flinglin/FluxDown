@@ -1571,23 +1571,18 @@ async fn persist_start_name(
 /// FTP / HLS / DASH / BT / ed2k、非 GET（POST 等重放有副作用）与 hint（探测会作废
 /// 一次性 URL）仍走 `meta_prober` 或不探测，行为不变。
 fn prelude_shares_downloader_probe(params: &DownloadParams) -> bool {
-    !params.is_resume
-        && params.hint_file_size == 0
-        && params.audio_url.is_none()
-        && params.spec.is_get_like()
-        && (params.url.starts_with("http://") || params.url.starts_with("https://"))
-        && !hls_downloader::is_hls_url(&params.url)
-        && !dash_downloader::is_dash_url(&params.url)
+    downloader::single_get_probe_applies(params)
 }
 
 /// 启动序幕的名称 / 大小探测。
 ///
 /// 满足 [`prelude_shares_downloader_probe`] 的任务用与下载相同的 client / spec 跑
-/// `resolve_file_info_with_ua_fallback`（HEAD ∥ Range GET，conclusive 206 后只再给
-/// HEAD 1s 宽限，含传输抖动重试与 UA / Referer 自适应），成功后：
+/// `resolve_file_info_held_get`：只发【一个】plain GET（无 HEAD、无 Range 0-0，一次性
+/// URL 的令牌不被探测消耗），响应头给出名称 / 大小，响应本身保留为第一条数据连接；
+/// 含传输抖动重试与 UA / Referer 自适应。成功后：
 /// - 名称 / 大小按 [`crate::meta_prober::ProbedMeta::from_file_info`] 派生（HTML
 ///   页面不产出名字）；
-/// - 自适应后的 spec 与下载器一样即时落库，并连同 `FileInfo` 存入
+/// - 自适应后的 spec 与下载器一样即时落库，并连同 `FileInfo` 与保留的响应存入
 ///   `params.preprobed`，`run_download_inner` 据此跳过第二轮探测。
 ///
 /// 探测失败返回空结果并把错误存入 `params.preprobed`：序幕按 URL 兜底命名，下载器
@@ -1608,19 +1603,23 @@ async fn probe_start_meta(params: &mut DownloadParams) -> crate::meta_prober::Pr
     }
     let resolved = tokio::select! {
         _ = params.cancel_token.cancelled() => return crate::meta_prober::ProbedMeta::default(),
-        r = downloader::resolve_file_info_with_ua_fallback(
+        r = downloader::resolve_file_info_held_get(
             &params.client,
             &params.url,
             &params.spec,
         ) => r,
     };
     match resolved {
-        Ok((info, adapted)) => {
+        Ok((info, adapted, held)) => {
             if let Some(adapted_spec) = &adapted {
                 downloader::persist_adapted_spec(&params.db, &params.task_id, adapted_spec).await;
             }
             let meta = crate::meta_prober::ProbedMeta::from_file_info(&info);
-            params.preprobed = Some(Ok(downloader::PreprobedInfo { info, adapted }));
+            params.preprobed = Some(Ok(downloader::PreprobedInfo {
+                info,
+                adapted,
+                held: Some(held),
+            }));
             meta
         }
         Err(error) => {
@@ -1824,6 +1823,15 @@ async fn finalize_start_file_name(
                 error: error.into(),
             };
         }
+    }
+
+    // Step 3.2：分类目录路由（外部捕获）。名字此刻已尽量确定（服务器文件名 / 类型推断 /
+    // 插件 resolve），尚未写任何文件：按它重选目录，使后续「文件已存在」判断、去重、
+    // 临时文件都落在最终目录，完成时通常无需移动。
+    if let Err(error) = crate::category_route::route_before_start(params).await {
+        return StartPrelude::Failed {
+            error: error.into(),
+        };
     }
 
     // Step 3.5：文件已存在决策——磁盘上已有同名最终文件时，在 dedup 之前按
@@ -2244,6 +2252,8 @@ async fn run_http_family_task(run: HttpFamilyRun) {
             None
         }
         StartPrelude::AwaitDecision(conflict) => {
+            // 挂起期间不占着单 GET 探测保留的响应连接；答复后任务重新启动、重新探测。
+            params.preprobed = None;
             // 让出并发槽后在同一 task 内等待答复；暂停/删除经取消令牌打断等待。
             if !send_task_done(
                 &done_tx,
@@ -2615,6 +2625,10 @@ pub struct NewTaskSpec {
     /// config（[`crate::site_auth::SITE_AUTH_CONFIG_KEY`]），后续同站点
     /// 建任务未显式提供凭据时自动套用。
     pub save_site_auth: bool,
+    /// 分类目录路由（外部捕获未替用户选定保存目录时由宿主传入）：建任务按初始名选初始
+    /// 目录、完成前按最终文件名复核，`save_dir` 是未命中时的基准目录。BT / eD2K、任务组
+    /// 成员与 `out=子目录/名字` 不路由，见 [`crate::category_route`]。
+    pub category_route: Option<crate::category_route::CategoryRoute>,
 }
 
 /// 单个任务被拒绝创建的原因（逐项拒绝，不影响同批其它任务；也是批量创建
@@ -2738,6 +2752,8 @@ struct PreparedTask {
     /// 多插件同时匹配且站点无确认过的默认插件（见 `plugin::routing`）。
     resolver_choice_pending: bool,
     is_bt: bool,
+    /// `tasks.category_route` 列值（空串 = 不路由）。
+    category_route: String,
 }
 
 impl PreparedTask {
@@ -2798,6 +2814,7 @@ impl PreparedTask {
             } else {
                 ""
             },
+            category_route: &self.category_route,
             torrent_file_bytes: &self.torrent_file_bytes,
         }
     }
@@ -4442,11 +4459,36 @@ impl DownloadManager {
                 (cookies, referrer, headers)
             }
         };
+        // 分类目录路由（外部捕获）：初始目录是按解析前的来源地址选的，不代表清单内容，
+        // 清单一律以基准目录展开。单个无子路径的条目按条目名路由并保留复核；任务组与
+        // 带子路径的条目保持来源结构，不再路由。
+        let route_column = match self.db.load_task_category_route(&task_id).await {
+            Ok(column) => column,
+            Err(error) => {
+                crate::logger::report_error("download-manager", "load category route", &error);
+                self.drain_queue().await;
+                return;
+            }
+        };
+        let route = crate::category_route::CategoryRoute::from_column(&task_id, &route_column)
+            .filter(|route| !route.base_dir.is_empty());
+        let manifest_base = route
+            .as_ref()
+            .map_or(task.save_dir.as_str(), |route| route.base_dir.as_str());
 
         if manifest.items.len() == 1 {
             let item = &manifest.items[0];
             let resolver_item = manifest_item_resolver_token(item);
-            let new_save_dir = join_manifest_path(&task.save_dir, &item.path);
+            let (new_save_dir, item_route) = match &route {
+                Some(route) if item.path.is_empty() => (
+                    route
+                        .save_dir_for(&item.name, &task.url)
+                        .unwrap_or(manifest_base)
+                        .to_owned(),
+                    route_column.as_str(),
+                ),
+                _ => (join_manifest_path(manifest_base, &item.path), ""),
+            };
             if let Err(e) = self
                 .db
                 .rewrite_task_for_item(
@@ -4454,6 +4496,7 @@ impl DownloadManager {
                     &new_save_dir,
                     &item.name,
                     item.size.unwrap_or(0).max(0),
+                    item_route,
                 )
                 .await
             {
@@ -4474,6 +4517,7 @@ impl DownloadManager {
                         &task.save_dir,
                         &task.file_name,
                         task.total_bytes,
+                        &route_column,
                     )
                     .await
                 {
@@ -4530,7 +4574,7 @@ impl DownloadManager {
             manifest.items[0].name.clone()
         };
         let group_save_dir =
-            join_manifest_path(&task.save_dir, &naming::sanitize_filename(&group_name));
+            join_manifest_path(manifest_base, &naming::sanitize_filename(&group_name));
 
         let total_size: i64 = manifest
             .items
@@ -8286,6 +8330,7 @@ impl DownloadManager {
             http_user,
             http_password,
             save_site_auth,
+            category_route,
         } = spec;
         // thunder:// 是迅雷专有的 base64 封装协议，真实下载地址被包裹在
         // `AA`…`ZZ` 之间。先于站点鉴权匹配和协议判定解出真实地址，后续
@@ -8397,16 +8442,18 @@ impl DownloadManager {
         // aria2 `out` / REST / 新建对话框 `out=` 允许 `子目录/文件名`（相对 save_dir）。
         // 下载器只把 file_name 当单个组件清洗（防穿越），子目录必须在落库前并入
         // save_dir，否则会被压平成 `子目录_文件名`（#716）。BT 的名字另有语义，不拆。
-        let (save_dir, file_name) = if is_magnet(&url) || !torrent_file_bytes.is_empty() {
-            (save_dir, file_name)
+        let is_bt = is_magnet(&url) || !torrent_file_bytes.is_empty();
+        let (save_dir, file_name, has_subdir) = if is_bt {
+            (save_dir, file_name, false)
         } else {
-            let (save_dir, file_name) = split_relative_file_name(&save_dir, &file_name);
+            let (split_dir, file_name) = split_relative_file_name(&save_dir, &file_name);
+            let has_subdir = split_dir != save_dir;
             // 显式名（用户改名 / `out=`）缺类型扩展名：先用无需联网的确定性参照补全，
             // 建任务即定名——列表、「文件已存在」询问与下载中都显示带扩展名的名字，
             // hint 任务（一次性 URL，启动期不探测）也不必等到完成期。
             let file_name = naming::complete_extension_offline(&file_name, &name_hint, &url)
                 .unwrap_or(file_name);
-            (save_dir, file_name)
+            (split_dir, file_name, has_subdir)
         };
         // When segments <= 0 ("auto"), store 0 in DB and let the downloader
         // dynamically calculate the optimal count after probing file size,
@@ -8443,7 +8490,6 @@ impl DownloadManager {
         let (resolver_plugin_id, choice_pending) = self.plugin_route_resolver(&url).await;
         // 二段解析任务（resolver_item 非空）沿用来源插件，不进入多插件选择。
         let resolver_choice_pending = choice_pending && resolver_item.is_empty();
-        let is_bt = is_magnet(&url) || !torrent_file_bytes.is_empty();
         // 稍后下载的 hint 任务（一次性 URL，不探测）：名字为空时按 URL 推断占位名
         // （含预签名 URL 的 `response-content-disposition`），随创建行一并落库，
         // 供 UI 立即显示；HTTP 完成期按实际 GET 响应精修。无网络 I/O。
@@ -8461,6 +8507,42 @@ impl DownloadManager {
             })
         } else {
             None
+        };
+        // 分类目录路由：按初始名选初始目录（常见情形直接写进分类目录，完成时零移动），
+        // 开始写盘前与完成前再按更确定的名字复核（`category_route`）。BT / eD2K 要原地
+        // 做种 / 共享，组成员与 `out=子目录/名字` 的相对结构由来源决定，均不路由。解析
+        // 插件任务的链接是页面地址，只看显式名；HLS / DASH 按成品 `.mp4` 预判。
+        let routable = !is_bt && !is_ed2k_url(&url) && group_id.is_empty() && !has_subdir;
+        let (save_dir, category_route) = match category_route.filter(|_| routable) {
+            None => (save_dir, String::new()),
+            Some(mut route) => {
+                let link = if resolver_plugin_id.is_empty() {
+                    url.as_str()
+                } else {
+                    ""
+                };
+                let known = match &provisional_name {
+                    Some((name, _)) if file_name.is_empty() => name.as_str(),
+                    _ => file_name.as_str(),
+                };
+                let output = crate::category_route::output_name(known, link);
+                let initial = route
+                    .save_dir_for(output.as_deref().unwrap_or(known), link)
+                    .map(str::to_owned);
+                route.base_dir = save_dir;
+                let column = match route.to_column() {
+                    Ok(column) => column,
+                    Err(error) => {
+                        crate::logger::report_warning(
+                            "download-manager",
+                            "encode category route",
+                            &error,
+                        );
+                        String::new()
+                    }
+                };
+                (initial.unwrap_or(route.base_dir), column)
+            }
         };
         PrepareOutcome::Ready(Box::new(PreparedTask {
             task_id: Uuid::now_v7().to_string(),
@@ -8493,6 +8575,7 @@ impl DownloadManager {
             resolver_plugin_id,
             resolver_choice_pending,
             is_bt,
+            category_route,
         }))
     }
 
