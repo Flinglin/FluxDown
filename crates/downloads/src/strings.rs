@@ -986,6 +986,9 @@ pub(crate) fn error_text(
         ErrorReason::PasswordChanged => Some("accountSessionRevokedPasswordChanged"),
         ErrorReason::PeerNotPaired => Some("errReasonPeerNotPaired"),
         ErrorReason::PeerOffline => Some("errReasonPeerOffline"),
+        ErrorReason::PeerOutdated => Some("errReasonPeerOutdated"),
+        ErrorReason::LinkUnavailable => Some("errReasonLinkUnavailable"),
+        ErrorReason::PeerClockSkew => Some("errReasonPeerClockSkew"),
         _ => None,
     });
     let key = reason_key.unwrap_or(match error.code {
