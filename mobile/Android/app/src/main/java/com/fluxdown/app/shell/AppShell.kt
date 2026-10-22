@@ -476,12 +476,9 @@ private fun BoxScope.BottomChrome(failed: Boolean, orb: FluxOrbState) {
             items = dockItems(failed, tabs),
             selected = tabs.indexOf(nav.tab),
             onSelect = { nav.selectTab(tabs[it]) },
-            mini = nav.dockMini && !nav.selecting && nav.sheet == null,
-            onExpand = { nav.dockMini = false },
             hidden = hidden,
             selectionMode = nav.selecting,
             contentDescription = str(R.string.mobileMainNav),
-            expandDescription = str(R.string.mobileExpandNav),
         )
         DownloadsSelectionDock(Modifier.fillMaxWidth())
         if (!hidden) {
@@ -508,7 +505,6 @@ private fun BoxScope.BottomChrome(failed: Boolean, orb: FluxOrbState) {
                 },
                 modifier = Modifier.align(Alignment.CenterEnd),
                 selectionMode = nav.selecting,
-                mini = nav.dockMini && !nav.selecting,
                 contentDescription = str(if (rssTab) R.string.rssAddSource else R.string.newDownload),
                 exitDescription = str(R.string.mobileExitSelection),
             )

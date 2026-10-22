@@ -113,7 +113,6 @@ fun DevicesScreen() {
     var renaming by remember { mutableStateOf<LinkDevice?>(null) }
 
     val listState = rememberLazyListState()
-    DockMiniEffect(listState)
     val swipe = LocalSwipeRevealCoordinator.current
     val gate = rememberFlowInGate()
     val margin = space.screenMargin

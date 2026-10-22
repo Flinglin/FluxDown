@@ -76,9 +76,6 @@ class AppNavigator {
     var selecting by mutableStateOf(false)
         private set
 
-    /** 下滑列表时坞收为迷你态（多选 / Sheet 打开时锁定为展开）。 */
-    var dockMini by mutableStateOf(false)
-
     /**
      * 「稍后决定」：被用户划走 / 关闭的那批 fileExists 请求 id（不向主机答复，请求照常等到超时）。
      * 新请求到达、回到前台或点任务行「待确认」角标都会重新弹出。
@@ -102,7 +99,6 @@ class AppNavigator {
             tab = t
             stack.clear()
             exitSelection()
-            dockMini = false
         }
     }
 
@@ -139,7 +135,6 @@ class AppNavigator {
     fun openSheet(s: SheetRoute) {
         revision++
         sheet = s
-        dockMini = false
     }
 
     fun closeSheet() {
@@ -160,7 +155,6 @@ class AppNavigator {
     fun enterSelection(firstId: String? = null) {
         revision++
         selecting = true
-        dockMini = false
         if (firstId != null) selection.add(firstId)
     }
 
