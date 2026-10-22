@@ -55,8 +55,7 @@ import { ensureRemoteSettingsVerified } from "./settings";
 import type { FluxDownSettings, RemoteMode } from "./settings";
 
 // NMH 侧代表"不可达"（连接层/瞬态失败）而非 App 业务拒绝的 message 集合，
-// 与 native-messaging.ts 内部 sendMessage/sendWithRetry 的失败分支一一对应
-// （见该文件 getPort/sendMessage/sendWithRetry 的 resolve({ success:false, message:... })）。
+// 与 nmh-shared.ts 的连接层失败（SharedFailure）及中继应答的 app_not_running 一一对应。
 // 只有命中此集合，fallback 模式才允许改投远程；其余失败视为 App 已收到请求
 // 并主动拒绝，原样返回，不重复投递。
 const NMH_UNREACHABLE_MESSAGES = new Set<string>([
