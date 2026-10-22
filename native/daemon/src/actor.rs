@@ -1005,12 +1005,13 @@ async fn execute_operation(
             engine.manager.send_tasks_snapshot().await;
         }
         ActorOperation::PauseAll => {
-            let ids = pause_all_task_ids(&engine.db).await?;
+            let mut ids = pause_all_task_ids(&engine.db).await?;
+            ids.extend(engine.manager.retry_pending_task_ids());
             engine.manager.batch_pause_all(&ids).await;
         }
         ActorOperation::PauseTasks { task_ids } => {
             let ids = existing_task_ids(&engine.db, task_ids).await?;
-            engine.manager.batch_pause(&ids).await;
+            engine.manager.pause_selected(&ids).await;
         }
         ActorOperation::ResumeTasks { task_ids } => {
             let ids = existing_task_ids(&engine.db, task_ids).await?;
@@ -2164,7 +2165,8 @@ async fn existing_task_ids(
 }
 
 /// 「全部暂停」的作用对象（对齐 qBittorrent Stop all）：下载中 / 排队 / 准备中，
-/// 以及做种中 / 排队做种的已完成 BT 任务（暂停 = 停止做种）。
+/// 以及做种中 / 排队做种的已完成 BT 任务（暂停 = 停止做种）。等待自动重试的失败任务
+/// 由调用方经 `retry_pending_task_ids` 追加（那是引擎内存态，库里看不出）。
 async fn pause_all_task_ids(db: &fluxdown_engine::db::Db) -> Result<Vec<String>, ActorError> {
     use fluxdown_engine::bt_seeding::{SEEDING_STATUS_ACTIVE, SEEDING_STATUS_QUEUED};
     Ok(db

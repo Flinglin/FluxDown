@@ -249,6 +249,16 @@ const INTERCEPT_RETRY_LIMIT: u32 = 5;
 /// 32/64 并发触发风控；需要更高并发的用户可在设置中显式调大。
 pub(crate) const DEFAULT_AUTO_MAX_CONNECTIONS: i32 = 16;
 
+/// 批量暂停对失败任务（status 4）的作用范围。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailedPause {
+    /// 用户显式选中：任何失败任务都落为暂停。
+    Any,
+    /// 全部暂停 / 停止队列 / 组暂停：只撤销仍在等待自动重试的失败任务，
+    /// 已终止的失败保留错误态。
+    RetryPending,
+}
+
 /// 自动重试基础延迟（秒）的默认值。实际延迟 = base × attempt，即 5s / 10s / 15s 递增。
 ///
 /// 运行时值由用户在设置中配置（config 表 `auto_retry_delay_secs`，经
@@ -10017,6 +10027,16 @@ impl DownloadManager {
             return;
         }
 
+        // 失败任务（可能正等待自动重试）：落 paused 才能让已排程的重试在到点时
+        // 被 `is_task_in_error` 拦下（定时器本身不可取消），并结束本轮自动恢复周期。
+        if self.pause_failed_task(task_id).await {
+            if notify {
+                self.emit_paused_webhook(task_id).await;
+            }
+            self.sync_queue_occupancy();
+            return;
+        }
+
         // Third branch: the task is a completed BT torrent that is seeding or
         // queued for a seeding slot. Pausing it must stop/dequeue the seeder,
         // settle its cumulative seeding time and persist the user-stopped
@@ -10096,6 +10116,29 @@ impl DownloadManager {
                 self.webhook_event_from_task(crate::webhook::WebhookEventKind::TaskPaused, &task);
             self.emit_task_event(event);
         }
+    }
+
+    /// 把失败任务（status 4）落为暂停并发进度帧；非失败任务返回 `false` 不做任何事。
+    ///
+    /// 自动重试的 sleep 定时器不可取消，到点时由 `is_task_in_error` 判定是否仍需重启，
+    /// 所以撤销重试 = 让任务离开失败态。同时结束本轮备用链路排程。
+    async fn pause_failed_task(&mut self, task_id: &str) -> bool {
+        match self.db.load_task_by_id(task_id).await {
+            Ok(Some(task)) if task.status == 4 => {}
+            Ok(_) => return false,
+            Err(error) => {
+                crate::logger::report_error("download-manager", "load task state", &error);
+                return false;
+            }
+        }
+        self.retry_unschedule(task_id);
+        self.auto_failover_pending.remove(task_id);
+        if let Err(error) = self.db.update_task_status(task_id, 2, "").await {
+            crate::logger::report_error("download-manager", "persist task state", &error);
+            return false;
+        }
+        self.emit_progress_from_db(task_id, 2, 0, "", 0).await;
+        true
     }
 
     pub async fn resume_task(&mut self, task_id: &str) {
@@ -12542,17 +12585,38 @@ impl DownloadManager {
     /// - 尾部一次 [`EngineEvent::QueuePositionsChanged`] + 一次
     ///   [`EngineEvent::TasksSnapshot`] 取代逐任务广播。
     pub async fn batch_pause(&mut self, task_ids: &[String]) {
-        self.batch_pause_impl(task_ids, true).await;
+        self.batch_pause_impl(task_ids, true, FailedPause::RetryPending)
+            .await;
+    }
+
+    /// 用户显式选中任务的批量暂停：与 [`Self::batch_pause`] 相同，但选中的**任何**
+    /// 失败任务都落为暂停（与单任务 [`Self::pause_task`] 一致），而不只是等待自动
+    /// 重试的那些。
+    pub async fn pause_selected(&mut self, task_ids: &[String]) {
+        self.batch_pause_impl(task_ids, true, FailedPause::Any)
+            .await;
     }
 
     /// 「全部暂停」语义：停下一切。与 [`Self::batch_pause`] 的区别仅在 Boost：
     /// 优先任务被暂停时，Boost 让位暂停的任务保持暂停（丢弃登记），而不是被
     /// 恢复——否则用户点全部暂停反而会拉起一批任务。
     pub async fn batch_pause_all(&mut self, task_ids: &[String]) {
-        self.batch_pause_impl(task_ids, false).await;
+        self.batch_pause_impl(task_ids, false, FailedPause::RetryPending)
+            .await;
     }
 
-    async fn batch_pause_impl(&mut self, task_ids: &[String], restore_boost_paused: bool) {
+    /// 正在等待自动重试（或备用链路重试）的失败任务。「全部暂停」/ 停止队列
+    /// 必须把它们纳入作用对象，否则暂停后重试到点又把任务拉起来。
+    pub fn retry_pending_task_ids(&self) -> Vec<String> {
+        self.retry_scheduled.keys().cloned().collect()
+    }
+
+    async fn batch_pause_impl(
+        &mut self,
+        task_ids: &[String],
+        restore_boost_paused: bool,
+        failed_scope: FailedPause,
+    ) {
         if task_ids.is_empty() {
             return;
         }
@@ -12612,6 +12676,18 @@ impl DownloadManager {
         for tid in &seeding {
             self.pause_task_silent(tid).await;
         }
+        let handled: HashSet<&str> = queued
+            .iter()
+            .chain(&active)
+            .chain(&seeding)
+            .map(String::as_str)
+            .collect();
+        let candidates: Vec<&str> = idset
+            .iter()
+            .copied()
+            .filter(|id| !handled.contains(id))
+            .collect();
+        let failed_paused = self.pause_failed_batch(&candidates, failed_scope).await;
         if let Some(paused) = boost_released {
             if restore_boost_paused {
                 self.restore_boost_paused_after_batch(paused, &idset).await;
@@ -12626,13 +12702,43 @@ impl DownloadManager {
                 priority_task_id: String::new(),
                 auto_paused_count: 0,
             });
-        } else if queued.is_empty() && active.is_empty() && seeding.is_empty() {
-            return; // 全员本就非活跃非排队非做种：保持既往完全无操作、无广播。
+        } else if queued.is_empty() && active.is_empty() && seeding.is_empty() && !failed_paused {
+            return; // 全员本就非活跃非排队非做种非失败：保持既往完全无操作、无广播。
         }
         if !queued.is_empty() {
             self.broadcast_queue_positions();
         }
         self.send_tasks_snapshot().await;
+    }
+
+    /// 批量暂停中的失败任务：落 paused（单次批量落库、不逐任务发事件，尾部快照覆盖），
+    /// 让已排程的自动重试到点时被 `is_task_in_error` 拦下。返回是否有任务被暂停。
+    async fn pause_failed_batch(&mut self, candidates: &[&str], scope: FailedPause) -> bool {
+        let mut failed: Vec<String> = Vec::new();
+        for &id in candidates {
+            if scope == FailedPause::RetryPending && !self.retry_scheduled.contains_key(id) {
+                continue;
+            }
+            match self.db.load_task_by_id(id).await {
+                Ok(Some(task)) if task.status == 4 => failed.push(task.task_id),
+                Ok(_) => {}
+                Err(error) => {
+                    crate::logger::report_error("download-manager", "load task state", &error);
+                }
+            }
+        }
+        if failed.is_empty() {
+            return false;
+        }
+        if let Err(error) = self.db.update_tasks_status_batch(&failed, 2).await {
+            crate::logger::report_error("download-manager", "persist task state", &error);
+            return false;
+        }
+        for id in &failed {
+            self.retry_unschedule(id);
+            self.auto_failover_pending.remove(id);
+        }
+        true
     }
 
     /// 批量暂停取消 Boost 后恢复让位任务：跳过本批内的任务、已完成的任务和
@@ -13438,6 +13544,13 @@ impl DownloadManager {
             self.active_tasks
                 .iter()
                 .filter(|(_, entry)| entry.queue_id == queue_id)
+                .map(|(id, _)| id.clone()),
+        );
+        // 等待自动重试的失败任务：不暂停的话重试到点会在已停止的队列里重新跑起来。
+        to_pause.extend(
+            self.retry_scheduled
+                .iter()
+                .filter(|(_, queue)| **queue == queue_id)
                 .map(|(id, _)| id.clone()),
         );
         log_info!(
@@ -15255,6 +15368,146 @@ mod tests {
         assert!(
             ctx.is_none(),
             "forced failover must not start another probe"
+        );
+    }
+
+    /// 构造一个刚以可重试错误失败、已排程自动重试的任务（#947 场景）。
+    async fn manager_with_retry_pending(ids: &[&str]) -> (DownloadManager, mpsc::Receiver<String>) {
+        let db = Db::connect("sqlite::memory:")
+            .await
+            .expect("connect mem db");
+        for id in ids {
+            db.insert_task(
+                id,
+                "https://example.com/a.bin",
+                "a.bin",
+                "",
+                4,
+                1024,
+                "",
+                "",
+                "",
+                0,
+            )
+            .await
+            .expect("insert task");
+            db.update_task_status(id, 4, "connection reset")
+                .await
+                .expect("set transport failure");
+        }
+        let mut mgr = DownloadManager::new(
+            db,
+            DownloadManagerConfig {
+                max_concurrent: 1,
+                speed_limit_bps: 0,
+                upload_limit_bps: 0,
+                default_save_dir: String::new(),
+                app_data_dir: String::new(),
+                data_dir: std::env::temp_dir(),
+                bt_config: BtConfig::default(),
+                proxy_config: ProxyConfig::default(),
+                user_agent: String::new(),
+            },
+            Arc::new(RecordingSink::new()),
+            Arc::new(crate::NoopSelection),
+        )
+        .expect("construct manager");
+        mgr.set_max_auto_retries(3);
+        mgr.set_auto_retry_delay_secs(0);
+        let retry_rx = mgr.take_retry_rx().expect("retry receiver");
+        for (generation, id) in (1u64..).zip(ids) {
+            mgr.active_tasks.insert(
+                id.to_string(),
+                ActiveTaskEntry {
+                    token: CancellationToken::new(),
+                    generation,
+                    handle: None,
+                    is_bt: false,
+                    queue_id: String::new(),
+                },
+            );
+            mgr.on_task_done(&TaskDone {
+                task_id: id.to_string(),
+                generation,
+                reserved_temp_path: None,
+                phase: TaskDonePhase::Finished,
+            })
+            .await;
+            assert!(
+                mgr.retry_scheduled.contains_key(*id),
+                "前置：{id} 已排程自动重试"
+            );
+        }
+        (mgr, retry_rx)
+    }
+
+    #[tokio::test]
+    async fn pausing_retry_pending_failed_task_stops_the_scheduled_retry() {
+        let (mut mgr, mut retry_rx) = manager_with_retry_pending(&["t"]).await;
+        mgr.pause_task("t").await;
+
+        let row = mgr
+            .db
+            .load_task_by_id("t")
+            .await
+            .expect("load")
+            .expect("row");
+        assert_eq!(row.status, 2, "失败任务暂停后落为已暂停");
+        assert!(mgr.retry_pending_task_ids().is_empty());
+        // 定时器仍会到点：宿主的守卫必须拒绝重启。
+        let fired = tokio::time::timeout(std::time::Duration::from_secs(1), retry_rx.recv())
+            .await
+            .expect("retry timer fires");
+        assert_eq!(fired.as_deref(), Some("t"));
+        assert!(
+            !mgr.is_task_in_error("t").await,
+            "到点的重试不得再拉起已暂停任务"
+        );
+    }
+
+    #[tokio::test]
+    async fn pause_all_covers_retry_pending_but_keeps_terminal_failures() {
+        let (mut mgr, _retry_rx) = manager_with_retry_pending(&["waiting"]).await;
+        mgr.db
+            .insert_task(
+                "done-failing",
+                "https://example.com/b.bin",
+                "b.bin",
+                "",
+                4,
+                1,
+                "",
+                "",
+                "",
+                0,
+            )
+            .await
+            .expect("insert terminal failure");
+        mgr.db
+            .update_task_status("done-failing", 4, "HTTP 404")
+            .await
+            .expect("set terminal failure");
+
+        let mut ids = mgr.retry_pending_task_ids();
+        ids.push("done-failing".to_string());
+        mgr.batch_pause_all(&ids).await;
+
+        let status = |row: Option<TaskInfo>| row.expect("row").status;
+        assert_eq!(
+            status(mgr.db.load_task_by_id("waiting").await.expect("load")),
+            2
+        );
+        assert_eq!(
+            status(mgr.db.load_task_by_id("done-failing").await.expect("load")),
+            4,
+            "全部暂停不改写不会再重试的失败任务"
+        );
+
+        // 用户显式选中则任何失败任务都可暂停。
+        mgr.pause_selected(&["done-failing".to_string()]).await;
+        assert_eq!(
+            status(mgr.db.load_task_by_id("done-failing").await.expect("load")),
+            2
         );
     }
 
