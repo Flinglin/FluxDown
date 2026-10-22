@@ -91,7 +91,7 @@ impl ManifestView {
                     .tooltip({
                         let label = SharedString::from(label.to_owned());
                         move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(label.clone()).build(window, cx)
+                            fluxdown_ui_components::tooltip_view(label.clone(), window, cx)
                         }
                     })
                     .child(check_mark(state, cx))

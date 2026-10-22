@@ -7,7 +7,7 @@ use std::{
 };
 
 use fluxdown_protocol::{RemoteCommandAction, RemoteCommandParams, RemoteTaskStatus};
-use fluxdown_ui_components::{CheckState, FluxIcon, check_mark, tabular_numbers};
+use fluxdown_ui_components::{CheckState, FluxIcon, check_mark, tabular_numbers, tooltip_view};
 use fluxdown_ui_icon_pack::FileKind;
 use fluxdown_ui_theme::active_theme;
 use gpui::{
@@ -23,7 +23,6 @@ use gpui_component::{
     scroll::Scrollbar,
     spinner::Spinner,
     table::{Column, DataTable, TableDelegate, TableState},
-    tooltip::Tooltip,
     v_flex,
 };
 
@@ -2128,7 +2127,7 @@ impl DownloadTableDelegate {
                 .size_full()
                 .relative()
                 .cursor_pointer()
-                .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                .tooltip(move |window, cx| tooltip_view(tooltip.clone(), window, cx))
                 .when_some(glyph, |this, glyph| {
                     this.child(
                         h_flex()
@@ -2295,7 +2294,7 @@ impl DownloadTableDelegate {
             .when_some(
                 tooltip.filter(|_| !task.conflict_pending),
                 |this, tooltip| {
-                    this.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                    this.tooltip(move |window, cx| tooltip_view(tooltip.clone(), window, cx))
                 },
             )
             .into_any_element()
@@ -2472,7 +2471,7 @@ impl DownloadTableDelegate {
                 .cursor_pointer()
                 .text_color(muted)
                 .hover(move |style| style.bg(pressed).text_color(foreground))
-                .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                .tooltip(move |window, cx| tooltip_view(tooltip.clone(), window, cx))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();

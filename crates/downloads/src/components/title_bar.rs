@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use fluxdown_ui_components::{
     CheckState, ControlExt as _, FluxIcon, check_mark, segmented_tabs, toolbar_action_button,
+    tooltip_view,
 };
 use fluxdown_ui_i18n::{Translator, keys};
 use fluxdown_ui_theme::active_theme;
@@ -24,7 +25,6 @@ use gpui_component::{
     popover::Popover,
     scroll::ScrollableElement as _,
     table::TableState,
-    tooltip::Tooltip,
     v_flex,
 };
 
@@ -305,7 +305,7 @@ impl Render for DownloadTitleBar {
                     .flex_none()
                     .tooltip({
                         let label = new_label.clone();
-                        move |window, cx| Tooltip::new(label.clone()).build(window, cx)
+                        move |window, cx| tooltip_view(label.clone(), window, cx)
                     })
                     .child(
                         toolbar_action_button(

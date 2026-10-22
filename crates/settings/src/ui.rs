@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use fluxdown_ui_components::{
-    ButtonVariant, ControlExt as _, FluxIcon, card, dialog_scroll_body, dialog_title,
+    ButtonVariant, ControlExt as _, FluxIcon, card, dialog_scroll_body, dialog_title, tooltip_view,
 };
 use fluxdown_ui_theme::active_theme;
 use gpui::{
@@ -29,7 +29,6 @@ use gpui_component::{
     input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
     menu::{DropdownMenu as _, PopupMenuItem},
     switch::Switch,
-    tooltip::Tooltip,
     v_flex,
 };
 
@@ -571,7 +570,7 @@ impl SettingsRow {
                             .flex()
                             .items_center()
                             .cursor_pointer()
-                            .tooltip(move |window, cx| Tooltip::new(help.clone()).build(window, cx))
+                            .tooltip(move |window, cx| tooltip_view(help.clone(), window, cx))
                             .child(
                                 Icon::new(FluxIcon::Info)
                                     .size(extended.icon.sm)
@@ -604,7 +603,7 @@ impl SettingsRow {
                                     .border_color(tokens.colors.foreground)
                                     .text_color(tokens.colors.foreground)
                             })
-                            .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
+                            .tooltip(move |window, cx| tooltip_view(hint.clone(), window, cx))
                             .on_click(move |_, window, cx| {
                                 open_explain_dialog(explain.clone(), window, cx);
                             })

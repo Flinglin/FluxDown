@@ -175,7 +175,7 @@ pub(crate) fn risk_pill(
         tone_pill(frame.translator.text(name_key).to_owned(), color, frame)
             .id(id)
             .tooltip(move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+                fluxdown_ui_components::tooltip_view(tip.clone(), window, cx)
             }),
     )
 }

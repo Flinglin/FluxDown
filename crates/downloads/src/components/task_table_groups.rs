@@ -4,14 +4,14 @@
 
 use std::{cmp::Ordering, collections::HashMap, rc::Rc};
 
-use fluxdown_ui_components::{CheckState, FluxIcon, check_mark, tabular_numbers};
+use fluxdown_ui_components::{CheckState, FluxIcon, check_mark, tabular_numbers, tooltip_view};
 use fluxdown_ui_theme::active_theme;
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, FontWeight, InteractiveElement as _, IntoElement,
     Modifiers, MouseButton, ParentElement, SharedString, Stateful, StatefulInteractiveElement as _,
     Styled, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::{Icon, h_flex, table::TableState, tooltip::Tooltip, v_flex};
+use gpui_component::{Icon, h_flex, table::TableState, v_flex};
 
 use super::{
     CELL_PADDING_X, DownloadColumnKind, DownloadTableDelegate, GroupBucket, PROGRESS_GAP,
@@ -642,7 +642,7 @@ impl DownloadTableDelegate {
                 .size_full()
                 .relative()
                 .cursor_pointer()
-                .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                .tooltip(move |window, cx| tooltip_view(tooltip.clone(), window, cx))
                 .child(
                     h_flex()
                         .absolute()
@@ -878,7 +878,7 @@ impl DownloadTableDelegate {
                 .cursor_pointer()
                 .text_color(muted)
                 .hover(move |style| style.bg(pressed).text_color(foreground))
-                .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                .tooltip(move |window, cx| tooltip_view(tooltip.clone(), window, cx))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
@@ -998,7 +998,7 @@ impl DownloadTableDelegate {
                                     .child(meta),
                             ),
                     )
-                    .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
+                    .tooltip(move |window, cx| tooltip_view(full_path.clone(), window, cx))
                     .into_any_element()
             }
             DownloadColumnKind::Size if *size_bytes > 0 => {
