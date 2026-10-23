@@ -230,8 +230,8 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 - **git 写操作的门槛是「用户授权」**：用户在本会话要求过（含 `/commit`、「提交」「推一下」「发版」）→ 视为已授权，核对前置条件后**直接做完**，不再征询；用户没要求、你自己想顺手做 → 停手先问。授权按动作粒度计（提交 ≠ 推送，打 tag ≠ 发布）。
 - **分支模型**：`main` = 开发分支（超集 / 最新），`stable` = 稳定分支（子集）。日常一律在 `main`；`stable` 只经合并/cherry-pick `main` 前进；hotfix 直进 `stable` 必须**同回合**同步回 `main`。一致性判据 `git log stable --not main` **恒为空**。
 - **tag**：稳定 `vX.Y.Z` 只从 `stable`，预览 `vX.Y.Z-rc.N` 只从 `main`；CI 有分支守卫，打错分支整条流水线失败。推送 `v*` tag **立即触发全平台发布，不可逆**。
-- 主干门禁由 `.github/workflows/ci.yml` 承载：main push / pull_request 按变更触发 Rust fmt、排除冻结 server 的 workspace clippy、按 crate 分组 nextest，以及 Web SPA / 官网 / 扩展构建；不等发布 tag 才验证。
-- 发布流水线是**组件变更检测 + 统一 release** 式（`changes` job 映射路径→`app`/`extension`/`server`/`mobile`/`cli`，组件互不阻断，失败组件经 `workflow_dispatch` 补发）；发版前可手动勾选 `rehearsal` 以尚不存在的 tag 演练整条流水线（全量构建 / 签名 / 公证 / 凭据探活，不建 release、不上传、不推镜像与商店）。矩阵、补发与演练细节见 `.omp/knowledge/ops.md`。
+- 主干门禁由 `.github/workflows/ci.yml` 承载：main push / pull_request 按变更触发 Rust fmt、workspace clippy、按 crate 分组 nextest、Web SPA / 官网 / 扩展构建，以及「发布对齐」检查（release 原样的桌面构建组合 `cargo check`、Docker `server-check` 阶段、librqbit 来源）；`workflow_dispatch` 为全量运行。只在发布才走的路径必须在这里有 check 级覆盖，不等发布 tag 才暴露。
+- 发布流水线是**组件变更检测 + 统一 release** 式（`changes` job 映射路径→`app`/`extension`/`server`/`mobile`/`cli`，组件互不阻断，失败组件经 `workflow_dispatch` 补发）。**只构建一次**：稳定版先在目标提交上跑全量 CI + `rehearsal` 演练（完整构建 / 签名 / 公证，Docker 只按 digest 推送，不建 release），推 tag 时同一提交的 CI 必须绿，并直接晋升演练产物（不重新编译）；Actions artifact 只是中间产物，版本转正即清理、14 天兜底过期。细节见 `.omp/knowledge/ops.md`。
 
 ---
 
