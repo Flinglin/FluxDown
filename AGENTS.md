@@ -33,6 +33,7 @@
 | 红线 / 授权 / 禁用命令（§6–§7） | `.omp/RULES.md`（粘性红线）、`.omp/rules/forbidden-commands.md`、`.omp/WATCHDOG.md`（严重级映射） |
 | 跨仓契约 / 仓库地图 | 工作区根 `../AGENTS.md`（cwd=根时自动加载的是那份） |
 | 长期结论 / 踩过的坑 | memory：`memory://root/MEMORY.md` + `memory_summary.md` |
+| CI 触发路径（`ci.yml` 的 `changes.filters`）、新增 crate / path 依赖 / `include_*!` / TS 跨目录引用 | `python3 .github/scripts/check_ci_paths.py` 必须通过（CI `ci-paths` job 同跑） |
 | 章节标题（别处会引用） | `grep "AGENTS.md"` 扫全工作区，修掉悬空引用（skills / rules / 源码注释都引过） |
 
 **单一事实源坐标**（要改契约先来这里）：
@@ -85,6 +86,7 @@ PG_TEST_URL=postgres://postgres:pw@localhost/postgres cargo test -p fluxdown_eng
 cargo test -p fluxdown_engine --features plugins,components --test engine plugin_ffmpeg::   # 真实执行经 FLUXDOWN_TEST_FFMPEG=<abs> 注入
 cargo test -p fluxdown_engine --features plugins,components --test engine plugin_ytdlp::    # FLUXDOWN_TEST_YTDLP=<abs>
 cargo check -p fluxdown_engine        # 不带 feature：验证 mobile 关插件时主链路零变化
+python3 .github/scripts/check_ci_paths.py   # ci.yml 路径过滤覆盖自检
 
 # ── 各宿主/客户端运行 ──
 cargo build -p fluxdown_daemon && cargo run -p fluxdown_agent --features web-ui -- --server   # headless 服务器（fluxdownd 须与 agent 同目录；env 见 .omp/knowledge/hosts-and-api.md）
@@ -230,7 +232,7 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 - **git 写操作的门槛是「用户授权」**：用户在本会话要求过（含 `/commit`、「提交」「推一下」「发版」）→ 视为已授权，核对前置条件后**直接做完**，不再征询；用户没要求、你自己想顺手做 → 停手先问。授权按动作粒度计（提交 ≠ 推送，打 tag ≠ 发布）。
 - **分支模型**：`main` = 开发分支（超集 / 最新），`stable` = 稳定分支（子集）。日常一律在 `main`；`stable` 只经合并/cherry-pick `main` 前进；hotfix 直进 `stable` 必须**同回合**同步回 `main`。一致性判据 `git log stable --not main` **恒为空**。
 - **tag**：稳定 `vX.Y.Z` 只从 `stable`，预览 `vX.Y.Z-rc.N` 只从 `main`；CI 有分支守卫，打错分支整条流水线失败。推送 `v*` tag **立即触发全平台发布，不可逆**。
-- 主干门禁由 `.github/workflows/ci.yml` 承载：main push / pull_request 按变更触发 Rust fmt、workspace clippy、按 crate 分组 nextest、Web SPA / 官网 / 扩展构建，以及「发布对齐」检查（release 原样的桌面构建组合 `cargo check`、Docker `server-check` 阶段、librqbit 来源）；`workflow_dispatch` 为全量运行。只在发布才走的路径必须在这里有 check 级覆盖，不等发布 tag 才暴露。
+- 主干门禁由 `.github/workflows/ci.yml` 承载：main push / pull_request 按变更触发 Rust fmt、workspace clippy、按 crate 分组 nextest、Web SPA / 官网 / 扩展构建，以及「发布对齐」检查（release 原样的桌面构建组合 `cargo check`、Docker `server-check` 阶段、librqbit 来源）；`workflow_dispatch` 为全量运行。只在发布才走的路径必须在这里有 check 级覆盖，不等发布 tag 才暴露。路径过滤由 `ci-paths` job（`.github/scripts/check_ci_paths.py`）对照源码自检：crate path 依赖闭包、`include_*!`、`[patch]` 路径、TS 跨目录引用（共享夹具）必须被对应过滤器覆盖，漏一项即失败。
 - 发布流水线是**组件变更检测 + 统一 release** 式（`changes` job 映射路径→`app`/`extension`/`server`/`mobile`/`cli`，组件互不阻断，失败组件经 `workflow_dispatch` 补发）。**只构建一次**：稳定版先在目标提交上跑全量 CI + `rehearsal` 演练（完整构建 / 签名 / 公证，Docker 只按 digest 推送，不建 release），推 tag 时同一提交的 CI 必须绿，并直接晋升演练产物（不重新编译）；Actions artifact 只是中间产物，版本转正即清理、14 天兜底过期。细节见 `.omp/knowledge/ops.md`。
 
 ---

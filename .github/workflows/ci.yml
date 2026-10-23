@@ -58,6 +58,8 @@ jobs:
               - '.github/workflows/ci.yml'
             web:
               - 'web/**'
+              - 'crates/*/tests/fixtures/**'
+              - 'native/protocol/src/settings.rs'
               - 'assets/i18n/**'
               - 'website-v2/src/lib/gpui-theme/**'
               - 'assets/icon-packs/**'
@@ -73,10 +75,14 @@ jobs:
             extension:
               - 'fluxDown/**'
               - 'scripts/sniff-rules/**'
+              - 'native/engine/src/naming/fixtures/**'
               - '.github/workflows/ci.yml'
             android:
               - 'mobile/Android/**'
               - 'native/**'
+              - 'crates/i18n/**'
+              - 'third_party/**'
+              - 'assets/logo/**'
               - 'assets/i18n/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -101,6 +107,16 @@ jobs:
               - 'web/**'
               - 'website-v2/src/lib/gpui-theme/**'
               - '.github/workflows/ci.yml'
+
+  # 过滤器自检：上面的 filters 必须覆盖各门禁实际读取的路径（crate path 依赖闭包、include_*!、
+  # [patch] 路径、TS 跨目录引用的共享夹具等），否则只改这些文件的 PR 不会触发对应检查。
+  # 每次都跑（只读源码 + `cargo metadata --no-deps --offline`，秒级）。
+  ci-paths:
+    name: CI paths filter coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/scripts/check_ci_paths.py
 
   rust-lint:
     name: Rust fmt + clippy
