@@ -67,7 +67,8 @@ def install_sections(present: list[str], version: str, repo: str, owner: str) ->
 | Windows x64 / ARM64 | `FluxDown-Server-{version}-windows-{{x64,arm64}}.zip` |
 | macOS Intel / Apple Silicon | `FluxDown-Server-{version}-macos-{{x64,arm64}}.tar.gz` |
 | Linux x64 / ARM64（musl 静态链接，任意发行版可用） | `FluxDown-Server-{version}-linux-{{x64,arm64}}.tar.gz` |
-| OpenWrt 软路由（x86_64 / aarch64 各子架构） | `fluxdown-server_{version}_<arch>.ipk` + `luci-app-fluxdown_{version}_all.ipk` |
+| OpenWrt 软路由 24.10 及更早（opkg，x86_64 / aarch64 各子架构） | `fluxdown-server_{version}_<arch>.ipk` + `luci-app-fluxdown_{version}_all.ipk` |
+| OpenWrt 软路由 25.12 起（apk，x86_64 / aarch64 各子架构） | `fluxdown-server_{version}_<arch>.apk` + `luci-app-fluxdown_{version}_all.apk` |
 | QNAP NAS（QTS x86_64 / ARM64） | `FluxDown-Server-{version}-qnap-{{x64,arm64}}.qpkg` |
 | 群晖 NAS（DSM 7 / DSM 6，x86_64 / ARM64） | `FluxDown-Server-{version}-synology-{{dsm7,dsm6}}-{{x64,arm64}}.spk` |
 | 飞牛 fnOS NAS（x86 / ARM） | `FluxDown-Server-{version}-fnos-{{x64,arm64}}.fpk` |
@@ -76,7 +77,7 @@ def install_sections(present: list[str], version: str, repo: str, owner: str) ->
 **包内两个可执行文件必须放在同一目录**：`fluxdown-agent`（含 Web 控制台，已编译进二进制）与 `fluxdownd`（下载 daemon，由 agent 自动拉起、退出时一并关停），无需附带任何静态资源目录。
 首次启动请在浏览器里完成「初始化 FluxDown Server」向导设置访问密钥（无人值守部署可用 `FLUXDOWN_TOKEN` 预置）。
 
-**OpenWrt**：`opkg install fluxdown-server_*.ipk luci-app-fluxdown_*.ipk`，LuCI「服务 → FluxDown」页管理，Web 界面在 `http://路由器IP:17800`。agent 二进制含完整 Web UI，另附 fluxdownd，需 overlay 空间充足的软路由设备。
+**OpenWrt**：24.10 及更早用 `opkg install fluxdown-server_*.ipk luci-app-fluxdown_*.ipk`；25.12 起用 `apk add --allow-untrusted fluxdown-server_*.apk luci-app-fluxdown_*.apk`（包未用 OpenWrt 官方密钥签名）。`<arch>` 取路由器 `/etc/apk/arch`（或 `opkg print-architecture`）中的架构名。LuCI「服务 → FluxDown」页管理，Web 界面在 `http://路由器IP:17800`。agent 二进制含完整 Web UI，另附 fluxdownd，需 overlay 空间充足的软路由设备。
 **QNAP**：App Center → 手动安装 `.qpkg`（需在设置中允许安装未经验证的应用），装完点应用图标直达 Web 界面。
 **群晖**：套件中心 → 手动安装 `.spk`（需在「设置 → 信任来源」允许任何发行者）。DSM 7.x 装 `dsm7` 包（以套件专属用户运行），DSM 6.x 装 `dsm6` 包；Intel/AMD 机型选 x64，ARM 机型（rtd1296/rtd1619b 等）选 arm64。装完在套件中心点「打开」直达 Web 界面（端口 17800）。
 **飞牛 fnOS**：应用中心 → 手动安装 `.fpk`；x86 机型选 x64，ARM 机型选 arm64。以专用应用用户 `fluxdown` 运行，默认保存到安装时创建的 `fluxdown` 共享文件夹，其他目录在应用设置「授权目录」中添加。装完点桌面图标直达 Web 界面（端口 17800）。

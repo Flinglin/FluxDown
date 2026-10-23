@@ -1339,8 +1339,8 @@ jobs:
           name: server-bin-${{ matrix.platform }}
           path: release-assets/*
 
-  # ── 并行 Job 5c': NAS/软路由包（OpenWrt ipk + QNAP qpkg + 群晖 spk + 飞牛 fpk，复用 linux musl 静态产物）──
-  # ipk 纯脚本手打（packaging/openwrt/build_ipk.sh，无需 OpenWrt SDK）；
+  # ── 并行 Job 5c': NAS/软路由包（OpenWrt ipk/apk + QNAP qpkg + 群晖 spk + 飞牛 fpk，复用 linux musl 静态产物）──
+  # ipk / apk 纯脚本手打（packaging/openwrt/build.sh，无需 OpenWrt SDK；apk 需 apk-tools v3，在 alpine 容器内打）；
   # qpkg 用官方 QDK qbuild（packaging/qnap/build_qpkg.sh）。
   # 不跑 InstallToUbuntu.sh（其 apt 依赖列表含 ubuntu 24.04 已不存在的 `python` 包），手动装 QDK。
   # spk 纯脚本手打（packaging/synology/build_spk.sh，做法同 SynoCommunity spksrc，无需群晖 toolkit）；
@@ -1396,10 +1396,25 @@ jobs:
           VERSION=${{ steps.version.outputs.VERSION }}
           X64="extracted/fluxdown-server-${VERSION}-linux-x64"
           A64="extracted/fluxdown-server-${VERSION}-linux-arm64"
-          ./packaging/openwrt/build_ipk.sh server "$VERSION" "$X64" x86_64 release-assets
-          ./packaging/openwrt/build_ipk.sh server "$VERSION" "$A64" \
+          ./packaging/openwrt/build.sh ipk server "$VERSION" "$X64" x86_64 release-assets
+          ./packaging/openwrt/build.sh ipk server "$VERSION" "$A64" \
             aarch64_generic,aarch64_cortex-a53,aarch64_cortex-a72,aarch64_cortex-a76 release-assets
-          ./packaging/openwrt/build_ipk.sh luci "$VERSION" release-assets
+          ./packaging/openwrt/build.sh ipk luci "$VERSION" release-assets
+
+      # OpenWrt 25.12 起改用 apk（apk-tools v3）；`apk mkpkg` 只有 alpine 3.24+ 自带。
+      # mkpkg 默认 compat 3.0.0_pre1，25.12 自带的 apk 3.0.5 可直接安装。
+      - name: Build OpenWrt apk
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          X64="extracted/fluxdown-server-${VERSION}-linux-x64"
+          A64="extracted/fluxdown-server-${VERSION}-linux-arm64"
+          docker run --rm -v "$PWD:/w" -w /w \
+            -e VERSION="$VERSION" -e X64="$X64" -e A64="$A64" alpine:3.24 sh -ec '
+              ./packaging/openwrt/build.sh apk server "$VERSION" "$X64" x86_64 release-assets
+              ./packaging/openwrt/build.sh apk server "$VERSION" "$A64" \
+                aarch64_generic,aarch64_cortex-a53,aarch64_cortex-a72,aarch64_cortex-a76 release-assets
+              ./packaging/openwrt/build.sh apk luci "$VERSION" release-assets
+            '
 
       - name: Build QNAP qpkg
         run: |
