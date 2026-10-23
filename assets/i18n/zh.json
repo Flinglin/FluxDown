@@ -482,6 +482,8 @@
   "statusSpeedLimitHint": "自定义速率",
   "speedLimitTitle": "下载限速",
   "speedLimitCustom": "自定义",
+  "speedLimitCustomWithValue": "自定义（{value}）",
+  "speedLimitClearRecent": "清除最近记录",
   "shutdownTriggerLabel": "完成后关机",
   "shutdownTitle": "任务完成后自动关机",
   "shutdownNeedActiveTask": "有任务运行中才能开启",

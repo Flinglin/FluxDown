@@ -482,6 +482,8 @@
   "statusSpeedLimitHint": "Custom rate",
   "speedLimitTitle": "Download Limit",
   "speedLimitCustom": "Custom",
+  "speedLimitCustomWithValue": "Custom ({value})",
+  "speedLimitClearRecent": "Clear recent",
   "shutdownTriggerLabel": "Shutdown when done",
   "shutdownTitle": "Auto Shutdown When Done",
   "shutdownNeedActiveTask": "Enable only while tasks are running",
