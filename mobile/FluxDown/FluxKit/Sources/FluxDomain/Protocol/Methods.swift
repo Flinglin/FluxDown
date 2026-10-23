@@ -163,6 +163,8 @@ public enum HostMethod {
     public static let agentProfileChangeNickname = "agent.profile.changeNickname"
     public static let agentProfileSendPasswordCode = "agent.profile.sendPasswordCode"
     public static let agentProfileChangePassword = "agent.profile.changePassword"
+    public static let agentProfileSendDeleteCode = "agent.profile.sendDeleteCode"
+    public static let agentProfileDeleteAccount = "agent.profile.deleteAccount"
     public static let agentGatewayGet = "agent.gateway.get"
     public static let agentGatewayPatch = "agent.gateway.patch"
     /// 仅供本机官方 UI 展示/复制用户 token；结果 `{ "userToken": "..." }`（未配置为空串）。

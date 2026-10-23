@@ -159,6 +159,8 @@ object HostMethod {
     const val agentProfileChangeNickname = "agent.profile.changeNickname"
     const val agentProfileSendPasswordCode = "agent.profile.sendPasswordCode"
     const val agentProfileChangePassword = "agent.profile.changePassword"
+    const val agentProfileSendDeleteCode = "agent.profile.sendDeleteCode"
+    const val agentProfileDeleteAccount = "agent.profile.deleteAccount"
     const val agentGatewayGet = "agent.gateway.get"
     const val agentGatewayPatch = "agent.gateway.patch"
     /** 仅供本机官方 UI 展示/复制用户 token；结果 `{ "userToken": "..." }`（未配置为空串）。 */

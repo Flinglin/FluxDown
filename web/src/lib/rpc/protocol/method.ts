@@ -158,6 +158,8 @@ export const METHOD = {
   AGENT_PROFILE_CHANGE_NICKNAME: 'agent.profile.changeNickname',
   AGENT_PROFILE_SEND_PASSWORD_CODE: 'agent.profile.sendPasswordCode',
   AGENT_PROFILE_CHANGE_PASSWORD: 'agent.profile.changePassword',
+  AGENT_PROFILE_SEND_DELETE_CODE: 'agent.profile.sendDeleteCode',
+  AGENT_PROFILE_DELETE_ACCOUNT: 'agent.profile.deleteAccount',
 
   AGENT_GATEWAY_GET: 'agent.gateway.get',
   AGENT_GATEWAY_PATCH: 'agent.gateway.patch',

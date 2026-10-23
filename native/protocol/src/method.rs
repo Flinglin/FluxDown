@@ -191,6 +191,8 @@ pub const AGENT_PROFILE_CHANGE_ORIGIN_ID: &str = "agent.profile.changeOriginId";
 pub const AGENT_PROFILE_CHANGE_NICKNAME: &str = "agent.profile.changeNickname";
 pub const AGENT_PROFILE_SEND_PASSWORD_CODE: &str = "agent.profile.sendPasswordCode";
 pub const AGENT_PROFILE_CHANGE_PASSWORD: &str = "agent.profile.changePassword";
+pub const AGENT_PROFILE_SEND_DELETE_CODE: &str = "agent.profile.sendDeleteCode";
+pub const AGENT_PROFILE_DELETE_ACCOUNT: &str = "agent.profile.deleteAccount";
 
 pub const AGENT_GATEWAY_GET: &str = "agent.gateway.get";
 pub const AGENT_GATEWAY_PATCH: &str = "agent.gateway.patch";
@@ -489,6 +491,8 @@ pub const ALL_METHODS: &[&str] = &[
     AGENT_PROFILE_CHANGE_NICKNAME,
     AGENT_PROFILE_SEND_PASSWORD_CODE,
     AGENT_PROFILE_CHANGE_PASSWORD,
+    AGENT_PROFILE_SEND_DELETE_CODE,
+    AGENT_PROFILE_DELETE_ACCOUNT,
     AGENT_GATEWAY_GET,
     AGENT_GATEWAY_PATCH,
     AGENT_GATEWAY_REVEAL_TOKEN,
