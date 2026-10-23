@@ -82,7 +82,7 @@ gh workflow run ci.yml --ref stable
 gh workflow run release.yml --ref stable -f rehearsal=true -f tag="$V" -f component=changed
 gh run list --workflow ci.yml --branch stable --limit 1; gh run list --workflow release.yml --limit 1
 # 等两者都 success（演练 run-name「Release 演练 $V（不发布）」，其 head SHA 必须 = 将要打 tag 的提交）
-# 2) ⚠️ 推送后立即发布，无法撤回。
+# 2) ⚠️ 推送后立即发布，无法撤回。omp 的 .omp/hooks/pre/guard.ts 会对 v* tag 推送弹确认（无 UI 会话直接拦截）。
 git tag -a "$V" -m "$V"
 git push origin "$V"
 gh run watch

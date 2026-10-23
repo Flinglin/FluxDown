@@ -30,7 +30,7 @@
 |---|---|
 | 架构缝 / 不变式（§3–§5） | `.omp/knowledge/*` 对应附录；需要执行期拦截的再加 `.omp/rules/*.md` |
 | 任何 `.omp/{RULES.md,WATCHDOG.md,rules,agents,skills}` | 运行 `python3 .augment/sync_from_omp.py` 重新生成 `.augment/{rules,agents,skills}`（Auggie 用；`--check` 校验漂移）；`.augment/hooks/ttsr.sh` 运行时直接读 `.omp/rules`，无需同步。`rule://<名>` 即 `.omp/rules/<名>.md` |
-| 红线 / 授权 / 禁用命令（§6–§7） | `.omp/RULES.md`（粘性红线）、`.omp/rules/forbidden-commands.md`、`.omp/WATCHDOG.md`（严重级映射） |
+| 红线 / 授权 / 禁用命令（§6–§7） | `.omp/RULES.md`（粘性红线）、`.omp/rules/forbidden-commands.md`（TTSR 提示，Auggie 钩子同读）、`.omp/hooks/pre/guard.ts`（执行前硬拦截：tag 推送确认、`--no-verify`、强推、测试 `--workspace`、子代理全量门禁）、`.omp/WATCHDOG.md`（严重级映射） |
 | 跨仓契约 / 仓库地图 | 工作区根 `../AGENTS.md`（cwd=根时自动加载的是那份） |
 | 长期结论 / 踩过的坑 | memory：`memory://root/MEMORY.md` + `memory_summary.md` |
 | CI 触发路径（`ci.yml` 的 `changes.filters`）、新增 crate / path 依赖 / `include_*!` / TS 跨目录引用 | `python3 .github/scripts/check_ci_paths.py` 必须通过（CI `ci-paths` job 同跑） |
@@ -257,5 +257,6 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 - 优先复用已有 trait/error 类型，不平行造轮子。单文件 >600 行考虑拆分，单函数 >80 行需说明。
 - **一个 crate 只有一个集成测试二进制**：`tests/<名>/main.rs` + 按领域分模块（engine 为 `tests/engine/`），不新建 `tests/*.rs`——每个测试二进制都会完整链接一遍引擎与 librqbit。feature 门控模块在文件头写 `#![cfg(feature = "…")]`。
 - 解析不可信输入（文件名 / 头部 / 种子元数据 / 协议帧）的新代码：字符串用 `get(a..b)` / `split_at_checked` / 先 `is_char_boundary`，下标用 `get`，长度转换用 `try_from`；`python3 scripts/lint-changed.py` 对改动行把关。
+- **并行子代理**：子代理只跑自己改动 crate 的精准命令（`cargo check|clippy|nextest run -p <crate>`）；全量 clippy、无 `-p` 的 cargo 构建/测试、gradlew / xcodebuild / `build-core.sh` 由主会话或 `build-verifier` 统一串行跑一次（`.omp/hooks/pre/guard.ts` 强制）。子代理在报告里写明需要跑哪些命令。
 - 查文档优先级：`cargo path <crate>` 本地源码 > docs.rs > web 搜索。
 - **命中以下任一项前先读 `rust-router` skill**：新增/改 public API/trait/error 类型、unsafe/FFI/性能关键路径、新增 crate/调 workspace、写 doc comment。仅改名/格式/加日志可跳过。
