@@ -18,6 +18,7 @@
 | GPUI、原生 Android（`mobile/Android`）与 iOS（`mobile/FluxDown`）、主题兼容、云同步、扩展、用户脚本、Web SPA、官网 | `.omp/knowledge/clients.md` |
 | 日志系统细节、发布流水线矩阵、仓库维护自动化（ZerxLabBot 服务器侧：分诊 / 审查 / 自动合并门 / 修复，及与 `ci.yml` 的同步点）、设计文档实现状态（已实现 vs 仅设计，含命名歧义澄清） | `.omp/knowledge/ops.md` |
 | **「要加 X 改哪里」全表 —— 动手前先查这张** | `.omp/knowledge/extension-points.md` |
+| 按领域收拢的已验证踩坑（引擎 / BT / 插件 / 本机服务 / GPUI / 扩展 / 移动端 / 构建发布 / Windows）——**改某领域前先读对应小节**，修复新坑时同回合补一条（带坐标） | `.omp/knowledge/pitfalls.md` |
 
 维护约定：
 - 只有**架构 / 契约 / 不变式**变化才改本文件；改一个普通文件不必回来更新它。
@@ -32,7 +33,7 @@
 | 任何 `.omp/{RULES.md,WATCHDOG.md,rules,agents,skills}` | 运行 `python3 .augment/sync_from_omp.py` 重新生成 `.augment/{rules,agents,skills}`（Auggie 用；`--check` 校验漂移）；`.augment/hooks/ttsr.sh` 运行时直接读 `.omp/rules`，无需同步。`rule://<名>` 即 `.omp/rules/<名>.md` |
 | 红线 / 授权 / 禁用命令（§6–§7） | `.omp/RULES.md`（粘性红线）、`.omp/rules/forbidden-commands.md`（TTSR 提示，Auggie 钩子同读）、`.omp/hooks/pre/guard.ts`（执行前硬拦截：tag 推送确认、`--no-verify`、强推、测试 `--workspace`、子代理全量门禁）、`.omp/WATCHDOG.md`（严重级映射） |
 | 跨仓契约 / 仓库地图 | 工作区根 `../AGENTS.md`（cwd=根时自动加载的是那份） |
-| 长期结论 / 踩过的坑 | memory：`memory://root/MEMORY.md` + `memory_summary.md` |
+| 长期结论 / 踩过的坑 | 有代码坐标的进 `.omp/knowledge/pitfalls.md`；其余进 memory：`memory://root/MEMORY.md` + `memory_summary.md` |
 | CI 触发路径（`ci.yml` 的 `changes.filters`）、新增 crate / path 依赖 / `include_*!` / TS 跨目录引用 | `python3 .github/scripts/check_ci_paths.py` 必须通过（CI `ci-paths` job 同跑） |
 | 章节标题（别处会引用） | `grep "AGENTS.md"` 扫全工作区，修掉悬空引用（skills / rules / 源码注释都引过） |
 
