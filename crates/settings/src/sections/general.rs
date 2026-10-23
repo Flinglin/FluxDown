@@ -39,7 +39,10 @@ pub(crate) fn page(
     if !cfg!(target_os = "macos") {
         sections.push(title_bar_section(ctx));
     }
-    sections.extend([sidebar_section(ctx), activity_bar_section(ctx, activity_bar)]);
+    sections.extend([
+        sidebar_section(ctx),
+        activity_bar_section(ctx, activity_bar),
+    ]);
     page.sections(sections)
 }
 
