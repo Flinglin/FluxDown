@@ -129,6 +129,10 @@ pub struct DownloadHostActions {
     pub open_queue_manager: Option<PlainOpener>,
     /// 侧栏「设备」区标题上的「添加设备」入口；`None` 时不显示按钮。
     pub open_add_device: Option<PlainOpener>,
+    /// 侧栏独立直连设备右键「重命名」：参数为设备指纹。
+    pub rename_linked_device: Option<IdOpener>,
+    /// 侧栏独立直连设备右键「解除配对」（含确认）：参数为设备指纹。
+    pub unpair_linked_device: Option<IdOpener>,
     /// 任务表「待确认」角标点击：打开 / 置前聚合的「文件已存在」窗口。
     pub open_file_conflicts: Option<PlainOpener>,
     /// `Some(id)` 编辑现有分类，`None` 新建。
@@ -538,6 +542,21 @@ impl DownloadView {
 
     pub(crate) fn open_new_download(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_new_download_with(Vec::new(), window, cx);
+    }
+
+    /// 侧栏独立直连设备：打开「新建下载」并把「下载到」预选为该设备。
+    pub(crate) fn open_new_download_to(
+        &self,
+        target: crate::model::devices::DispatchTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(opener) = self.host.open_new_download.clone() else {
+            return;
+        };
+        let mut context = self.new_download_context();
+        context.target = target;
+        opener(context, window, cx);
     }
 
     /// 按表单提交创建任务 / 确认外部捕获 / 下发到其他设备；对话框确认后由宿主调用。
@@ -971,9 +990,9 @@ impl DownloadView {
                     && id != SidebarSelection::ALL_DEVICES
                     && !self
                         .controller
-                        .sidebar_devices()
+                        .other_devices()
                         .iter()
-                        .any(|device| device.id == *id) =>
+                        .any(|device| !device.is_standalone_link() && device.id == *id) =>
             {
                 self.selected_item = SidebarSelection::Download(DownloadFilter::ALL);
             }

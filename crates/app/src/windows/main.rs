@@ -176,6 +176,8 @@ fn open_with(cx: &mut App, focus: bool) -> Option<WindowHandle<Root>> {
                     crate::windows::queue_manager::open(cx);
                 })),
                 open_add_device: Some(Rc::new(crate::account_host::open_add_device_dialog)),
+                rename_linked_device: Some(Rc::new(crate::account_host::open_link_rename_dialog)),
+                unpair_linked_device: Some(Rc::new(crate::account_host::confirm_link_unpair)),
                 open_file_conflicts: Some(Rc::new(|window, cx| {
                     crate::windows::file_conflict::open_from_window(window, cx);
                 })),

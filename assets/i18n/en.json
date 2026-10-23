@@ -899,6 +899,7 @@
   "showSidebarDeviceDesc": "When off, the device section is hidden on the home page; it appears automatically after adding a remote device or enabling this.",
   "downloadTo": "Download to",
   "downloadToHint": "Choose which device downloads this",
+  "deviceDownloadToThis": "Download to this device…",
   "multiDeviceTitle": "Multi-device",
   "multiDeviceDesc": "After signing in, dispatch downloads to other devices and watch their progress in real time",
   "devicesOnlineCount": "{count} online",

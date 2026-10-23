@@ -4,19 +4,19 @@
 import { useT } from '../../../../i18n'
 import { useAgent } from '../../../../lib/rpc'
 import { Switch } from '../../../../ui'
-import { mergeDevices, sidebarDevices } from '../../../downloads/model/devices'
+import { mergeDevices } from '../../../downloads/model/devices'
 import { PrefSwitchRow, SettingsPage, SettingsRow, SettingsSection, setPref, usePrefRaw } from '../../kit'
 
-/** `ui.show_sidebar_devices` 三态：未设置 = 登录后自动显示；开关显示有效值。 */
+/** `ui.show_sidebar_devices` 三态：未设置 = 登录或有其他设备（云 + 独立直连）时自动显示；开关显示有效值。 */
 function SidebarDevicesRow() {
   const t = useT()
   const raw = usePrefRaw('ui.show_sidebar_devices')
   const loggedIn = useAgent((snapshot) => snapshot.session !== null && snapshot.session !== undefined, false)
-  const hasLinked = useAgent(
-    (snapshot) => sidebarDevices(mergeDevices(snapshot.cloudDevices, snapshot.linkedDevices, { cloud: true, local: true })).length > 0,
+  const hasOtherDevices = useAgent(
+    (snapshot) => mergeDevices(snapshot.cloudDevices, snapshot.linkedDevices, { cloud: true, local: true }).length > 0,
     false,
   )
-  const checked = typeof raw === 'boolean' ? raw : loggedIn || hasLinked
+  const checked = typeof raw === 'boolean' ? raw : loggedIn || hasOtherDevices
   return (
     <SettingsRow title={t('showSidebarDevice')} description={t('showSidebarDeviceDesc')} compact>
       <Switch checked={checked} onCheckedChange={(next) => setPref('ui.show_sidebar_devices', next)} aria-label={t('showSidebarDevice')} />

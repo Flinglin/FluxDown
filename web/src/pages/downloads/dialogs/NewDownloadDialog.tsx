@@ -94,7 +94,7 @@ export function NewDownloadDialog({ session }: { session: NewDownloadSession }) 
     () => buildRemoteTargets(cloudDevices, linkedDevices, { cloud: cloudReady, local: localReady }),
     [cloudDevices, linkedDevices, cloudReady, localReady],
   )
-  const [targetValue, setTargetValue] = useState(LOCAL_TARGET)
+  const [targetValue, setTargetValue] = useState(session.target ?? LOCAL_TARGET)
   // 目标设备消失（登出 / 解除配对）时回落到本服务器。
   const target: RemoteTarget | null = resolveTargetValue(targetValue, remoteTargets)
   const [remoteSaveDir, setRemoteSaveDir] = useState('')

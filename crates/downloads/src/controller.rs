@@ -591,15 +591,6 @@ impl DownloadsController {
         )
     }
 
-    /// 侧栏设备区与设备筛选的条目：只列云条目（含挂接直连的）。独立直连设备是一次性投递目标，
-    /// 没有任务视图，不进侧栏。
-    #[must_use]
-    pub(crate) fn sidebar_devices(&self) -> Vec<DeviceEntry> {
-        let mut devices = self.other_devices();
-        devices.retain(|device| !device.is_standalone_link());
-        devices
-    }
-
     #[must_use]
     pub(crate) fn runtime_stats(&self) -> &DaemonRuntimeStatsDto {
         &self.runtime_stats

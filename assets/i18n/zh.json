@@ -899,6 +899,7 @@
   "showSidebarDeviceDesc": "关闭后主页不显示设备区；添加远程设备或手动开启后自动显示",
   "downloadTo": "下载到",
   "downloadToHint": "选择在哪台设备上下载",
+  "deviceDownloadToThis": "下载到此设备…",
   "multiDeviceTitle": "多设备协同",
   "multiDeviceDesc": "登录后可把下载下发到其他设备执行并实时查看进度",
   "devicesOnlineCount": "{count} 台设备在线",
