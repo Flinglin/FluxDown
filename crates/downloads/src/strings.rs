@@ -749,7 +749,7 @@ impl NewDownloadStrings {
         Self {
             subtitle: shared(translator.text("batchDownloadDesc")),
             url_label: shared(translator.text("downloadUrl")),
-            url_placeholder: shared(translator.text("batchUrlPlaceholder")),
+            url_placeholder: shared(translator.text("newDownloadUrlPlaceholder")),
             url_count: shared(translator.text("urlCount")),
             probe_checking: shared(translator.text("newDownloadProbeChecking")),
             probe_found: shared(translator.text("newDownloadProbeFound")),

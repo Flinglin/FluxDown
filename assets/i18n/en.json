@@ -450,6 +450,7 @@
   "batchUrlPlaceholder": "One URL per line, e.g.:\nhttps://example.com/file1.zip\nhttps://example.com/file2.zip\nmagnet:?xt=urn:btih:...",
   "batchUrlPlaceholderGeneric": "One URL per line, e.g.:\nhttps://example.com/file1.zip\nhttps://example.com/file2.zip",
   "urlCount": "{count} URLs",
+  "newDownloadUrlPlaceholder": "Paste or type links, one per line",
   "startBatchDownload": "Download {count} files",
   "importTxtFile": "Import TXT file",
   "importTxtNoUrls": "No valid URLs found in file",
