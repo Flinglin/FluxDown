@@ -44,6 +44,8 @@
 - **插件安装期校验必须覆盖拦截器入口脚本**：只校验主入口会让拦截器语法错误的插件装上后运行期才炸 → `native/engine/src/plugin/manager.rs`、回归 `native/engine/tests/engine/plugin_interceptors.rs::broken_interceptor_script_is_rejected_at_install`。
 - **resolve 占位期间的重复恢复必须直接忽略**：此时 DB 仍是 error(4)/paused，并非终态残留；不拦会移除占位并再起一个并发 resolve → `native/engine/src/download_manager.rs::has_pending_resolve`（`resume_task_inner` 的判定）。
 - **resolver 的 `audioUrl: ""` 是「无音轨」，不能当轨对**：`Some("")` 曾让任务走 DASH 下载器、把直链当 MPD 拉取解析而失败（YouTube「仅音频」档、变体切到无音轨档都会命中）；空串在落入 `QueuedTask` 时就要归一成 `None` → `native/engine/src/download_manager.rs::apply_resolve_to_queued`、回归 `native/engine/tests/engine/plugin_lazy_resolve.rs::explicit_empty_audio_url_downloads_single_file`。
+- **`ephemeral` 结果的 `totalBytes` 只能给准确值**：引擎跳过探测并按它切 Range，估算值（码率 × 时长）偏大时尾段 416 反复重试直到任务失败；拿不到准确长度就给 0 / 不给 → `packages/plugin-sdk/examples/youtube-down/src/formats.js::toVariant`（YouTube 音画合一的 itag 18 没有 `contentLength`）。
+- **在 QuickJS 里跑 yt-dlp-ejs 要放宽 resolver 堆上限**：冷解析约 3 MB 的播放器 JS（meriyah AST）峰值 160–180 MiB，默认 64 MiB 必 OOM；预处理产物缓存进 `flux.fs` 后热路径约 50–64 MiB → manifest `resolvers[0].memoryLimitMb`（`native/engine/src/plugin/manager.rs::resolve_budget_for`、`RESOLVE_MEMORY_CEILING`），示例 `packages/plugin-sdk/examples/youtube-down/src/player.js`。
 
 ## daemon / agent 本机服务
 

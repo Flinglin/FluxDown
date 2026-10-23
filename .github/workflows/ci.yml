@@ -256,7 +256,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      # 重新生成 view / theme 类型并与入库文件逐字比较（脚本内比较，不依赖 git）。
+      # 重新生成 view / theme 类型与 youtube-down 示例的 resolve.js 打包物，并与入库文件逐字比较（脚本内比较，不依赖 git）。
       - run: bun run gen:check
       - run: bun run typecheck
       - run: bun run test
