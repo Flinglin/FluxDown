@@ -142,7 +142,7 @@ fn open_with(cx: &mut App, focus: bool) -> Option<WindowHandle<Root>> {
             }
         }
         let chrome = ShellChrome {
-            widgets: crate::chrome_layout::widgets(&downloads.downgrade()),
+            widgets: crate::chrome_layout::widgets(&downloads, cx),
             catalog: crate::chrome_layout::catalog(),
             on_layout_change: Rc::new(|value, cx| {
                 Desktop::set_pref(cx, crate::chrome_layout::CHROME_LAYOUT_PREF, value);
