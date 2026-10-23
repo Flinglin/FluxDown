@@ -72,6 +72,7 @@
 # ── 构建 / 静态检查 ──
 cargo check -p <crate> --lib          # 验证编译按 crate（不要整 workspace）
 cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings   # 提交前必过；含测试目标
+git config core.hooksPath .githooks   # 每个 clone 执行一次：pre-commit 拒收未 rustfmt 的暂存 .rs（含合并提交），失败就 cargo fmt 后重新 add，禁止 --no-verify
 
 # ── 测试（按 crate/过滤，不要 --workspace）──
 cargo nextest run -p fluxdown_engine <filter>   # 引擎单测（协议/分段/DB）
