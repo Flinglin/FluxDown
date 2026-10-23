@@ -43,6 +43,7 @@
 - **外部工具子进程要补全登录 shell 的 PATH**：macOS 从 Dock / 访达启动只继承 `/usr/bin:/bin:/usr/sbin:/sbin`，yt-dlp 找不到 node / bun，带 Cookie 解析 YouTube 报 "The page needs to be reloaded"；取 PATH 的等待不计入插件脚本墙钟 → `native/engine/src/plugin/tool_path.rs::apply_full_path_env`（`read_login_shell_path` / `merge_path_lists`）。
 - **插件安装期校验必须覆盖拦截器入口脚本**：只校验主入口会让拦截器语法错误的插件装上后运行期才炸 → `native/engine/src/plugin/manager.rs`、回归 `native/engine/tests/engine/plugin_interceptors.rs::broken_interceptor_script_is_rejected_at_install`。
 - **resolve 占位期间的重复恢复必须直接忽略**：此时 DB 仍是 error(4)/paused，并非终态残留；不拦会移除占位并再起一个并发 resolve → `native/engine/src/download_manager.rs::has_pending_resolve`（`resume_task_inner` 的判定）。
+- **resolver 的 `audioUrl: ""` 是「无音轨」，不能当轨对**：`Some("")` 曾让任务走 DASH 下载器、把直链当 MPD 拉取解析而失败（YouTube「仅音频」档、变体切到无音轨档都会命中）；空串在落入 `QueuedTask` 时就要归一成 `None` → `native/engine/src/download_manager.rs::apply_resolve_to_queued`、回归 `native/engine/tests/engine/plugin_lazy_resolve.rs::explicit_empty_audio_url_downloads_single_file`。
 
 ## daemon / agent 本机服务
 
