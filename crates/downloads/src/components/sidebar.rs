@@ -971,19 +971,20 @@ impl DownloadView {
             });
             let menu = menu.when_some(rename.clone(), |menu, rename| {
                 let fingerprint = fingerprint.clone();
-                menu.item(
-                    PopupMenuItem::new(rename_label.clone()).on_click(move |_, window, cx| {
+                menu.item(PopupMenuItem::new(rename_label.clone()).on_click(
+                    move |_, window, cx| {
                         rename(fingerprint.clone(), window, cx);
-                    }),
-                )
+                    },
+                ))
             });
             menu.when_some(unpair.clone(), |menu, unpair| {
                 let fingerprint = fingerprint.clone();
-                menu.separator().item(
-                    PopupMenuItem::new(unpair_label.clone()).on_click(move |_, window, cx| {
-                        unpair(fingerprint.clone(), window, cx);
-                    }),
-                )
+                menu.separator()
+                    .item(PopupMenuItem::new(unpair_label.clone()).on_click(
+                        move |_, window, cx| {
+                            unpair(fingerprint.clone(), window, cx);
+                        },
+                    ))
             })
         })
         .into_any_element()
