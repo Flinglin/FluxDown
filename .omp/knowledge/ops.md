@@ -48,7 +48,7 @@
 
 **deb 预发布排序**：`scripts/package_gpui_linux.sh` 写入 control 的 `Version` 时把首个 `-` 换为 `~`，例如 `0.5.0-rc.2` → `0.5.0~rc.2`，使 rc 排在正式版之前；Release tag / 产物文件名仍保留 `-rc.N`，不能把 Debian revision 的 `-rc.N` 当成预发布。
 
-**Windows 安装模式**：`setup.iss` 只做每用户安装（`PrivilegesRequired=lowest`，**不开** `PrivilegesRequiredOverridesAllowed`——开了对话框后一旦选「为所有用户」，Inno 的 `UsePreviousPrivileges` 会让之后每次安装 / 静默更新都要 UAC），`{autopf}` = `%LOCALAPPDATA%\Programs\FluxDown`；运行期集成（NMH、URL 协议、`.torrent`、自启、AUMID）全在 HKCU / `%LOCALAPPDATA%\FluxDown`。检测到 HKLM 下的旧全体用户安装时，`RemoveLegacyAllUsersInstall` 提权一次跑其卸载器，并把卸载器删掉的 HKCU 自启 / `.torrent` / URL 协议改指新目录；NMH 由新 agent 启动时 `auto_register` 重注册。
+**Windows 安装模式**：`setup.iss` 只做每用户安装（`PrivilegesRequired=lowest`，**不开** `PrivilegesRequiredOverridesAllowed`——开了对话框后一旦选「为所有用户」，Inno 的 `UsePreviousPrivileges` 会让之后每次安装 / 静默更新都要 UAC），`{autopf}` = `%LOCALAPPDATA%\Programs\FluxDown`；运行期集成（NMH、URL 协议、`.torrent`、自启、AUMID）全在 HKCU / `%LOCALAPPDATA%\FluxDown`。检测到 HKLM 下的旧全体用户安装时，`RemoveLegacyAllUsersInstall` 提权一次跑其卸载器，并把卸载器删掉的 HKCU 自启 / `.torrent` / URL 协议改指新目录；NMH 由新 agent 启动时 `auto_register` 重注册。**迁移不变式（#912）**：「旧版已移除」以旧目录里不再有可启动入口（`fluxdown-desktop.exe` / `flux_down.exe`）为准，不以 HKLM 卸载键消失为准（Inno 最后才删键，旧实现 10s 等键超时后中止安装，旧文件已删、新版未装）；只有旧副本仍可启动时才中止，入口已无则跳过提权直接安装；静默更新中止时 `RelaunchAfterAbortedUpdate` 以 `--relaunch` 拉起仍在的那份（`PrepareToInstall` 已 taskkill，发起更新的 agent 也已退出）。
 
 **NMH IPC 端点**：桌面安装按用户注册浏览器宿主；Unix 只用用户数据目录中的 `ipc/fluxdown.sock`（`ipc` 目录 0700），Windows 用编码账户名后的命名管道。agent（`native/agent/src/nmh.rs`）与中继（`native/nmh/src/main.rs`）独立推导同一路径/管道名；端点及权限细节见 `clients.md`「浏览器扩展」。
 
