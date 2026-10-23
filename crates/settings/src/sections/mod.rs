@@ -24,6 +24,7 @@ pub(crate) mod proxy;
 pub(crate) mod rate_limit;
 pub(crate) mod shortcuts;
 pub(crate) mod site_auth;
+mod sound;
 pub(crate) mod subscription;
 pub(crate) mod user_agent;
 pub(crate) mod webhook;

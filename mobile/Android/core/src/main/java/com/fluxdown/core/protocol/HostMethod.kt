@@ -226,6 +226,8 @@ object HostMethod {
     const val agentPlatformSetUrlProtocol = "agent.platform.setUrlProtocol"
     /** 系统文件管理器为文件显示的图标（PNG）；参数见 `PlatformFileIconParams`。 */
     const val agentPlatformFileIcon = "agent.platform.fileIcon"
+    /** 由 agent 在本机播放一次提示音偏好值；仅桌面，移动端不使用。 */
+    const val agentSoundPreview = "agent.sound.preview"
     const val agentCaptureSubmit = "agent.capture.submit"
     /** 从本机 `.torrent` 文件建任务：agent 读文件、上传 daemon blob 后调用 `daemon.task.create`。 */
     const val agentCaptureSubmitTorrentFile = "agent.capture.submitTorrentFile"

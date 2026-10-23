@@ -213,6 +213,7 @@ export const METHOD = {
   AGENT_PLATFORM_SET_FILE_ASSOCIATION: 'agent.platform.setFileAssociation',
   AGENT_PLATFORM_SET_URL_PROTOCOL: 'agent.platform.setUrlProtocol',
   AGENT_PLATFORM_FILE_ICON: 'agent.platform.fileIcon',
+  AGENT_SOUND_PREVIEW: 'agent.sound.preview',
   AGENT_CAPTURE_SUBMIT: 'agent.capture.submit',
   AGENT_CAPTURE_SUBMIT_TORRENT_FILE: 'agent.capture.submitTorrentFile',
   AGENT_CAPTURE_LIST: 'agent.capture.list',

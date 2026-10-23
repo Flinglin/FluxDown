@@ -232,7 +232,10 @@ impl GatewayService {
         // 桌面专属集成（打开 / 定位文件、开机自启、文件与协议关联）在 headless 宿主不存在；
         // 唯一例外是本机来源连接的「打开 / 定位任务产物」。桌面宿主只拒绝非本机来源的连接
         // （设备控制凭据会话）。
-        if request.method.starts_with("agent.platform.") {
+        // `agent.sound.preview` 同属本机平台能力（在本机扬声器发声）：与 `agent.platform.*` 同一套准入。
+        if request.method.starts_with("agent.platform.")
+            || request.method == method::AGENT_SOUND_PREVIEW
+        {
             let permitted = if self.server_mode {
                 session.allow_local_platform && local_platform_method_allowed(&request.method)
             } else {
@@ -647,6 +650,15 @@ impl GatewayService {
                 to_value(fluxdown_protocol::PlatformFileIconDto {
                     png: base64::engine::general_purpose::STANDARD.encode(png),
                 })
+            }
+            method::AGENT_SOUND_PREVIEW => {
+                let params =
+                    parse_params::<fluxdown_protocol::sound::SoundPreviewParams>(request.params)?;
+                tokio::task::spawn_blocking(move || crate::sound::preview(&params.value))
+                    .await
+                    .map_err(|error| internal_error("sound preview join", error))?
+                    .map_err(sound_preview_error)
+                    .map(|()| serde_json::json!({ "ok": true }))
             }
             method::AGENT_PLATFORM_INTEGRATION_GET => {
                 platform_blocking(|| Ok(crate::platform::integration_status()))
@@ -1387,6 +1399,30 @@ fn update_error(error: UpdateError) -> RpcErrorData {
     }
 }
 
+/// 提示音试听失败 → RPC 错误：值非法 = `InvalidArgument(value)`；文件缺失 / 类型不支持 / 播放器失败
+/// 都带 `soundUnplayable` 原因，供客户端给出可操作文案。
+fn sound_preview_error(error: crate::sound::PreviewError) -> RpcErrorData {
+    use crate::sound::{PlaybackError, PreviewError};
+    tracing::debug!(error = %error, "sound preview failed");
+    match error {
+        PreviewError::InvalidValue => invalid_field("value"),
+        PreviewError::UnsupportedType(_) => {
+            invalid_field("value").with_reason(fluxdown_protocol::ErrorReason::SoundUnplayable)
+        }
+        PreviewError::Playback(PlaybackError::Missing(_)) => {
+            RpcErrorData::new(ApplicationErrorCode::NotFound, false)
+                .with_reason(fluxdown_protocol::ErrorReason::SoundUnplayable)
+        }
+        PreviewError::Playback(PlaybackError::Unsupported) => {
+            RpcErrorData::new(ApplicationErrorCode::Unsupported, false)
+        }
+        PreviewError::Playback(PlaybackError::Failed(_)) => {
+            RpcErrorData::new(ApplicationErrorCode::Unavailable, false)
+                .with_reason(fluxdown_protocol::ErrorReason::SoundUnplayable)
+        }
+    }
+}
+
 fn invalid_field(field: &str) -> RpcErrorData {
     RpcErrorData {
         code: ApplicationErrorCode::InvalidArgument,
@@ -2099,6 +2135,8 @@ fn local_platform_method_allowed(method: &str) -> bool {
 fn server_mode_denies(request: &RpcRequest, local_log_export: bool) -> bool {
     match request.method.as_str() {
         method::AGENT_DIAGNOSTICS_EXPORT_LOGS => !local_log_export,
+        // 提示音只在桌面宿主的本机扬声器播放。
+        method::AGENT_SOUND_PREVIEW => true,
         method::AGENT_DIAGNOSTICS_REPAIR => request
             .params
             .as_ref()
@@ -2183,6 +2221,7 @@ fn lane_for(method_name: &str) -> Lane {
     } else if method_name == fluxdown_protocol::method::AGENT_DIAGNOSTICS_REPAIR {
         Lane::Repair
     } else if method_name.starts_with("agent.link.")
+        || method_name == method::AGENT_SOUND_PREVIEW
         || method_name.starts_with("agent.diagnostics.")
     {
         Lane::Slow
@@ -4189,6 +4228,10 @@ mod tests {
         ));
         assert!(matches!(lane_for("agent.diagnostics.run"), Lane::Slow));
         assert!(matches!(lane_for("system.ping"), Lane::Local));
+        assert!(matches!(
+            lane_for(fluxdown_protocol::method::AGENT_SOUND_PREVIEW),
+            Lane::Slow
+        ));
         assert!(matches!(lane_for("agent.remote.reconnect"), Lane::Local));
         for name in [
             fluxdown_protocol::method::AGENT_PLUGIN_FAVORITE_LIST,
@@ -4318,6 +4361,7 @@ mod tests {
             fluxdown_protocol::method::AGENT_PLATFORM_OPEN_TASK,
             fluxdown_protocol::method::AGENT_PLATFORM_INTEGRATION_GET,
             fluxdown_protocol::method::AGENT_PLATFORM_SET_AUTOSTART,
+            fluxdown_protocol::method::AGENT_SOUND_PREVIEW,
         ] {
             let response = harness.call(method_name, serde_json::json!({})).await;
             let RpcResponse::Failure(failure) = response else {

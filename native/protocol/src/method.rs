@@ -295,6 +295,8 @@ pub const AGENT_PLATFORM_SET_FILE_ASSOCIATION: &str = "agent.platform.setFileAss
 pub const AGENT_PLATFORM_SET_URL_PROTOCOL: &str = "agent.platform.setUrlProtocol";
 /// 系统文件管理器为文件显示的图标（PNG）；参数见 `PlatformFileIconParams`。
 pub const AGENT_PLATFORM_FILE_ICON: &str = "agent.platform.fileIcon";
+/// `SoundPreviewParams` → `{ "ok": true }`：由 agent 在本机播放一次提示音偏好值（`off` / `system` / `file:<绝对路径>`）。
+pub const AGENT_SOUND_PREVIEW: &str = "agent.sound.preview";
 pub const AGENT_CAPTURE_SUBMIT: &str = "agent.capture.submit";
 /// 从本机 `.torrent` 文件建任务：agent 读文件、上传 daemon blob 后调用 `daemon.task.create`。
 pub const AGENT_CAPTURE_SUBMIT_TORRENT_FILE: &str = "agent.capture.submitTorrentFile";
@@ -551,6 +553,7 @@ pub const ALL_METHODS: &[&str] = &[
     AGENT_PLATFORM_SET_FILE_ASSOCIATION,
     AGENT_PLATFORM_SET_URL_PROTOCOL,
     AGENT_PLATFORM_FILE_ICON,
+    AGENT_SOUND_PREVIEW,
     AGENT_CAPTURE_SUBMIT,
     AGENT_CAPTURE_SUBMIT_TORRENT_FILE,
     AGENT_CAPTURE_LIST,
