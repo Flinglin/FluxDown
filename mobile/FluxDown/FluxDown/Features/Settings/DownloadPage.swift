@@ -43,6 +43,8 @@ struct DownloadPage: View {
     @State private var showNicHelp = false
     /// 用户选了「自定义」UA 但文本尚未写入：保持自定义文本框可见。
     @State private var uaForceCustom = false
+    /// 用户选了保留期「自定义」但值尚未写入（或恰等于预设）：保持天数输入行可见。
+    @State private var retentionForceCustom = false
 
     private var context: SettingsDownloadContext {
         SettingsDownloadContext(form: editor.form, isLocalHost: container.isLocalHost)
@@ -135,6 +137,7 @@ struct DownloadPage: View {
                 fallback: "keep"
             )
         }
+        if SettingsDownloadRow.completedRecordRetention.isVisible(in: ctx) { retentionRows }
         if SettingsDownloadRow.idleFileScan.isVisible(in: ctx) { ConfigToggleRow(row: .idleFileScan) }
         if SettingsDownloadRow.defaultQueue.isVisible(in: ctx) {
             ConfigPickerRow(
@@ -153,6 +156,55 @@ struct DownloadPage: View {
         case "", TaskQueue.main: L("mainQueue")
         case TaskQueue.later: L("downloadLater")
         default: queue.name
+        }
+    }
+
+    /// 已完成记录保留天数：预设选择 + 「自定义」时的天数输入行（镜像 GPUI `sections/retention.rs`）。
+    @ViewBuilder
+    private var retentionRows: some View {
+        let row = SettingsDownloadRow.completedRecordRetention
+        let days = editor.form.int(row.configKey, default: 0)
+        let effective = SettingsRetention.modeID(days: days, customFlag: retentionForceCustom)
+        let options: [ConfigPickerRow.Option] = SettingsRetention.presets.map { preset in
+            let key = switch preset {
+            case 0: "retentionNever"
+            case 1: "retentionDay1"
+            case 7: "retentionDay7"
+            default: "retentionDay30"
+            }
+            return .init(id: String(preset), label: L(key))
+        } + [.init(id: SettingsRetention.customID, label: L("retentionCustom"))]
+        SettingsTrailingLayout(title: L(row.titleKey), detail: L(row.detailKey), synced: row.item.isSynced) {
+            Picker(L(row.titleKey), selection: Binding(
+                get: { effective },
+                set: { pickRetention($0, key: row.configKey, current: days) }
+            )) {
+                ForEach(options) { Text($0.label).tag($0.id) }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+        }
+        .settingsRow(row.id, failureKey: row.configKey)
+        if effective == SettingsRetention.customID {
+            ConfigNumberRow(
+                item: SettingsItem(
+                    id: "download.completedRecordRetention.custom", key: row.configKey,
+                    titleKey: "retentionCustom", detailKey: nil
+                ),
+                range: 1 ... 3650, fallback: SettingsRetention.customStart, unitHint: L("retentionDaysUnit")
+            )
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+
+    private func pickRetention(_ id: String, key: String, current: Int) {
+        if id == SettingsRetention.customID {
+            retentionForceCustom = true
+            let target = SettingsRetention.customTarget(current: current, max: 3650)
+            if target != current { editor.set(key, String(target)) }
+        } else {
+            retentionForceCustom = false
+            editor.set(key, id)
         }
     }
 

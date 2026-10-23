@@ -146,6 +146,10 @@ private val DlRows: List<DlRow> = listOf(
         R.string.fileMissingAction, R.string.fileMissingActionDesc,
     ),
     DlRow(
+        "download.completedRecordRetention", "completed_record_retention_days", DlSection.Behavior,
+        R.string.completedRecordRetention, R.string.completedRecordRetentionDesc,
+    ),
+    DlRow(
         "download.idleFileScan", "idle_file_scan", DlSection.Behavior, R.string.idleFileScan, R.string.idleFileScanDesc,
         // 本机不为刷新 UI 周期轮询（回前台节流重扫代替）；连接 NAS 时保留。
         visible = { f, local -> f.has("idle_file_scan") && !local },
@@ -215,6 +219,7 @@ internal fun DownloadPage() {
     var showNicHelp by remember { mutableStateOf(false) }
     var showRemotePicker by remember { mutableStateOf(false) }
     var uaForceCustom by rememberSaveable { mutableStateOf(false) }
+    var retentionForceCustom by rememberSaveable { mutableStateOf(false) }
     var connCount by remember { mutableStateOf<Long?>(null) }
     var connFailed by remember { mutableStateOf(false) }
     var connClearing by remember { mutableStateOf(false) }
@@ -326,7 +331,7 @@ internal fun DownloadPage() {
                     GlassSection(animateSize, title = str(section.title), footer = footer) {
                         when (section) {
                             DlSection.Save -> saveRows(ctx, shown, onBrowse = { showRemotePicker = true })
-                            DlSection.Behavior -> behaviorRows(ctx, shown, queues)
+                            DlSection.Behavior -> behaviorRows(ctx, shown, queues, retentionForceCustom) { retentionForceCustom = it }
                             DlSection.Connection -> connectionRows(
                                 ctx, shown, onCdnToggle, onNicHelp = { showNicHelp = true },
                                 policy = ConnPolicyUi(connCount, connFailed, connClearing),
@@ -458,7 +463,13 @@ private fun LocalSaveDirPicker(ctx: SettingsCtx) {
     }
 }
 
-private fun GlassSectionScope.behaviorRows(ctx: SettingsCtx, shown: Set<String>, queues: List<com.fluxdown.core.model.Queue>) {
+private fun GlassSectionScope.behaviorRows(
+    ctx: SettingsCtx,
+    shown: Set<String>,
+    queues: List<com.fluxdown.core.model.Queue>,
+    retentionForceCustom: Boolean,
+    setRetentionForceCustom: (Boolean) -> Unit,
+) {
     if ("download.silentDownload" in shown) {
         settingSwitch(
             ctx, "download.silent_download", R.string.silentDownload, R.string.silentDownloadDesc,
@@ -498,6 +509,9 @@ private fun GlassSectionScope.behaviorRows(ctx: SettingsCtx, shown: Set<String>,
             )
         }
     }
+    if ("download.completedRecordRetention" in shown) {
+        retentionRows(ctx, retentionForceCustom, setRetentionForceCustom)
+    }
     if ("download.idleFileScan" in shown) {
         settingSwitch(ctx, "idle_file_scan", R.string.idleFileScan, R.string.idleFileScanDesc, id = "download.idleFileScan")
     }
@@ -511,6 +525,66 @@ private fun GlassSectionScope.behaviorRows(ctx: SettingsCtx, shown: Set<String>,
     }
     if ("download.dedupSameUrl" in shown) {
         settingSwitch(ctx, "dedup_same_url", R.string.mobileDedupSameUrl, R.string.mobileDedupSameUrlDesc, id = "download.dedupSameUrl")
+    }
+}
+
+/** 已完成记录保留天数的预设（天；0 = 从不），与 PC / Web 一致；其余值落在「自定义」。 */
+private val RetentionPresets = listOf(0L, 1L, 7L, 30L)
+private const val RETENTION_CUSTOM = "custom"
+private const val RETENTION_CUSTOM_START = 14L
+private const val RETENTION_KEY = "completed_record_retention_days"
+
+/** 保留期：预设选择行 + 「自定义」时的天数输入行（镜像 GPUI `sections/retention.rs`）。 */
+private fun GlassSectionScope.retentionRows(
+    ctx: SettingsCtx,
+    forceCustom: Boolean,
+    setForceCustom: (Boolean) -> Unit,
+) {
+    val days = ctx.form.long(RETENTION_KEY, 0L)
+    val effective = if ((forceCustom && days > 0L) || days !in RetentionPresets) {
+        RETENTION_CUSTOM
+    } else {
+        days.toString()
+    }
+    row {
+        SettingRowBox(ctx, "download.completedRecordRetention", RETENTION_KEY) {
+            val title = str(R.string.completedRecordRetention)
+            val options = listOf(
+                SelectOption("0", str(R.string.retentionNever)),
+                SelectOption("1", str(R.string.retentionDay1)),
+                SelectOption("7", str(R.string.retentionDay7)),
+                SelectOption("30", str(R.string.retentionDay30)),
+                SelectOption(RETENTION_CUSTOM, str(R.string.retentionCustom)),
+            )
+            FluxListRow(
+                title = title,
+                subtitle = str(R.string.completedRecordRetentionDesc),
+                value = options.firstOrNull { it.value == effective }?.label,
+                chevron = true,
+                cloud = ctx.synced(RETENTION_KEY),
+                enabled = !ctx.readOnly,
+                onClick = {
+                    ctx.openPicker(
+                        PickerSpec(title, options, effective) { id ->
+                            if (id == RETENTION_CUSTOM) {
+                                setForceCustom(true)
+                                // 当前已是非预设天数则沿用，否则从起始值开始（刻意不等于任何预设）。
+                                if (effective != RETENTION_CUSTOM) ctx.editor.set(RETENTION_KEY, RETENTION_CUSTOM_START.toString())
+                            } else {
+                                setForceCustom(false)
+                                ctx.editor.set(RETENTION_KEY, id)
+                            }
+                        },
+                    )
+                },
+            )
+        }
+    }
+    if (effective == RETENTION_CUSTOM) {
+        settingNumber(
+            ctx, RETENTION_KEY, R.string.retentionCustom, null, 1L..3650L, RETENTION_CUSTOM_START,
+            unit = R.string.retentionDaysUnit, id = "download.completedRecordRetention.custom",
+        )
     }
 }
 

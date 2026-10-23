@@ -9,7 +9,7 @@ use fluxdown_ui_theme::active_theme;
 use gpui::{App, ParentElement, SharedString, Styled, Window};
 use gpui_component::h_flex;
 
-use super::{SectionContext, auto_quantity, rate_limit, user_agent};
+use super::{SectionContext, auto_quantity, rate_limit, retention, user_agent};
 use crate::ui::{Control, Explain, SettingsPage, SettingsSection, body_text, meta_text};
 
 pub(crate) fn page(ctx: &SectionContext, cx: &mut App) -> SettingsPage {
@@ -182,6 +182,11 @@ fn behavior_section(ctx: &SectionContext, cx: &mut App) -> SettingsSection {
             "fileMissingAction",
             Some("fileMissingActionDesc"),
             ctx.daemon_enum_dropdown("file_missing_action", "fileMissing"),
+        ))
+        .row(ctx.item(
+            "completedRecordRetention",
+            Some("completedRecordRetentionDesc"),
+            retention::control(ctx),
         ))
         .row(ctx.item(
             "idleFileScan",

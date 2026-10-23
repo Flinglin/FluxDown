@@ -33,6 +33,8 @@ import { RateLimitRow } from './RateLimitField'
 import { DirPickerDialog } from './DirPickerDialog'
 import { UserAgentRow } from './UserAgentField'
 import { AutoCountRow } from './AutoCountRow'
+import { RetentionRow } from './RetentionRow'
+import { CategoriesGroup } from './CategoriesGroup'
 
 const NO_QUEUES: readonly QueueDto[] = []
 const selectQueues = (daemon: { queues: readonly QueueDto[] }) => daemon.queues
@@ -128,6 +130,7 @@ function BehaviorSection() {
       <DaemonSwitchRow configKey="use_server_time" titleKey="useServerTime" descKey="useServerTimeDesc" />
       <DaemonEnumRow configKey="file_exists_behavior" titleKey="fileExistsBehavior" descKey="fileExistsBehaviorDesc" labelPrefix="fileExists" />
       <DaemonEnumRow configKey="file_missing_action" titleKey="fileMissingAction" descKey="fileMissingActionDesc" labelPrefix="fileMissing" />
+      <RetentionRow />
       <DaemonSwitchRow configKey="idle_file_scan" titleKey="idleFileScan" descKey="idleFileScanDesc" />
       <DefaultQueueRow />
     </SettingsSection>
