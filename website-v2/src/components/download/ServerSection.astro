@@ -152,5 +152,9 @@ const notify = "#subscribe";
     .grid-2 {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+    /* 分组数为奇数时末项横跨整行,避免右下角露出网格底色 */
+    .grid-2 > :global(:last-child:nth-child(odd)) {
+      grid-column: 1 / -1;
+    }
   }
 </style>
