@@ -3707,8 +3707,11 @@ pub struct DownloadManager {
     /// 任务事件 Webhook 推送（免费自托管）。`emit` 同步返回、网络 IO 自 spawn，
     /// 因此可以直接在生命周期点位上调用，不影响 actor。
     webhook: Arc<crate::webhook::WebhookDispatcher>,
-    /// 上一次判定时仍有活跃/待启动任务的队列（`queue.drained` 边沿触发用）。
+    /// 上一次判定时仍有活跃/待启动任务的队列（`queue.started` / `queue.drained`
+    /// 边沿触发用）。
     occupied_queues: HashSet<String>,
+    /// 进程启动恢复（`resume_on_start`）进行中：期间登记占用但不发 `queue.started`。
+    restoring_on_start: bool,
     /// 已排程自动重试、尚未回流的任务 → 其队列 ID。判定队列是否清空时视为
     /// 仍占用，否则重试间隙会误报一次 `queue.drained`。
     retry_scheduled: HashMap<String, String>,
@@ -3865,6 +3868,7 @@ impl DownloadManager {
             rss: crate::rss::RssManager::new(rss_db, rss_sink),
             webhook,
             occupied_queues: HashSet::new(),
+            restoring_on_start: false,
             retry_scheduled: HashMap::new(),
             retry_pending_reported: 0,
             #[cfg(feature = "bt")]
@@ -5498,13 +5502,32 @@ impl DownloadManager {
         delivered
     }
 
-    /// 重算每个队列的占用情况，对**由占用转为空**的队列发一条 `queue.drained`。
+    /// 登记某队列已占用；若它此前空闲（且不是启动恢复）则发一条 `queue.started`。
+    ///
+    /// `queue.started` 与 `queue.drained` 构成一对边沿：同一次忙碌区间只发一次，
+    /// 之后到清空为止的入队/恢复都不会再触发。
+    fn mark_queue_occupied(&mut self, queue_id: &str) {
+        if self.occupied_queues.insert(queue_id.to_string()) {
+            self.emit_queue_started(queue_id.to_string());
+        }
+    }
+
+    /// 发 `queue.started`；启动恢复期间静默（重启接回的占用不算新开始）。
+    fn emit_queue_started(&self, queue_id: String) {
+        if self.restoring_on_start {
+            return;
+        }
+        let name = self.queue_display_name(&queue_id);
+        self.emit_task_event(crate::webhook::WebhookEvent::queue_started(queue_id, name));
+    }
+
+    /// 重算每个队列的占用情况：对**由空转为占用**的队列发一条 `queue.started`，
+    /// 对**由占用转为空**的队列发一条 `queue.drained`。
     ///
     /// 必须在任务**进入**（`enqueue_persisted_task` / `resume_task_inner`）与
     /// **离开**（`on_task_done` / `pause_task` / `delete_task`）活跃·待启动集合
-    /// 的每个汇合点调用：进入侧只登记占用（不触发），离开侧才可能触发——
-    /// 两侧配合构成边沿触发，同一次空闲不会重复通知。已排程自动重试的任务
-    /// 视为仍占用，否则退避间隙会误报一次清空。
+    /// 的每个汇合点调用：两侧配合构成边沿触发，同一次忙碌/空闲不会重复通知。
+    /// 已排程自动重试的任务视为仍占用，否则退避间隙会误报一次清空。
     fn sync_queue_occupancy(&mut self) {
         let mut occupied: HashSet<String> = self
             .active_tasks
@@ -5518,10 +5541,17 @@ impl DownloadManager {
             .difference(&occupied)
             .cloned()
             .collect();
+        let started: Vec<String> = occupied
+            .difference(&self.occupied_queues)
+            .cloned()
+            .collect();
         self.occupied_queues = occupied;
         for queue_id in drained {
             let name = self.queue_display_name(&queue_id);
             self.emit_task_event(crate::webhook::WebhookEvent::queue_drained(queue_id, name));
+        }
+        for queue_id in started {
+            self.emit_queue_started(queue_id);
         }
     }
 
@@ -7859,7 +7889,11 @@ impl DownloadManager {
                 let stale = self.reset_stale_seeding().await;
                 self.auto_reseed_on_start(stale).await;
             }
+            // 启动恢复只是把上次的占用状态接回来，不是「队列开始」，静默登记占用。
+            self.restoring_on_start = true;
             self.resume_on_start(reset_ids).await;
+            self.sync_queue_occupancy();
+            self.restoring_on_start = false;
         }
     }
 
@@ -8833,7 +8867,7 @@ impl DownloadManager {
                 None
             };
             // 新增只会使此队列变为占用，不必重扫全部待启动项。
-            self.occupied_queues.insert(queued.queue_id.clone());
+            self.mark_queue_occupied(&queued.queue_id);
             self.pending_queue.push_back(queued);
             if !self.suppress_bulk_broadcasts {
                 self.queue_positions_dirty = true;
@@ -9447,6 +9481,11 @@ impl DownloadManager {
             })
             .await;
         }
+
+        // 队列 `queue.started` 必须先于该队列的首个 `task.started`：这里先登记占用
+        // （空闲 → 占用的边沿在此触发），随后 `sync_queue_occupancy` 看到的就是
+        // 已登记状态，不会重复通知。
+        self.mark_queue_occupied(&queue_id);
 
         // Webhook：task.started（与 onStart 同点位，`do_start_task` 只走首次
         // 启动，resume 由 `do_resume_task` 承接，因此语义就是「首次进入
@@ -17249,6 +17288,188 @@ mod tests {
                 .unwrap_or_else(|| panic!("{expected} notice for {task_id}"));
             assert_eq!(notice.task.as_ref().map(|t| t.status), Some(status));
         }
+    }
+
+    /// 在 `queue_id` 队列上插一条占位活跃任务（只用于驱动占用集，不起真实下载）。
+    fn insert_placeholder_active(mgr: &mut DownloadManager, task_id: &str, queue_id: &str) {
+        mgr.active_tasks.insert(
+            task_id.to_string(),
+            ActiveTaskEntry {
+                token: CancellationToken::new(),
+                generation: 1,
+                handle: None,
+                is_bt: false,
+                queue_id: queue_id.to_string(),
+            },
+        );
+    }
+
+    /// `queue.started` / `queue.drained` 是同一队列上的一对边沿：每次空闲 → 占用
+    /// 只发一次 started，占用 → 空闲只发一次 drained，二者严格交替。
+    #[tokio::test]
+    async fn queue_started_and_drained_alternate_once_per_edge() {
+        let db = Db::connect("sqlite::memory:")
+            .await
+            .expect("connect mem db");
+        let sink = Arc::new(RecordingSink::new());
+        let mut mgr = sched_manager_with_sink(&db, 4, sink.clone());
+        let edges = |sink: &RecordingSink| -> Vec<String> {
+            collected_notices(sink)
+                .into_iter()
+                .filter(|n| n.event.starts_with("queue."))
+                .map(|n| format!("{}:{}", n.event, n.queue_id))
+                .collect()
+        };
+
+        // 空闲时重算不产生任何事件。
+        mgr.sync_queue_occupancy();
+        assert!(edges(&sink).is_empty());
+
+        // 空闲 → 占用：恰好一条 started，且无任务快照。
+        insert_placeholder_active(&mut mgr, "a", "q1");
+        mgr.sync_queue_occupancy();
+        assert_eq!(edges(&sink), ["queue.started:q1"]);
+        let started = collected_notices(&sink).pop().expect("started notice");
+        assert!(started.task.is_none());
+
+        // 已占用期间再加任务 / 重复重算：不重复通知。
+        insert_placeholder_active(&mut mgr, "b", "q1");
+        mgr.sync_queue_occupancy();
+        mgr.sync_queue_occupancy();
+        assert_eq!(edges(&sink), ["queue.started:q1"]);
+
+        // 只有最后一个任务离开才 drained；其间占用不变。
+        mgr.active_tasks.remove("a");
+        mgr.sync_queue_occupancy();
+        assert_eq!(edges(&sink), ["queue.started:q1"]);
+        mgr.active_tasks.remove("b");
+        mgr.sync_queue_occupancy();
+        assert_eq!(edges(&sink), ["queue.started:q1", "queue.drained:q1"]);
+
+        // 再次空闲 → 占用：重新发 started；另一个队列独立计边沿。
+        insert_placeholder_active(&mut mgr, "c", "q1");
+        insert_placeholder_active(&mut mgr, "d", "q2");
+        mgr.sync_queue_occupancy();
+        let all = edges(&sink);
+        assert_eq!(all.len(), 4);
+        assert_eq!(all[..2], ["queue.started:q1", "queue.drained:q1"]);
+        assert!(all.contains(&"queue.started:q1".to_string()));
+        assert!(all.contains(&"queue.started:q2".to_string()));
+    }
+
+    /// 已排程自动重试的任务视为仍占用：重试间隙既不发 drained，也不会在回流后
+    /// 再补一条 started。
+    #[tokio::test]
+    async fn queue_started_not_repeated_across_retry_gap() {
+        let db = Db::connect("sqlite::memory:")
+            .await
+            .expect("connect mem db");
+        let sink = Arc::new(RecordingSink::new());
+        let mut mgr = sched_manager_with_sink(&db, 4, sink.clone());
+
+        insert_placeholder_active(&mut mgr, "r", "q1");
+        mgr.sync_queue_occupancy();
+        // 任务失败离场、排程重试：占用由 retry_scheduled 接力。
+        mgr.active_tasks.remove("r");
+        mgr.retry_scheduled
+            .insert("r".to_string(), "q1".to_string());
+        mgr.sync_queue_occupancy();
+        // 重试回流：重新进入活跃集合。
+        mgr.retry_scheduled.remove("r");
+        insert_placeholder_active(&mut mgr, "r", "q1");
+        mgr.sync_queue_occupancy();
+
+        let events: Vec<String> = collected_notices(&sink)
+            .into_iter()
+            .map(|n| n.event)
+            .collect();
+        assert_eq!(events, ["queue.started"]);
+    }
+
+    /// 进程启动恢复只是把上次的占用接回来：不发 `queue.started`，但占用已登记，
+    /// 之后清空仍能触发 `queue.drained`、再次忙碌仍能触发 `queue.started`。
+    #[tokio::test]
+    async fn queue_started_is_silent_on_boot_restore() {
+        let db = Db::connect("sqlite::memory:")
+            .await
+            .expect("connect mem db");
+        db.seed_builtin_queues().await.expect("seed");
+        insert_paused_task_in_queue(&db, "was_active", "").await;
+        db.update_task_status("was_active", 1, "")
+            .await
+            .expect("status");
+        db.set_config("auto_resume_on_start", "true")
+            .await
+            .expect("config");
+
+        let sink = Arc::new(RecordingSink::new());
+        let mut mgr = sched_manager_with_sink(&db, 4, sink.clone());
+        mgr.load_queues().await;
+        mgr.load_and_send_all_tasks().await;
+
+        assert!(
+            mgr.active_tasks.contains_key("was_active"),
+            "auto_resume_on_start 应已拉起被中断的任务"
+        );
+        assert!(!mgr.restoring_on_start, "恢复结束后必须放开静默开关");
+        assert!(
+            collected_notices(&sink)
+                .iter()
+                .all(|n| n.event != "queue.started"),
+            "启动恢复不得发 queue.started"
+        );
+        let restored_queue = mgr
+            .active_tasks
+            .get("was_active")
+            .map(|e| e.queue_id.clone())
+            .expect("restored entry");
+        assert!(mgr.occupied_queues.contains(&restored_queue));
+
+        // 恢复出的任务离场 → drained；之后再忙碌 → started。
+        cancel_all_active(&mgr);
+        mgr.active_tasks.remove("was_active");
+        mgr.sync_queue_occupancy();
+        insert_placeholder_active(&mut mgr, "fresh", &restored_queue);
+        mgr.sync_queue_occupancy();
+        let events: Vec<String> = collected_notices(&sink)
+            .into_iter()
+            .map(|n| n.event)
+            .filter(|e| e.starts_with("queue."))
+            .collect();
+        assert_eq!(events, ["queue.drained", "queue.started"]);
+    }
+
+    /// 真实建任务：队列的 `queue.started` 必须先于该队列的首个 `task.started`。
+    #[tokio::test]
+    async fn queue_started_precedes_first_task_started() {
+        let db = Db::connect("sqlite::memory:")
+            .await
+            .expect("connect mem db");
+        let sink = Arc::new(RecordingSink::new());
+        let mut mgr = sched_manager_with_sink(&db, 1, sink.clone());
+        mgr.set_max_auto_retries(0);
+
+        mgr.create_task(NewTaskSpec {
+            url: "http://127.0.0.1:1/never.bin".to_string(),
+            save_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+            file_name: "never.bin".to_string(),
+            ..Default::default()
+        })
+        .await
+        .expect("create task");
+        let events: Vec<String> = collected_notices(&sink)
+            .into_iter()
+            .map(|n| n.event)
+            .collect();
+        let position = |name: &str| events.iter().position(|e| e == name);
+        let queue_started = position("queue.started").expect("queue.started notice");
+        let task_started = position("task.started").expect("task.started notice");
+        assert!(queue_started < task_started, "{events:?}");
+        assert_eq!(
+            events.iter().filter(|e| *e == "queue.started").count(),
+            1,
+            "{events:?}"
+        );
     }
 
     #[tokio::test]
