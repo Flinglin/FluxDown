@@ -43,6 +43,7 @@ const DEFAULT_QUEUE = '__default__'
 
 export function DownloadSettings() {
   const t = useT()
+  const readOnly = useSettingsReadOnly()
   return (
     <SettingsPage title={t('settingsCatDownload')} description={t('settingsCatDownloadDesc')}>
       <SaveLocationSection />
@@ -52,6 +53,7 @@ export function DownloadSettings() {
       <SettingsSection title={t('settingsGroupAdvanced')}>
         <UserAgentRow />
       </SettingsSection>
+      <CategoriesGroup disabled={readOnly} />
     </SettingsPage>
   )
 }

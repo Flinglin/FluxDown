@@ -45,6 +45,7 @@ struct DownloadPage: View {
     @State private var uaForceCustom = false
     /// 用户选了保留期「自定义」但值尚未写入（或恰等于预设）：保持天数输入行可见。
     @State private var retentionForceCustom = false
+    @State private var categoryTarget: GeneralCategoryTarget?
 
     private var context: SettingsDownloadContext {
         SettingsDownloadContext(form: editor.form, isLocalHost: container.isLocalHost)
@@ -74,8 +75,22 @@ struct DownloadPage: View {
                 Section(L(SettingsDownloadSection.advanced.titleKey)) { advancedRows(ctx) }
                     .disabled(readOnly)
             }
+            CategoriesSection(editing: $categoryTarget, readOnly: readOnly)
         }
         .fluxAnimation(.smooth, value: ctx.form)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                EditButton().disabled(readOnly)
+            }
+        }
+        .sheet(item: $categoryTarget) { target in
+            let categories = GeneralCategoryStore(editor: editor, toasts: container.toasts)
+            CategoryEditorSheet(
+                existing: target.existing,
+                onSave: { categories.save($0) },
+                onDelete: target.existing.map { entry in { categories.delete(entry) } }
+            )
+        }
         .alert(L("cdnMultiProxyConfirmTitle"), isPresented: $showCdnConfirm) {
             Button(L("cancel"), role: .cancel) {}
             Button(L("cdnMultiProxyConfirmDisable")) {
@@ -478,11 +493,18 @@ extension DownloadPage {
     static func searchEntries(_ ctx: SettingsSearchContext) -> [SettingsEntry] {
         let name = L("settingsCatDownload")
         let rows = SettingsDownloadContext(form: ctx.form, isLocalHost: ctx.isLocalHost)
-        return SettingsDownloadRow.allCases.filter { $0.isVisible(in: rows) }.map { row in
+        let visible = SettingsDownloadRow.allCases.filter { $0.isVisible(in: rows) }
+        func entry(_ row: SettingsDownloadRow) -> SettingsEntry {
             SettingsEntry(
                 item: row.item, route: .download, breadcrumb: "\(name) › \(L(row.group.titleKey))",
                 symbol: "arrow.down.circle.fill"
             )
         }
+        // 「自定义分类」位于下载页最底部。
+        let categories = SettingsEntry(
+            id: CategoriesRow.id, route: .download, title: L(CategoriesRow.titleKey), detail: L(CategoriesRow.detailKey),
+            breadcrumb: "\(name) › \(L(CategoriesRow.titleKey))", symbol: "folder.fill"
+        )
+        return visible.map(entry) + [categories]
     }
 }

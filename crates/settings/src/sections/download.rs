@@ -1,4 +1,4 @@
-//! 下载：保存位置、行为、连接与性能、自动重试、高级。
+//! 下载：保存位置、自定义分类、行为、连接与性能、自动重试、高级。
 
 use fluxdown_protocol::{HIGH_SEGMENTS_WARN_ABOVE, SEVERE_SEGMENTS_WARN_ABOVE};
 use fluxdown_ui_components::{
@@ -9,7 +9,7 @@ use fluxdown_ui_theme::active_theme;
 use gpui::{App, ParentElement, SharedString, Styled, Window};
 use gpui_component::h_flex;
 
-use super::{SectionContext, auto_quantity, rate_limit, retention, user_agent};
+use super::{SectionContext, auto_quantity, categories, rate_limit, retention, user_agent};
 use crate::ui::{Control, Explain, SettingsPage, SettingsSection, body_text, meta_text};
 
 pub(crate) fn page(ctx: &SectionContext, cx: &mut App) -> SettingsPage {
@@ -35,6 +35,7 @@ pub(crate) fn page(ctx: &SectionContext, cx: &mut App) -> SettingsPage {
         connection_section(ctx, cx),
         retry_section(ctx),
         advanced_section(ctx),
+        categories::group(ctx, cx),
     ])
 }
 

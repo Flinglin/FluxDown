@@ -5,8 +5,7 @@ import { useT } from '../../../../i18n'
 import { useAgent } from '../../../../lib/rpc'
 import { Switch } from '../../../../ui'
 import { mergeDevices, sidebarDevices } from '../../../downloads/model/devices'
-import { PrefSwitchRow, SettingsPage, SettingsRow, SettingsSection, setPref, usePrefRaw, useSettingsReadOnly } from '../../kit'
-import { CategoriesGroup } from './CategoriesGroup'
+import { PrefSwitchRow, SettingsPage, SettingsRow, SettingsSection, setPref, usePrefRaw } from '../../kit'
 
 /** `ui.show_sidebar_devices` 三态：未设置 = 登录后自动显示；开关显示有效值。 */
 function SidebarDevicesRow() {
@@ -27,7 +26,6 @@ function SidebarDevicesRow() {
 
 export function GeneralSettings() {
   const t = useT()
-  const readOnly = useSettingsReadOnly()
   return (
     <SettingsPage title={t('settingsCatGeneral')} description={t('settingsCatGeneralDesc')}>
       <SettingsSection title={t('settingsGroupSystem')}>
@@ -44,7 +42,6 @@ export function GeneralSettings() {
         <PrefSwitchRow prefKey="ui.show_activity_webhooks" fallback titleKey="showActivityWebhooks" descKey="showActivityWebhooksDesc" />
         <PrefSwitchRow prefKey="ui.show_activity_account" fallback titleKey="showActivityAccount" descKey="showActivityAccountDesc" />
       </SettingsSection>
-      <CategoriesGroup disabled={readOnly} />
     </SettingsPage>
   )
 }
