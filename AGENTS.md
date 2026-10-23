@@ -86,6 +86,7 @@ PG_TEST_URL=postgres://postgres:pw@localhost/postgres cargo test -p fluxdown_eng
 cargo test -p fluxdown_engine --features plugins,components --test engine plugin_ffmpeg::   # 真实执行经 FLUXDOWN_TEST_FFMPEG=<abs> 注入
 cargo test -p fluxdown_engine --features plugins,components --test engine plugin_ytdlp::    # FLUXDOWN_TEST_YTDLP=<abs>
 cargo check -p fluxdown_engine        # 不带 feature：验证 mobile 关插件时主链路零变化
+python3 scripts/lint-changed.py       # 改动行严格 lint 棘轮（字符边界切片 / panic! / dbg! 阻断，裸索引 / as 截断提示；存量不动）
 python3 .github/scripts/check_ci_paths.py   # ci.yml 路径过滤覆盖自检
 
 # ── 各宿主/客户端运行 ──
@@ -255,5 +256,6 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 - 改动前 `cargo check -p <crate> --lib`；提交前 `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings`；测试用 `cargo nextest run -p <crate> <filter>`，**测试禁 `--workspace`**。
 - 优先复用已有 trait/error 类型，不平行造轮子。单文件 >600 行考虑拆分，单函数 >80 行需说明。
 - **一个 crate 只有一个集成测试二进制**：`tests/<名>/main.rs` + 按领域分模块（engine 为 `tests/engine/`），不新建 `tests/*.rs`——每个测试二进制都会完整链接一遍引擎与 librqbit。feature 门控模块在文件头写 `#![cfg(feature = "…")]`。
+- 解析不可信输入（文件名 / 头部 / 种子元数据 / 协议帧）的新代码：字符串用 `get(a..b)` / `split_at_checked` / 先 `is_char_boundary`，下标用 `get`，长度转换用 `try_from`；`python3 scripts/lint-changed.py` 对改动行把关。
 - 查文档优先级：`cargo path <crate>` 本地源码 > docs.rs > web 搜索。
 - **命中以下任一项前先读 `rust-router` skill**：新增/改 public API/trait/error 类型、unsafe/FFI/性能关键路径、新增 crate/调 workspace、写 doc comment。仅改名/格式/加日志可跳过。
