@@ -82,8 +82,8 @@ cargo test -p fluxdown_cli            # CLI（退出码/尺寸解析 doctest）
 cargo test -p fluxdown_mobile         # 原生移动端核心（会话游标 / 重连 / DTO 映射 / 进程内本机主机端到端）
 PG_TEST_URL=postgres://postgres:pw@localhost/postgres cargo test -p fluxdown_engine -- --ignored pg_smoke
 # 插件相关（feature 门控）：
-cargo test -p fluxdown_engine --features plugins,components --test plugin_ffmpeg   # 真实执行经 FLUXDOWN_TEST_FFMPEG=<abs> 注入
-cargo test -p fluxdown_engine --features plugins,components --test plugin_ytdlp    # FLUXDOWN_TEST_YTDLP=<abs>
+cargo test -p fluxdown_engine --features plugins,components --test engine plugin_ffmpeg::   # 真实执行经 FLUXDOWN_TEST_FFMPEG=<abs> 注入
+cargo test -p fluxdown_engine --features plugins,components --test engine plugin_ytdlp::    # FLUXDOWN_TEST_YTDLP=<abs>
 cargo check -p fluxdown_engine        # 不带 feature：验证 mobile 关插件时主链路零变化
 
 # ── 各宿主/客户端运行 ──
@@ -252,5 +252,6 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z   # 触发发布流水�
 - **禁止新增 dependency**，需要时先说明理由等确认；**禁止手编 `Cargo.toml` 版本号**，用 cargo 命令。
 - 改动前 `cargo check -p <crate> --lib`；提交前 `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings`；测试用 `cargo nextest run -p <crate> <filter>`，**测试禁 `--workspace`**。
 - 优先复用已有 trait/error 类型，不平行造轮子。单文件 >600 行考虑拆分，单函数 >80 行需说明。
+- **一个 crate 只有一个集成测试二进制**：`tests/<名>/main.rs` + 按领域分模块（engine 为 `tests/engine/`），不新建 `tests/*.rs`——每个测试二进制都会完整链接一遍引擎与 librqbit。feature 门控模块在文件头写 `#![cfg(feature = "…")]`。
 - 查文档优先级：`cargo path <crate>` 本地源码 > docs.rs > web 搜索。
 - **命中以下任一项前先读 `rust-router` skill**：新增/改 public API/trait/error 类型、unsafe/FFI/性能关键路径、新增 crate/调 workspace、写 doc comment。仅改名/格式/加日志可跳过。
