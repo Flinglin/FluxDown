@@ -88,6 +88,7 @@ cargo test -p fluxdown_engine --features plugins,components --test engine plugin
 cargo check -p fluxdown_engine        # 不带 feature：验证 mobile 关插件时主链路零变化
 python3 scripts/lint-changed.py       # 改动行严格 lint 棘轮（字符边界切片 / panic! / dbg! 阻断，裸索引 / as 截断提示；存量不动）
 python3 .github/scripts/check_ci_paths.py   # ci.yml 路径过滤覆盖自检
+# omp 会话内 `/verify [范围]` 按改动范围串行跑上述门禁并报告（.omp/commands/verify.md）
 
 # ── 各宿主/客户端运行 ──
 cargo build -p fluxdown_daemon && cargo run -p fluxdown_agent --features web-ui -- --server   # headless 服务器（fluxdownd 须与 agent 同目录；env 见 .omp/knowledge/hosts-and-api.md）
