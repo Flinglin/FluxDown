@@ -24,6 +24,7 @@
 - **HLS 小响应拉取不得在共享 client 上设全局 timeout，播放列表首行带 BOM 要先剥**：全局 timeout 会误伤普通 HTTP 长下载；`m3u8_rs` 要求首行就是 `#EXTM3U` → `native/engine/src/hls_downloader.rs::fetch_small` / `trim_playlist_prefix`。
 - **订阅源正文无有效 tracker 必须算该源失败**：HTML 错误页或空页若当「成功 + 空列表」，会覆盖宿主缓存并在刷新间隔内丢光订阅 tracker → `native/engine/src/tracker_subscription.rs::parse_source_body`。
 - **浏览器 POST 接管的任务恢复 / 重试不得改发 GET**：请求体（OneDrive 打包下载含一次性 `access_token`）不落库，旧逻辑恢复时按 GET 发 HEAD + Range 探测，只收 POST 的端点恒 405（#970），表单端点则下回错误内容。建任务时只把非 GET 方法记入 `tasks.request_method`，恢复体首据此以 `POST_ONLY_RESUME_MESSAGE` 失败；以 GET 撞上 `405 + Allow` 只含 POST 时探测标 `405 post-only`、立即停止并报 `POST_ONLY_ENDPOINT_MESSAGE`。两条文案由 GPUI / Web / Android / iOS 按全文匹配本地化（`taskErrorPostOnly*`），改文案须同步各端镜像 → `native/engine/src/downloader.rs`（`allows_only_post` / `probe_post_only`）、`native/engine/src/download_manager.rs::fail_post_only_resume`、回归 `native/engine/tests/engine/post_only.rs`（`#[ignore]`，需 `--ignored`）。
+- **传输失败不得靠错误文本关键词判定**：reqwest 0.12 的 `Display` 只有「error sending request for url (…)」，根因全在 `source()` 链；探测阶段旧代码 `format!("network-error: {}", e)` 丢链后，直连被拒 / 黑洞超时的任务既不触发 Auto 换路也不进通用自动重试，黑洞要等约 63s 才失败；中文 Windows 的 OS 错误描述还是本地化文本。一律经 `net_failure::classify`（`io::ErrorKind` / reqwest 标志 / 库固定前缀）分类并以 `[net:<code>]` 标签写进文案，消费端只解析标签 → `native/engine/src/net_failure.rs`、`downloader.rs::network_desc`、回归 `downloader.rs::refused_probe_error_is_classified_for_failover_and_retry`、`auto_probe.rs::refused_direct_is_taken_over_by_proxy_without_waiting`。
 
 ## BT / eD2K
 

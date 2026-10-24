@@ -6,6 +6,8 @@
 
 /// 插件通用认证凭据存储与请求注入。
 pub mod auth;
+/// `ProxyMode::Auto` 探测阶段的多路径竞速（Happy Eyeballs 式错峰并行探测）。
+pub(crate) mod auto_probe;
 /// `ProxyMode::Auto`：候选代理解析、多路径任务上下文与路由 wire 标签。
 pub mod auto_proxy;
 /// BitTorrent / 磁力配置与链接识别（始终编译；无 `bt` feature 时用于明确拒绝）。
@@ -53,7 +55,11 @@ pub mod model;
 pub mod multi_nic;
 /// 下载文件名命名管线：Content-Disposition 解码、URL / 类型证据、sanitize、魔数嗅探。
 pub mod naming;
+/// 网络传输失败的类型化分类（换路 / 自动重试的唯一判据，平台与语言无关）。
+pub mod net_failure;
 pub(crate) mod output;
+/// 系统 PAC 脚本的代理端点提取（供 Auto 模式的系统代理候选使用）。
+pub(crate) mod pac;
 /// 多路径分段调度的纯判据（稳态速率采样、竞争集、均衡拆分、完成时间抢占）。
 pub(crate) mod path_scheduler;
 /// 插件系统（可选、可失败的下载中间层）。仅 `plugins` feature 下编译。
