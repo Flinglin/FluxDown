@@ -129,7 +129,7 @@ export const download = defineMessages({
       signedFirefox: "Firefox package",
       signedFirefoxDetail: "Mozilla-signed",
       signedSteps: [
-        "Unzip the download to get the .crx file.",
+        "Download the .crx. If Chrome says it can't add extensions from this site, right-click the download link and choose Save link as.",
         "Open chrome://extensions and turn on Developer mode (top right).",
         "Drag the .crx onto the page and confirm Add extension.",
         "Developer mode can be turned off again; the extension stays and keeps updating.",
@@ -315,7 +315,7 @@ export const download = defineMessages({
       signedFirefox: "Firefox 安装包",
       signedFirefoxDetail: "Mozilla 签名",
       signedSteps: [
-        "解压下载的文件,得到 .crx 安装包。",
+        "下载 .crx 安装包。若 Chrome 提示「无法从该网站添加」,改为右键下载链接 →「链接另存为」。",
         "打开 chrome://extensions,开启右上角的「开发者模式」。",
         "把 .crx 拖进页面,确认「添加扩展程序」。",
         "装好后可以关闭开发者模式,扩展保留并照常自动更新。",

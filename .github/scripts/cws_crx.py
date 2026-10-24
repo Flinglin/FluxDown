@@ -4,13 +4,12 @@
 由 .github/workflows/cws-crx.yml（定时 + 手动）调用。商店审核异步，release.yml 推 tag
 时拿不到新版本的商店签名包，只能事后轮询：
   1. 问商店更新接口（与 Chrome 扩展更新器同一个 gupdate 协议）当前已发布版本与下载地址；
-  2. 对应 release `v<版本>` 不存在或已有 `-chrome-crx.zip` → 无事可做；
+  2. 对应 release `v<版本>` 不存在或已有 `-chrome.crx` → 无事可做；
   3. 下载 CRX，校验商店给出的 sha256 / 大小、CRX3 头部、扩展 ID 与包内 manifest 版本；
-  4. 打成 `FluxDown-<版本>-chrome-crx.zip`（内含 `FluxDown-<版本>.crx`）写到输出目录，
-     由 workflow 上传 GitHub Release 与 OSS。
+  4. 原样写成 `FluxDown-<版本>-chrome.crx`，由 workflow 上传 GitHub Release 与 OSS。
 
-外层包 zip 而非直接发 .crx：Chrome 把普通网页下载的 .crx 当作安装请求处理，
-非商店站点会被拒绝（「无法从该网站添加应用、扩展程序和用户脚本」），zip 照常下载。
+直接发 .crx：用户下载后拖进 chrome://extensions 即装。Chrome 可能把网页直接下载的 .crx
+当作安装请求而拒绝（「无法从该网站添加…」），官网与文档提示改用「链接另存为」。
 
 另外：最新稳定扩展 release 晚于商店版本超过 STALE_DAYS 天 → 打 warning（商店上传失败、
 审核被拒都只在 release.yml 里 continue-on-error，这里是唯一的持续提醒）。
@@ -39,7 +38,7 @@ EXTENSION_ID = "meleenglfggcmcajknpeeeiobnpfmahc"
 PRODVERSION = "140.0.0.0"
 UPDATE_URL = "https://clients2.google.com/service/update2/crx"
 GUPDATE_NS = "{http://www.google.com/update2/response}"
-ASSET_SUFFIX = "-chrome-crx.zip"
+ASSET_SUFFIX = "-chrome.crx"
 EXTENSION_SENTINEL = "SHA256SUMS-extension.txt"
 STALE_DAYS = 7
 HTTP_TIMEOUT = 60
@@ -233,8 +232,7 @@ def main() -> int:
     blob = download_crx(update)
     out_dir.mkdir(parents=True, exist_ok=True)
     asset = out_dir / f"FluxDown-{version}{ASSET_SUFFIX}"
-    with zipfile.ZipFile(asset, "w", compression=zipfile.ZIP_STORED) as archive:
-        archive.writestr(f"FluxDown-{version}.crx", blob)
+    asset.write_bytes(blob)
     print(f"verified store CRX {len(blob)} bytes → {asset}")
     write_outputs(upload="true", tag=tag, file=str(asset))
     return 0

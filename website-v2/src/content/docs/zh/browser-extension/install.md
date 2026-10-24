@@ -3,7 +3,7 @@ title: 安装扩展
 description: 为 Chrome 或 Firefox 安装 FluxDown 浏览器扩展,并与桌面客户端建立连接。
 section: browser-extension
 order: 1
-sourceHash: "e35db04508bc"
+sourceHash: "5f9e74c62032"
 ---
 
 FluxDown 浏览器扩展接管 Chrome、Firefox 的下载流程,把匹配到的下载转交给 FluxDown 桌面客户端,交由其多线程高速下载。扩展本身不具备下载能力——必须先安装[桌面客户端](/docs/zh/getting-started/installation/)并至少启动过一次。两者的安装顺序不影响使用:无论先装哪一个,后装的一方都会自动找到对方。
@@ -26,11 +26,11 @@ FluxDown 浏览器扩展接管 Chrome、Firefox 的下载流程,把匹配到的�
 
 ## 离线安装:商店签名安装包(自动更新)
 
-适用于打不开商店页面本身的情况。每个稳定版在 Chrome 网上应用店审核通过后,都会补上 `FluxDown-<版本号>-chrome-crx.zip`,因此最新的安装包可能比最新版本晚几天。压缩包里就是 Chrome 网上应用店分发的那个 `.crx`:同一个扩展,同一份签名。
+适用于打不开商店页面本身的情况。每个稳定版在 Chrome 网上应用店审核通过后,都会补上 `FluxDown-<版本号>-chrome.crx`,因此最新的安装包可能比最新版本晚几天。它就是 Chrome 网上应用店分发的那个 `.crx`:同一个扩展,同一份签名。
 
 **Chrome(以及 Brave、Vivaldi 等):**
 
-1. 从[下载页](/zh/download/#extension-signed)或 [GitHub Release](https://github.com/zerx-lab/fluxdown/releases) 下载 `FluxDown-<版本号>-chrome-crx.zip`,解压得到 `FluxDown-<版本号>.crx`。之所以外面包一层 zip,是因为 Chrome 会拒绝从商店以外的网站下载的 `.crx` 文件。
+1. 从[下载页](/zh/download/#extension-signed)或 [GitHub Release](https://github.com/zerx-lab/fluxdown/releases) 下载 `FluxDown-<版本号>-chrome.crx`。若 Chrome 提示无法从该网站添加扩展,改为右键下载链接 →**链接另存为**。
 2. 打开 `chrome://extensions`,开启右上角的**开发者模式**。
 3. 把 `.crx` 拖进页面,确认**添加扩展程序**。
 4. 装好后可以关闭开发者模式。Chrome 把它当作商店安装的扩展,会**自动更新**——前提是浏览器能访问 Google 的更新服务。

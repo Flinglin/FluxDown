@@ -30,7 +30,7 @@ const stores: { name: BrandName; label: string; url: string }[] = [
 ];
 // 商店签名 CRX 审核后才补传,版本可能落后于 Firefox 包,所以按行显示版本
 const signed: RowSpec[] = [
-  { path: "assets.chrome_crx", label: t.ext.signedCrx, detail: t.ext.signedCrxDetail, ext: ".zip → .crx", versionPath: "extension_crx_version" },
+  { path: "assets.chrome_crx", label: t.ext.signedCrx, detail: t.ext.signedCrxDetail, ext: ".crx", versionPath: "extension_crx_version" },
   { path: "assets.firefox_extension", label: t.ext.signedFirefox, detail: t.ext.signedFirefoxDetail, ext: ".xpi", versionPath: "extension_version" },
 ];
 const unpacked: RowSpec[] = [

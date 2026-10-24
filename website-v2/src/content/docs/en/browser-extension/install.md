@@ -25,11 +25,11 @@ Chrome (Manifest V3) and Firefox are supported directly. The desktop app also re
 
 ## Offline install: store-signed package (auto-updates)
 
-For when you can't open the store page itself. Every stable release gets a `FluxDown-<version>-chrome-crx.zip` once the Chrome Web Store has approved that version, so the newest package can lag the newest release by a few days. It holds the exact `.crx` the Chrome Web Store serves: same extension, same signature.
+For when you can't open the store page itself. Every stable release gets a `FluxDown-<version>-chrome.crx` once the Chrome Web Store has approved that version, so the newest package can lag the newest release by a few days. It is the exact `.crx` the Chrome Web Store serves: same extension, same signature.
 
 **Chrome (and Brave, Vivaldi, …):**
 
-1. Download `FluxDown-<version>-chrome-crx.zip` from the [download page](/download/#extension-signed) or a [GitHub Release](https://github.com/zerx-lab/fluxdown/releases) and unzip it to get `FluxDown-<version>.crx`. The `.crx` comes wrapped in a zip because Chrome refuses `.crx` files downloaded from any site other than the store.
+1. Download `FluxDown-<version>-chrome.crx` from the [download page](/download/#extension-signed) or a [GitHub Release](https://github.com/zerx-lab/fluxdown/releases). If Chrome says it can't add extensions from this site, right-click the download link and choose **Save link as** instead.
 2. Open `chrome://extensions` and turn on **Developer mode** (top-right toggle).
 3. Drag the `.crx` onto the page and confirm **Add extension**.
 4. You can turn Developer mode off again. Chrome treats the extension as a store install and **updates it automatically**, provided the browser can reach Google's update service.

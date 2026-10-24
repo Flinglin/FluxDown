@@ -23,7 +23,7 @@
  *     portable: { name, size, download_url },
  *     extension: { name, size, download_url },        // Chrome 解压包 zip（开发者模式加载，不自动更新）
  *     firefox_extension: { name, size, download_url }, // Firefox XPI
- *     chrome_crx: { name, size, download_url },       // 商店签名 CRX 外包 zip（.github/workflows/cws-crx.yml 补传）
+ *     chrome_crx: { name, size, download_url },       // 商店签名 CRX 原件（.github/workflows/cws-crx.yml 补传）
  *   },
  *   server: {
  *     version: "0.1.51",
@@ -197,10 +197,10 @@ export const GET: APIRoute = async ({ url, request, clientAddress }) => {
     // 商店签名 CRX 在审核通过后才由 cws-crx.yml 补传到同版本 release：取最近一个带它的
     // 稳定 release，不跟 extensionRelease 绑定（新版审核期间仍提供上一版，装好后由商店自动更新）。
     const crxRelease = published.find((r) =>
-      r.assets.some((a) => a.name.endsWith("-chrome-crx.zip")),
+      r.assets.some((a) => a.name.endsWith("-chrome.crx")),
     );
     const chromeCrxAsset = crxRelease?.assets.find((a) =>
-      a.name.endsWith("-chrome-crx.zip"),
+      a.name.endsWith("-chrome.crx"),
     );
     // macOS 资产
     const macosDmgArm64Asset = appAssets.find((a) =>
