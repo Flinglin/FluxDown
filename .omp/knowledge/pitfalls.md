@@ -85,6 +85,7 @@
 - **前台服务停止必须用 `stopSelfResult(lastStartId)`，并在每次启动请求重新计时空闲宽限**：用 `stopSelf()` 会拆掉在途、尚未来得及 `startForeground` 的启动请求，系统以 `ForegroundServiceDidNotStartInTimeException` 杀整个进程；外部唤起建任务后也不能被旧计时停掉 → `mobile/Android/app/src/main/java/com/fluxdown/app/service/DownloadService.kt::stopIfIdle`。
 - **FileProvider 要声明 `root-path` 覆盖 `/storage/`**：可移动存储卡上的文件（`/storage/6BF9-89B3/...`）否则生成不了 content URI，打开已下载文件会崩；文件不在声明根内时提示失败而不是抛异常 → `mobile/Android/app/src/main/res/xml/file_paths.xml`（`storage_volumes`）。
 - **叠层返回键的优先级：菜单 / 对话框在 Sheet 之上**：后注册的 Sheet 返回处理器会抢先，菜单打开时返回键应交给 `FluxOverlayHost` → `mobile/Android/fluxui/src/main/java/com/fluxdown/fluxui/overlay/FluxSheet.kt`（`canGoBack` 条件）。
+- **应用自更新不用 `PackageInstaller` 会话，交给「打开 APK」的默认安装程序，且只在界面可见时拉起**：会话的确认界面固定由系统安装器处理，无视用户设定的默认安装程序（小米机上总是小米安装器）；部分国行 MIUI 安装器对第三方会话直接回 `INSTALL_FAILED_ABORTED`（用户什么都没点，旧映射显示「已取消安装」）；从 `BroadcastReceiver` 拉确认界面在后台被系统静默拦截，状态永远停在「正在安装」。未持有 `UPDATE_PACKAGES_WITHOUT_USER_ACTION` 时会话本来也要确认。安装包经 FileProvider `app_update` 根（`../no_backup/updates/`，不可信应用不能硬链接）只读授权 → `mobile/Android/app/src/main/java/com/fluxdown/app/update/ApkInstaller.kt`、`UpdateEffects.kt`（交接 `LaunchedEffect`）、`res/xml/file_paths.xml`。
 
 ## iOS
 
