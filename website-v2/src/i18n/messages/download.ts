@@ -69,8 +69,6 @@ export const download = defineMessages({
       title: "Every build, every <em>platform</em>",
       lede: "The same client everywhere: installer or portable, x64 or ARM64. Pick the file that fits your machine.",
       windowsReq: "Windows 10 or later",
-      macHelp: "“App is damaged” on first launch?",
-      macHelpLink: "Fix Gatekeeper",
       scoopTitle: "Install with Scoop",
       scoopDesc:
         "FluxDown is in the official Scoop Extras bucket, which tracks every new release. Update anytime with scoop update fluxdown.",
@@ -157,8 +155,6 @@ export const download = defineMessages({
     },
     help: {
       eyebrow: "Help",
-      gatekeeper: "macOS Gatekeeper",
-      gatekeeperDesc: "Open an unsigned build on macOS.",
       signing: "Code signing",
       signingDesc: "Release signing policy, via SignPath.",
       changelog: "Changelog",
@@ -236,8 +232,6 @@ export const download = defineMessages({
       title: "每个平台,<em>每种</em>构建",
       lede: "各平台是同一个客户端:安装版或便携版,x64 或 ARM64,按你的机器挑选即可。",
       windowsReq: "需要 Windows 10 或更高版本",
-      macHelp: "首次打开提示「已损坏」?",
-      macHelpLink: "查看解决方法",
       scoopTitle: "使用 Scoop 安装",
       scoopDesc: "FluxDown 已收录进 Scoop 官方 Extras 源,自动跟随每次发布;随时用 scoop update fluxdown 更新。",
     },
@@ -321,8 +315,6 @@ export const download = defineMessages({
     },
     help: {
       eyebrow: "帮助",
-      gatekeeper: "macOS 安全提示",
-      gatekeeperDesc: "在 macOS 上打开未签名的构建。",
       signing: "代码签名",
       signingDesc: "发布文件的签名策略(SignPath)。",
       changelog: "更新日志",

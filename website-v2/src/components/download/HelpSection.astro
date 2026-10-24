@@ -12,7 +12,6 @@ interface Props {
 const { lang } = Astro.props;
 const t = download[lang];
 const help = [
-  { label: t.help.gatekeeper, desc: t.help.gatekeeperDesc, href: href("/macos-gatekeeper", lang), external: false },
   { label: t.help.signing, desc: t.help.signingDesc, href: href("/code-signing", lang), external: false },
   { label: t.help.changelog, desc: t.help.changelogDesc, href: href("/changelog", lang), external: false },
   { label: t.help.releases, desc: t.help.releasesDesc, href: `${GITHUB_URL}/releases`, external: true },
@@ -57,13 +56,10 @@ const help = [
   }
   @media (min-width: 900px) {
     .help {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
-    .help li:nth-child(even) {
+    .help li + li {
       border-left: 1px solid var(--line);
-    }
-    .help li:nth-child(n + 3) {
-      border-top: 1px solid var(--line);
     }
   }
   @media (max-width: 899px) {
