@@ -240,7 +240,12 @@ const PLUGIN_INVOKE_TIMEOUT_MS = 90_000;
  * 同插件的调用在其专用端口内排队，空闲 30 s 自动断开。
  */
 const invokePool: DedicatedPool = createDedicatedPool({
-  connect: () => browser.runtime.connectNative(NMH_NAME) as NmhPortLike,
+  connect: () => {
+    const port = browser.runtime.connectNative(NMH_NAME);
+    // 主机退出等被动断开的原因在 runtime.lastError；不读会被记为 Unchecked 错误（池只关心断开本身）。
+    port.onDisconnect.addListener(() => void browser.runtime.lastError);
+    return port as NmhPortLike;
+  },
 });
 
 export type InvokeReply = { ok: true; value: unknown } | { ok: false; message: string };
