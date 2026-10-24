@@ -441,7 +441,7 @@ final class NotificationService: NSObject {
 
         // 选择请求：App 在前台时壳层已自动弹出请求 Sheet，只在不活跃时通知。
         if !delta.newSelections.isEmpty, UIApplication.shared.applicationState != .active {
-            for request in state.selections where delta.newSelections.contains(request.requestId) {
+            for request in state.selections.presentable where delta.newSelections.contains(request.requestId) {
                 if let conflict = request.fileConflict {
                     post(NotificationSpec.fileConflict(requestId: request.requestId, taskId: request.taskId, fileName: conflict.fileName, hostID: hostID))
                 } else {

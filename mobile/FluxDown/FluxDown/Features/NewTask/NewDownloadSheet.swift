@@ -41,7 +41,7 @@ private struct NewDownloadContent: View {
     @State private var showDiscard = false
     @State private var showImporter = false
     @State private var importerKind: ImporterKind = .text
-    #if FULL_P2P
+    #if FULL_FLAVOR
     @State private var importingTorrent = false
     #endif
     @State private var dropTargeted = false
@@ -79,7 +79,9 @@ private struct NewDownloadContent: View {
         NavigationStack(path: $path) {
             ScrollViewReader { proxy in
                 Form {
+                    #if FULL_FLAVOR
                     if let probe = form.probe { probeSection(probe) }
+                    #endif
                     linksSection(entries, remote: target != nil)
                     if !entries.isEmpty { previewSection(entries) }
                     if !targets.isEmpty { targetSection(targets, selected: target) }
@@ -124,8 +126,10 @@ private struct NewDownloadContent: View {
                 switch route {
                 case .advanced:
                     AdvancedOptionsView(form: form)
+                #if FULL_FLAVOR
                 case let .manifest(source, base):
                     ManifestSelectView(source: source, base: base, close: close)
+                #endif
                 }
             }
         }
@@ -150,7 +154,7 @@ private struct NewDownloadContent: View {
         ) { result in
             switch importerKind {
             case .text: importFiles(result)
-            #if FULL_P2P
+            #if FULL_FLAVOR
             case .torrent: importTorrentFiles(result)
             #endif
             }
@@ -159,6 +163,7 @@ private struct NewDownloadContent: View {
         .presentationDragIndicator(.visible)
     }
 
+    #if FULL_FLAVOR
     // MARK: 清单探测（N5 · 解析中）
 
     private func probeSection(_ probe: ManifestProbe) -> some View {
@@ -186,6 +191,7 @@ private struct NewDownloadContent: View {
             .id(Self.probeId)
         }
     }
+    #endif
 
     // MARK: 链接
 
@@ -223,7 +229,7 @@ private struct NewDownloadContent: View {
                     .foregroundStyle(Color.fdStatusFailedText)
             }
             pasteButton
-            #if FULL_P2P
+            #if FULL_FLAVOR
             torrentButton(remote: remote)
             #endif
             importButton
@@ -262,7 +268,7 @@ private struct NewDownloadContent: View {
         .disabled(form.submitting)
     }
 
-    #if FULL_P2P
+    #if FULL_FLAVOR
     /// 种子文件只能在当前主机建任务，「下载到」选了其他设备时禁用（同 GPUI）。
     private func torrentButton(remote: Bool) -> some View {
         Button {
@@ -289,7 +295,7 @@ private struct NewDownloadContent: View {
     }
 
     private var importerContentTypes: [UTType] {
-        #if FULL_P2P
+        #if FULL_FLAVOR
         if importerKind == .torrent { return [TorrentImport.contentType] }
         #endif
         return [.plainText, .text, .data]
@@ -675,9 +681,9 @@ private struct NewDownloadContent: View {
             form.showEmptyError = true
             return
         }
-        #if !FULL_P2P
-        // 商店构建的本机引擎不含 P2P：提交前拦截，避免把链接送进引擎；远端主机照常提交。
-        if container.isLocalHost, form.entries.contains(where: { P2PLink.isP2P($0.url) }) {
+        #if !FULL_FLAVOR
+        // 商店构建不含 P2P：任何主机（本机 / 远端 / 下发到其它设备）都不提交 magnet / ed2k。
+        if form.entries.contains(where: { P2PLink.isP2P($0.url) }) {
             reject()
             container.toasts.show(text: L("webChangeUrlErrProtocolUnsupported"), tone: .warning)
             return
@@ -693,14 +699,18 @@ private struct NewDownloadContent: View {
         }
         let manualProxy = manualProxyUrl(state.config)
         let requests = form.buildRequests(startPaused: startPaused, queue: queueId, manualProxy: manualProxy)
+        #if FULL_FLAVOR
         // N5：单条 http(s) 链接先探测插件多文件清单；未命中 / 失败 / 超时都静默回退为普通建任务。
+        // store 构建不含插件，不探测。
         if requests.count == 1, let request = requests.first, shouldProbeManifest(request.url) {
             probeManifest(request, requests: requests, startPaused: startPaused, queueId: queueId, manualProxy: manualProxy)
             return
         }
+        #endif
         createTasks(requests, startPaused: startPaused)
     }
 
+    #if FULL_FLAVOR
     private func shouldProbeManifest(_ url: String) -> Bool {
         ManifestSelection.isPreviewable(url) && !TorrentFile.isTorrentFileName(URL(string: url)?.path ?? "")
     }
@@ -736,6 +746,7 @@ private struct NewDownloadContent: View {
             }
         }
     }
+    #endif
 
     private func createTasks(_ requests: [CreateTaskRequest], startPaused: Bool) {
         form.submitting = true
@@ -850,7 +861,7 @@ private struct NewDownloadContent: View {
         }
     }
 
-    #if FULL_P2P
+    #if FULL_FLAVOR
     private func importTorrentFiles(_ result: Result<[URL], Error>) {
         switch result {
         case let .failure(error):
@@ -898,7 +909,7 @@ private struct NewDownloadContent: View {
                 container.toasts.show(text: L("dropReadFailed", ["count": loaded.failed]), tone: .error)
             }
             let texts = loaded.files.filter { $0.kind == .text }.map(\.url)
-            #if FULL_P2P
+            #if FULL_FLAVOR
             let torrents = loaded.files.filter { $0.kind == .torrent }.map(\.url)
             if !torrents.isEmpty {
                 if form.target(in: dispatchTargets) != nil {
@@ -928,16 +939,27 @@ private struct NewDownloadContent: View {
     }
 }
 
+/// 队列显示名：主队列 / 稍后下载用本地化名，其余取队列自带名称（N1 与清单选择共用）。
+func newTaskQueueLabel(_ q: TaskQueue) -> String {
+    switch q.queueId {
+    case "", TaskQueue.main: L("mainQueue")
+    case TaskQueue.later: L("downloadLater")
+    default: q.name
+    }
+}
+
 nonisolated enum NewDownloadRoute: Hashable {
     case advanced
+    #if FULL_FLAVOR
     /// 插件清单选择（N5）：来源 + 组级基础选项。
     case manifest(ManifestSource, ManifestBaseOptions)
+    #endif
 }
 
 /// 文件选择器的用途：决定可选类型与结果去向。
 private nonisolated enum ImporterKind {
     case text
-    #if FULL_P2P
+    #if FULL_FLAVOR
     case torrent
     #endif
 }

@@ -214,6 +214,7 @@ final class NewDownloadForm {
         }
     }
 
+    #if FULL_FLAVOR
     /// 清单（任务组）的组级选项：沿用表单里的线程 / Cookie / UA / 代理 / 请求头 / TLS 设置。
     func manifestBase(queue: String, manualProxy: String) -> ManifestBaseOptions {
         let adv = advanced
@@ -229,6 +230,7 @@ final class NewDownloadForm {
             ignoreTls: adv.ignoreTls
         )
     }
+    #endif
 
     /// 放弃进行中的清单预解析（用户取消 / 关闭 Sheet）。
     func cancelProbe() {
