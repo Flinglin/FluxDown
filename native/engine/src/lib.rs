@@ -62,8 +62,13 @@ pub mod naming;
 /// 网络传输失败的类型化分类（换路 / 自动重试的唯一判据，平台与语言无关）。
 pub mod net_failure;
 pub(crate) mod output;
-/// 系统 PAC 脚本的代理端点提取（供 Auto 模式的系统代理候选使用）。
+/// 系统 PAC：脚本获取与缓存、按下载链接决策、失败代理记忆。
 pub(crate) mod pac;
+/// 系统 PAC 脚本的 `FindProxyForURL` JS 执行器（QuickJS，仅 `plugins` feature）。
+#[cfg(feature = "plugins")]
+pub(crate) mod pac_js;
+/// 任务起跑时按系统 PAC 修正出口（System / Auto 模式）。
+pub(crate) mod pac_route;
 /// 多路径分段调度的纯判据（稳态速率采样、竞争集、均衡拆分、完成时间抢占）。
 pub(crate) mod path_scheduler;
 /// 插件系统（可选、可失败的下载中间层）。仅 `plugins` feature 下编译。

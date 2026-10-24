@@ -484,46 +484,61 @@ pub fn detect_system_proxy() -> Result<Option<ProxyConfig>, DownloadError> {
     }))
 }
 
-/// `ProxyMode::Auto` 的系统代理候选端点（Auto 自己按 host 实测选路，只需要
-/// 「系统代理指向哪个端点」）。静态系统代理优先；否则系统配置了 PAC URL 时
-/// 取 PAC 脚本里出现的第一个代理端点（见 [`crate::pac`]，不逐 URL 执行
-/// `FindProxyForURL`）。WPAD 自动发现（无 URL）不在范围内。探测失败按无候选
-/// 处理并记日志。
+/// `ProxyMode::Auto` 的系统代理候选端点（Auto 自己按 host 实测选路，这里只
+/// 判定「有没有系统代理、指向哪个端点」）。静态系统代理优先；否则系统配置了
+/// PAC（含 WPAD 自动发现）时取已缓存 PAC 脚本里出现的第一个代理端点——只读
+/// 缓存、不在调用线程上做网络 IO（见 [`crate::pac`]），逐链接的 PAC 结论由
+/// 任务起跑时的 [`crate::pac_route`] 修正。探测失败按无候选处理并记日志。
 pub fn detect_auto_system_proxy() -> Option<ProxyConfig> {
     match detect_system_proxy() {
         Ok(Some(found)) => return Some(found),
         Ok(None) => {}
         Err(error) => log_info!("[auto-proxy] 系统代理检测失败: {error}"),
     }
-    let pac_url = detect_system_pac_url()?;
+    let pac_url = system_pac_url()?;
     crate::pac::resolve_pac_endpoint(&pac_url)
 }
 
-/// Windows PAC URL：`Internet Settings\AutoConfigURL`。
+/// 系统当前生效的 PAC 地址：显式 PAC URL 优先；系统开启了「自动发现代理」
+/// 且无显式 URL 时为 WPAD 地址 [`crate::pac::WPAD_URL`]；都没有 → `None`。
+/// 只读本地配置（macOS/Linux 带 30s 缓存），不做网络 IO。
 #[cfg(target_os = "windows")]
-fn detect_system_pac_url() -> Option<String> {
+pub(crate) fn system_pac_url() -> Option<String> {
     use winreg::RegKey;
     use winreg::enums::HKEY_CURRENT_USER;
 
     let inet = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
         .ok()?;
-    let url: String = inet.get_value("AutoConfigURL").ok()?;
-    let url = url.trim();
-    if url.is_empty() {
-        None
-    } else {
-        Some(url.to_string())
+    let explicit = inet
+        .get_value::<String, _>("AutoConfigURL")
+        .ok()
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty());
+    if explicit.is_some() {
+        return explicit;
     }
+    let auto_detect = inet
+        .open_subkey("Connections")
+        .and_then(|connections| connections.get_raw_value("DefaultConnectionSettings"))
+        .is_ok_and(|value| windows_auto_detect_enabled(&value.bytes));
+    auto_detect.then(|| crate::pac::WPAD_URL.to_string())
+}
+
+/// `Internet Settings\Connections\DefaultConnectionSettings` 第 8 字节是连接标志位，
+/// `0x08` = 「自动检测设置」（WinINet `PROXY_TYPE_AUTO_DETECT`）。
+#[allow(dead_code)] // 仅 Windows 探测路径实际调用；其余平台保留供跨平台单测覆盖解析逻辑
+fn windows_auto_detect_enabled(settings: &[u8]) -> bool {
+    settings.get(8).is_some_and(|flags| flags & 0x08 != 0)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn detect_system_pac_url() -> Option<String> {
+pub(crate) fn system_pac_url() -> Option<String> {
     system_proxy_snapshot().pac_url
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn detect_system_pac_url() -> Option<String> {
+pub(crate) fn system_pac_url() -> Option<String> {
     None
 }
 
@@ -751,18 +766,22 @@ fn parse_scutil_proxy_output(text: &str) -> Option<ProxyConfig> {
     None
 }
 
-/// 从 `scutil --proxy` 字典读取 PAC 脚本 URL：`ProxyAutoConfigEnable : 1`
-/// 且 `ProxyAutoConfigURLString` 非空。
+/// 从 `scutil --proxy` 字典读取生效的 PAC 地址：`ProxyAutoConfigEnable : 1` 且
+/// `ProxyAutoConfigURLString` 非空 → 该 URL；否则 `ProxyAutoDiscoveryEnable : 1`
+/// （「自动发现代理」）→ WPAD 地址。
 #[allow(dead_code)] // 仅 macOS 探测路径实际调用；其余平台保留供跨平台单测覆盖解析逻辑
 fn parse_scutil_pac_url(text: &str) -> Option<String> {
     let map = parse_scutil_dict(text);
-    if map.get("ProxyAutoConfigEnable").map(|v| v.trim()) != Some("1") {
-        return None;
+    let enabled = |key: &str| map.get(key).map(|v| v.trim()) == Some("1");
+    if enabled("ProxyAutoConfigEnable")
+        && let Some(url) = map
+            .get("ProxyAutoConfigURLString")
+            .map(|u| u.trim())
+            .filter(|u| !u.is_empty())
+    {
+        return Some(url.to_string());
     }
-    map.get("ProxyAutoConfigURLString")
-        .map(|u| u.trim())
-        .filter(|u| !u.is_empty())
-        .map(str::to_string)
+    enabled("ProxyAutoDiscoveryEnable").then(|| crate::pac::WPAD_URL.to_string())
 }
 
 /// 按 `https_proxy` > `http_proxy` > `all_proxy` 优先读取代理环境变量
@@ -857,15 +876,19 @@ fn detect_proxy_from_gsettings() -> Option<ProxyConfig> {
     None
 }
 
-/// GNOME `gsettings` PAC 配置：`mode` 为 `auto` 时取 `autoconfig-url`。
-/// `auto` 模式下 URL 为空即 WPAD 自动发现，不在支持范围内（无 URL 可取）。
+/// GNOME `gsettings` PAC 配置：`mode` 为 `auto` 时取 `autoconfig-url`；URL 为空
+/// 即 WPAD 自动发现，给出 WPAD 地址。
 #[allow(dead_code)] // 仅 Linux 探测路径实际调用；其余平台保留供跨平台单测覆盖解析逻辑
 fn detect_pac_url_from_gsettings() -> Option<String> {
     let mode = gsettings_get("org.gnome.system.proxy", "mode")?;
     if mode != "auto" {
         return None;
     }
-    gsettings_get("org.gnome.system.proxy", "autoconfig-url")
+    Some(
+        gsettings_get("org.gnome.system.proxy", "autoconfig-url")
+            .filter(|url| !url.trim().is_empty())
+            .unwrap_or_else(|| crate::pac::WPAD_URL.to_string()),
+    )
 }
 
 /// 剥掉 GNOME dconf 字符串取值外层的单引号（固定输出 `'value'`）；整数
@@ -2818,6 +2841,34 @@ mod tests {
         // GUI 关掉某个协议但残留旧字段时常见：*Enable=1 但 host 字段是空串。
         let text = "<dictionary> {\n  HTTPEnable : 1\n  HTTPPort : 1087\n  HTTPProxy : \n}\n";
         assert!(parse_scutil_proxy_output(text).is_none());
+    }
+
+    #[test]
+    fn auto_discovery_without_explicit_pac_maps_to_wpad() {
+        let discovery =
+            "<dictionary> {\n  ProxyAutoConfigEnable : 0\n  ProxyAutoDiscoveryEnable : 1\n}\n";
+        assert_eq!(
+            super::parse_scutil_pac_url(discovery).as_deref(),
+            Some(crate::pac::WPAD_URL)
+        );
+        // 显式 PAC URL 优先于自动发现。
+        let both = "<dictionary> {\n  ProxyAutoConfigEnable : 1\n  ProxyAutoConfigURLString : http://10.0.0.1/p.pac\n  ProxyAutoDiscoveryEnable : 1\n}\n";
+        assert_eq!(
+            super::parse_scutil_pac_url(both).as_deref(),
+            Some("http://10.0.0.1/p.pac")
+        );
+        let off = "<dictionary> {\n  ProxyAutoDiscoveryEnable : 0\n}\n";
+        assert!(super::parse_scutil_pac_url(off).is_none());
+
+        // Windows DefaultConnectionSettings：第 8 字节 0x08 = 自动检测。
+        let mut settings = vec![0x46, 0, 0, 0, 0x05, 0, 0, 0, 0x01];
+        assert!(!super::windows_auto_detect_enabled(&settings));
+        settings[8] = 0x09;
+        assert!(super::windows_auto_detect_enabled(&settings));
+        assert!(
+            !super::windows_auto_detect_enabled(&settings[..4]),
+            "截断数据不得误判"
+        );
     }
 
     #[test]

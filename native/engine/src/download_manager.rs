@@ -2138,6 +2138,8 @@ struct HttpFamilyRun {
     spawn_gen: u64,
     /// resolver 下发的请求补丁；每次运行起跑前应用。
     resolver_patch: Option<(String, crate::intercept::RequestPatch)>,
+    /// 系统 PAC 路由（见 [`crate::pac_route`]）；每次运行起跑前按链接修正出口。
+    pac_routing: crate::pac_route::PacRouting,
 }
 
 async fn send_task_done(done_tx: &mpsc::Sender<TaskDone>, done: TaskDone) -> bool {
@@ -2283,6 +2285,7 @@ async fn run_http_family_task(run: HttpFamilyRun) {
         done_tx,
         spawn_gen,
         resolver_patch,
+        pac_routing,
     } = run;
     let task_id = params.task_id.clone();
     let panic_db = params.db.clone();
@@ -2295,6 +2298,18 @@ async fn run_http_family_task(run: HttpFamilyRun) {
         send_task_done(&done_tx, TaskDone::finished(task_id, spawn_gen, None)).await;
         return;
     }
+    // 系统 PAC：在 resolver 补丁定下最终链接之后、任何网络请求之前修正出口。
+    // 被取消时直接放行，由下载器在自己的取消检查点走正常终态。
+    let pac_proxy = if use_ed2k {
+        None
+    } else {
+        let cancel = params.cancel_token.clone();
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => None,
+            used = crate::pac_route::apply(&mut params, pac_routing) => used,
+        }
+    };
     if let Some(ctx) = prelude.as_mut() {
         ctx.support = ask_support(
             &params.url,
@@ -2419,6 +2434,9 @@ async fn run_http_family_task(run: HttpFamilyRun) {
             if let Err(panic_info) = result {
                 let msg = panic_message(&panic_info);
                 handle_task_panic(&task_id, msg, &panic_db, &panic_progress_tx).await;
+            }
+            if let Some(used) = &pac_proxy {
+                crate::pac_route::report_outcome(&panic_db, &task_id, used).await;
             }
             reserved_temp_path
         }
@@ -9122,6 +9140,20 @@ impl DownloadManager {
         }
     }
 
+    /// 本任务的系统 PAC 路由：任务级代理优先（不参与）；全局 System / Auto 时
+    /// 由 spawned task 起跑前按链接修正出口（[`crate::pac_route`]）。
+    fn pac_routing(&self, task_proxy_url: &str) -> crate::pac_route::PacRouting {
+        use crate::pac_route::PacRouting;
+        if !task_proxy_url.is_empty() {
+            return PacRouting::Off;
+        }
+        match self.proxy_config.mode {
+            ProxyMode::System => PacRouting::System,
+            ProxyMode::Auto => PacRouting::Auto,
+            ProxyMode::None | ProxyMode::Manual => PacRouting::Off,
+        }
+    }
+
     /// 折算多网卡聚合的任务级输入：全局开关关闭 → `None`（多段路径零行为
     /// 变化）。任务走代理（任务级/全局级，含 System 解析结果）或持有 Auto
     /// 多路径上下文时出口是代理，标记 `blocked_by_proxy`，coordinator 只上报
@@ -10088,6 +10120,7 @@ impl DownloadManager {
                     done_tx,
                     spawn_gen,
                     resolver_patch,
+                    pac_routing: self.pac_routing(&proxy_url),
                 })
                 .instrument(task_span),
             )
@@ -11651,6 +11684,7 @@ impl DownloadManager {
                     done_tx,
                     spawn_gen,
                     resolver_patch,
+                    pac_routing: self.pac_routing(&task.proxy_url),
                 })
                 .instrument(task_span),
             )
