@@ -570,6 +570,7 @@ const handleDeterminingFilename: DeterminingFilenameListener = (
       (id) => browser.downloads.cancel(id),
       (query) => browser.downloads.erase(query),
       resolveFilename,
+      async (id) => (await browser.downloads.search({ id }))[0]?.state,
     );
   const collectItemInfo = (): {
     itemInfo: DownloadItemInfo;
