@@ -146,6 +146,10 @@ private struct NewDownloadContent: View {
             }
         }
         .fluxAnimation(.snappy, value: dropTargeted)
+        // 预测输入（第一条链接的文件名 / 链接 / 重命名）变化，及打开表单时：重算分类目录并按「自动」规则跟随。
+        .onChange(of: form.categoryPredictionKey, initial: true) {
+            form.followCategory(session: container.session)
+        }
         .interactiveDismissDisabled(form.isDirty || form.submitting)
         .fileImporter(
             isPresented: $showImporter,
@@ -393,7 +397,9 @@ private struct NewDownloadContent: View {
     // MARK: 目录 / 文件名
 
     private func destinationSection(_ entries: [UrlEntry]) -> some View {
-        Section {
+        let options = categoryOptions
+        return Section {
+            if !options.isEmpty { categoryPicker(options) }
             if container.isLocalHost {
                 LabeledContent(L("saveDir")) {
                     Text(form.saveDir.isEmpty ? LocalPaths.documents.path : form.saveDir)
@@ -416,6 +422,56 @@ private struct NewDownloadContent: View {
                 }
             }
             renameField(entries)
+        } footer: {
+            if !options.isEmpty, let hint = categoryHint { Text(hint) }
+        }
+    }
+
+    // MARK: 分类
+
+    /// 能产生分类路由的分类（可见、非「全部」、目录非空）；为空 = 不显示选择器、行为与无分类时一致。
+    private var categoryOptions: [CustomCategoryDto] {
+        SaveDirCategoryState.options(CustomCategoryDto.fromPreference(state.preferences[CustomCategoryDto.preferenceKey]))
+    }
+
+    /// 「自动」「不分类」，分隔后是各分类（分类图标同设置页）。「自动」命中时标题带上命中分类名。
+    private func categoryPicker(_ options: [CustomCategoryDto]) -> some View {
+        let matched = SaveDirCategoryState.matched(options, predicted: form.predictedCategoryDir)
+        let autoTitle = matched.map { L("saveDirCategoryAutoMatched", ["name": GeneralCategoryText.displayName($0)]) }
+            ?? L("saveDirCategoryAuto")
+        return Picker(L("saveDirCategory"), selection: categoryBinding(options)) {
+            Label(autoTitle, systemImage: "sparkles").tag(SaveDirCategoryMode.auto)
+            Label(L("saveDirCategoryNone"), systemImage: FluxSymbol.folder).tag(SaveDirCategoryMode.noCategory)
+            Section {
+                ForEach(options) { entry in
+                    Label(GeneralCategoryText.displayName(entry), systemImage: GeneralCategoryIcon.symbol(entry.icon))
+                        .tag(SaveDirCategoryMode.category(entry.id))
+                }
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(form.submitting)
+    }
+
+    /// 所选分类已从列表消失（被隐藏 / 删除 / 清空目录）时读作「自动」，避免选择器空白。
+    private func categoryBinding(_ options: [CustomCategoryDto]) -> Binding<SaveDirCategoryMode> {
+        Binding(
+            get: {
+                if case let .category(id) = form.categoryState.mode, !options.contains(where: { $0.id == id }) {
+                    return .auto
+                }
+                return form.categoryState.mode
+            },
+            set: { form.selectCategory($0, options: options, session: container.session) }
+        )
+    }
+
+    /// 当前模式的一句话说明（固定到某分类时目录已在下方「保存目录」行显示，无需再说明）。
+    private var categoryHint: String? {
+        switch form.categoryState.mode {
+        case .auto: L("saveDirCategoryAutoDesc")
+        case .noCategory: L("saveDirCategoryNoneDesc")
+        case .category: nil
         }
     }
 

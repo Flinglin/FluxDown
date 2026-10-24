@@ -679,6 +679,13 @@ pub(crate) struct NewDownloadStrings {
     pub(crate) save_dir: SharedString,
     pub(crate) save_dir_placeholder: SharedString,
     pub(crate) browse: SharedString,
+    pub(crate) category_auto: SharedString,
+    category_auto_matched: SharedString,
+    pub(crate) category_auto_desc: SharedString,
+    pub(crate) category_none: SharedString,
+    pub(crate) category_none_desc: SharedString,
+    /// 内置分类（`builtin_type` → 本地化显示名）。
+    category_builtin_names: Vec<(&'static str, SharedString)>,
     pub(crate) threads: SharedString,
     pub(crate) threads_auto: SharedString,
     pub(crate) threads_custom: SharedString,
@@ -774,6 +781,23 @@ impl NewDownloadStrings {
             save_dir: shared(translator.text("saveDir")),
             save_dir_placeholder: shared(translator.text("selectSaveDir")),
             browse: shared(translator.text("browse")),
+            category_auto: shared(translator.text("saveDirCategoryAuto")),
+            category_auto_matched: shared(translator.text("saveDirCategoryAutoMatched")),
+            category_auto_desc: shared(translator.text("saveDirCategoryAutoDesc")),
+            category_none: shared(translator.text("saveDirCategoryNone")),
+            category_none_desc: shared(translator.text("saveDirCategoryNoneDesc")),
+            category_builtin_names: [
+                ("video", "categoryVideo"),
+                ("audio", "categoryAudio"),
+                ("document", "categoryDocument"),
+                ("image", "categoryImage"),
+                ("program", "categoryProgram"),
+                ("archive", "categoryArchive"),
+                ("other", "categoryOther"),
+            ]
+            .into_iter()
+            .map(|(kind, key)| (kind, shared(translator.text(key))))
+            .collect(),
             threads: shared(translator.text("threads")),
             threads_auto: shared(translator.text("auto")),
             threads_custom: shared(translator.text("customThreads")),
@@ -859,6 +883,30 @@ impl NewDownloadStrings {
     /// `{count} 个链接`。
     pub(crate) fn format_url_count(&self, count: usize) -> SharedString {
         SharedString::from(self.url_count.replace("{count}", &count.to_string()))
+    }
+
+    /// 分类显示名：内置项走 i18n，自定义项用 `name`。
+    pub(crate) fn category_name(
+        &self,
+        category: &crate::model::save_dir_category::NewDownloadCategory,
+    ) -> SharedString {
+        category
+            .builtin_type
+            .as_deref()
+            .and_then(|kind| {
+                self.category_builtin_names
+                    .iter()
+                    .find(|(builtin, _)| *builtin == kind)
+            })
+            .map_or_else(
+                || SharedString::from(category.name.clone()),
+                |(_, label)| label.clone(),
+            )
+    }
+
+    /// 自动模式命中分类时的触发器文案：`自动 · {name}`。
+    pub(crate) fn format_category_auto_matched(&self, name: &str) -> SharedString {
+        SharedString::from(self.category_auto_matched.replace("{name}", name))
     }
 
     /// `已识别：{文件名 · 大小}`；大小未知（0）时显示「大小未知」。名称为空时只显示大小。
