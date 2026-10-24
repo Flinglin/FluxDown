@@ -12,6 +12,7 @@ export interface RowSpec {
   label: string;
   detail?: string;
   ext: string;
+  versionPath?: string;
 }
 
 interface Props {
@@ -43,6 +44,7 @@ const t = download[lang];
     </div>
     <span class="chip group-yours" data-yours hidden><span class="live-dot"></span>{t.state.yours}</span>
   </div>
+  <slot name="notice" />
   {rows.length > 0 && (
     <Fragment>
       <div class="group-rows">
