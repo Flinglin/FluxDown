@@ -14,6 +14,7 @@ import type { CandidateRow } from "@/background/protocol";
 import type { PageConfig } from "@/page/bridge";
 import { isMediaTag, minTargetSize, type MediaTracker, type TrackedMedia } from "@/page/media-tracker";
 import { loadSiteProfiles, profileFor, saveSiteProfile } from "@/utils/site-profiles";
+import { contentCss } from "@/ui/content-css";
 import { Icon } from "@/ui/components/Icon";
 import { ToastHost, showToast } from "@/ui/components/Toast";
 import { useT } from "@/ui/i18n";
@@ -488,6 +489,7 @@ export function createFloatButton(deps: FloatButtonDeps): FloatButtonController 
       await initI18n();
       const created = await createShadowRootUi<HTMLElement>(ctx, {
         name: "fluxdown-float",
+        css: contentCss(),
         position: "inline",
         anchor: () => hostAnchor(),
         append: "last",

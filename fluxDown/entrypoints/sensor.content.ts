@@ -89,8 +89,8 @@ export default defineContentScript({
   matches: ["<all_urls>"],
   runAt: "document_start",
   allFrames: true,
-  // 浮钮样式只进 Shadow DOM（createShadowRootUi），不得注入页面
-  cssInjectionMode: "ui",
+  // 浮钮 / 下载提示样式构建期内联进脚本（ui/content-css.ts），只进 Shadow DOM，不得注入页面
+  cssInjectionMode: "manual",
   matchAboutBlank: true,
 
   async main(ctx) {

@@ -5,6 +5,7 @@
 import { render } from "preact";
 import { defineContentScript } from "wxt/utils/define-content-script";
 import { createShadowRootUi } from "wxt/utils/content-script-ui/shadow-root";
+import { contentCss } from "@/ui/content-css";
 import { installErrorCapture } from "@/utils/error-log";
 import { initI18n } from "@/utils/i18n";
 import { PanelApp } from "./PanelApp";
@@ -15,7 +16,8 @@ import "./panel.css";
 export default defineContentScript({
   matches: ["<all_urls>"],
   runAt: "document_idle",
-  cssInjectionMode: "ui",
+  // 样式构建期内联进脚本（ui/content-css.ts），只进 Shadow DOM
+  cssInjectionMode: "manual",
 
   async main(ctx) {
     // 只在顶层帧加载：iframe 内的媒体由各帧 sensor 的浮钮处理
@@ -25,6 +27,7 @@ export default defineContentScript({
     installErrorCapture("content");
     const ui = await createShadowRootUi(ctx, {
       name: "fluxdown-panel",
+      css: contentCss(),
       position: "overlay",
       anchor: "body",
       onMount(container, _shadow, shadowHost) {

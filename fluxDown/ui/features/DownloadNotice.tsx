@@ -11,6 +11,7 @@ import { signal } from "@preact/signals";
 import type { ContentScriptContext } from "wxt/utils/content-script-context";
 import { createShadowRootUi, type ShadowRootContentScriptUi } from "wxt/utils/content-script-ui/shadow-root";
 import type { BrowserDownloadNotice } from "@/background/protocol";
+import { contentCss } from "@/ui/content-css";
 import { Icon } from "@/ui/components/Icon";
 import { useT } from "@/ui/i18n";
 import { useThemeAttr } from "@/ui/theme";
@@ -119,6 +120,7 @@ export function createDownloadNotice(ctx: ContentScriptContext): DownloadNoticeC
       await initI18n();
       const created = await createShadowRootUi<HTMLElement>(ctx, {
         name: "fluxdown-download-notice",
+        css: contentCss(),
         position: "inline",
         anchor: () => document.documentElement,
         append: "last",
