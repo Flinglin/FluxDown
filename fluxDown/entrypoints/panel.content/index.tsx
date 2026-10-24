@@ -5,6 +5,7 @@
 import { render } from "preact";
 import { defineContentScript } from "wxt/utils/define-content-script";
 import { createShadowRootUi } from "wxt/utils/content-script-ui/shadow-root";
+import { installErrorCapture } from "@/utils/error-log";
 import { initI18n } from "@/utils/i18n";
 import { PanelApp } from "./PanelApp";
 import "@/ui/theme/tokens.css";
@@ -21,6 +22,7 @@ export default defineContentScript({
     if (window.self !== window.top) return;
     await initI18n();
 
+    installErrorCapture("content");
     const ui = await createShadowRootUi(ctx, {
       name: "fluxdown-panel",
       position: "overlay",

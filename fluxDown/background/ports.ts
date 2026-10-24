@@ -16,6 +16,7 @@ import { updateBadgeForTab } from "./toolbar";
 import { TAB_VIEW_PORT } from "./protocol";
 import type { TabViewPush, TabViewSubscribe } from "./protocol";
 import { badgeCount } from "./view-model";
+import { logWarn } from "@/utils/error-log";
 
 const COALESCE_MS = 150;
 
@@ -47,7 +48,7 @@ function schedule(tabId: number): void {
     tabId,
     setTimeout(() => {
       timers.delete(tabId);
-      publish(tabId).catch((e) => console.warn("[FluxDown] tab view publish failed:", e));
+      publish(tabId).catch((e) => logWarn("[FluxDown] tab view publish failed:", e));
     }, COALESCE_MS),
   );
 }

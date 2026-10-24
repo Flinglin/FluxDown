@@ -23,6 +23,7 @@ import { buildTabView } from "./tab-view";
 import { allRows, rowsForElement } from "./view-model";
 
 type MenuBase =
+import { logWarn } from "@/utils/error-log";
   | "fluxdown-send-link"
   | "fluxdown-send-image"
   | "fluxdown-send-video"
@@ -77,7 +78,7 @@ export function createContextMenus(): Promise<void> {
 /** 重建的实际实现；内部吞掉所有错误，保证 menuChain 不会 reject。 */
 async function rebuildContextMenus(): Promise<void> {
   if (!browser.contextMenus) {
-    console.warn("[FluxDown] contextMenus API not available");
+    logWarn("[FluxDown] contextMenus API not available");
     return;
   }
   try {
@@ -218,7 +219,7 @@ async function handleMenuClick(info: Browser.contextMenus.OnClickData, tab?: Bro
 /** 同步注册菜单点击监听（MV3 要求监听器在 SW 首次执行时注册）。 */
 export function installMenus(): void {
   browser.contextMenus?.onClicked?.addListener((info, tab) => {
-    handleMenuClick(info, tab).catch((e) => console.warn("[FluxDown] context menu failed:", e));
+    handleMenuClick(info, tab).catch((e) => logWarn("[FluxDown] context menu failed:", e));
   });
   // contextMenuEnabled / remoteVerified 变化后重建。
   onSettingsChanged(() => {

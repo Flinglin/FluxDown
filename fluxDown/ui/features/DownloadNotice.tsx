@@ -20,6 +20,7 @@ import "@/ui/theme/tokens.css";
 import "@/ui/theme/base.css";
 import "./download-notice.css";
 
+import { logWarn } from "@/utils/error-log";
 /** 完成卡片停留时长；进行中的卡片一直保留到完成 / 失败 / 手动关闭。 */
 const DONE_LINGER_MS = 8000;
 const MAX_CARDS = 4;
@@ -55,7 +56,7 @@ function apply(notice: BrowserDownloadNotice): void {
 function showInFolder(downloadId: number): void {
   sendAction({ action: "showBrowserDownload", downloadId })
     .then(() => dismiss(downloadId))
-    .catch((e: unknown) => console.warn("[FluxDown] showBrowserDownload failed:", e));
+    .catch((e: unknown) => logWarn("[FluxDown] showBrowserDownload failed:", e));
 }
 
 function NoticeRoot(props: { host: HTMLElement }): JSX.Element | null {
@@ -133,7 +134,7 @@ export function createDownloadNotice(ctx: ContentScriptContext): DownloadNoticeC
       ui = created;
       return true;
     } catch (e) {
-      console.warn("[FluxDown] download notice mount failed:", e);
+      logWarn("[FluxDown] download notice mount failed:", e);
       return false;
     }
   }

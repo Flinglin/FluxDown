@@ -82,6 +82,7 @@
 
 - **共享 NMH 端口是一问一答串行的，队首卡死必须断开换新端口，但「排在合法慢请求后面而超时」不得回收**：中继与 agent 连接串行，队首卡住后排队请求全部超时，原先超时不换端口会让任务面板与能力探测一直「未连接」直到 SW 重启；旧端口迟到的断开事件也不得波及新端口 → `fluxDown/utils/nmh-shared.ts::createSharedChannel`、回归 `fluxDown/utils/nmh-shared.test.ts`（三条用例：队首卡死回收 / 慢请求之后不回收 / 迟到断开不波及新端口）。
 - **扩展必须跳过自己配置的远端 FluxDown 服务发起的「下载到本地」请求**：否则扩展拦截该下载、再回投同一远端，形成持续创建任务的死循环；判定依据含 referrer / URL 的 origin 与 server 文件导出端点路径（覆盖反代 / 不同主机名访问 Web UI） → `fluxDown/utils/settings.ts::isFluxDownServerDownload`、测试 `fluxDown/utils/settings.test.ts`。
+- **扩展代码不用 `console.error` / `console.warn`，一律 `logError` / `logWarn`**（`fluxDown/utils/error-log.ts`）：前者会进浏览器扩展管理页的「错误」列表；后者记入扩展错误日志（background 唯一写入 `storage.local`，侧边栏「诊断 → 扩展错误」展示，连接诊断导出附带并脱敏），控制台只留 `console.info`。每个入口（background 第一步、popup / options / sidepanel、sensor / 面板）调 `installErrorCapture`，接管扩展脚本自己的未捕获异常与未处理 rejection（按扩展 origin 过滤，页面自己的错误不碰）。MAIN world（`page/`、`rules/`）不能引入它。
 
 ## Android
 

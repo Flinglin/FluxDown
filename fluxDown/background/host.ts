@@ -18,6 +18,7 @@ import type { CaptureState } from "./capture-logic";
 import { parsePageScriptSource, parsePageScriptsIndex } from "./page-scripts/model";
 import type { PageScriptSource, PageScriptsIndex } from "./page-scripts/model";
 import type { HostCapabilities, HostSyncStatus, ResolverInfo } from "./protocol";
+import { logWarn } from "@/utils/error-log";
 
 const CAPABILITIES_TTL_MS = 60_000;
 /** 未连接时的结果只缓存很短时间，App 一启动就能被感知。 */
@@ -154,7 +155,7 @@ export function getCapabilities(force = false): Promise<HostCapabilities> {
         try {
           listener(value);
         } catch (e) {
-          console.warn("[FluxDown] capabilities listener failed:", e);
+          logWarn("[FluxDown] capabilities listener failed:", e);
         }
       }
       return value;
