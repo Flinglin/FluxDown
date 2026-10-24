@@ -527,12 +527,24 @@ pub(crate) fn apply_extra_headers(
     req: reqwest::RequestBuilder,
     extra_headers: &std::collections::HashMap<String, String>,
 ) -> reqwest::RequestBuilder {
+    apply_extra_headers_where(req, extra_headers, |_| true)
+}
+
+/// [`apply_extra_headers`]，但只应用 `keep(name)` 为真的头（`name` 为原始大小写）。
+pub(crate) fn apply_extra_headers_where(
+    req: reqwest::RequestBuilder,
+    extra_headers: &std::collections::HashMap<String, String>,
+    keep: impl Fn(&str) -> bool,
+) -> reqwest::RequestBuilder {
     if extra_headers.is_empty() {
         return req;
     }
 
     let mut map = reqwest::header::HeaderMap::with_capacity(extra_headers.len());
     for (name, value) in extra_headers {
+        if !keep(name) {
+            continue;
+        }
         if let (Ok(header_name), Ok(header_value)) = (
             reqwest::header::HeaderName::from_bytes(name.as_bytes()),
             reqwest::header::HeaderValue::from_str(value),
@@ -847,10 +859,11 @@ pub fn is_valid_referrer(referrer: &str) -> bool {
         .any(|scheme| r.len() > scheme.len() && r[..scheme.len()].eq_ignore_ascii_case(scheme))
 }
 
-/// 统一请求构建入口——所有发出 HTTP 请求的地方都应通过此函数。
+/// 统一请求构建入口——下载路径上所有发出 HTTP 请求的地方都应通过此函数。
 ///
-/// 此函数替代了散落在 downloader / segment_coordinator / hls / dash 等
-/// 模块中的 `client.get(url) + apply_extra_headers(...)` 模式。
+/// 返回的 [`crate::http_request::HttpRequest`] 在 `send` 时由引擎逐跳跟随重定向，
+/// 每一跳按凭据作用域（[`crate::credential_scope`]）重建 Cookie / Authorization /
+/// Referer 与按站点请求头；凭据锚点默认是 `url` 本身。
 ///
 /// 参数 `method` 允许覆盖 `spec.method`——主要用于 probe 阶段（HEAD probe
 /// 总是发送 HEAD，与 spec 自身的 method 无关）。下载阶段通常传 `spec.method.clone()`。
@@ -858,53 +871,17 @@ pub fn is_valid_referrer(referrer: &str) -> bool {
 /// **请求体语义**：
 ///   - GET / HEAD：即使 `spec.body` 非空也不会被附加（HTTP 标准上 GET/HEAD 不应携带 body）
 ///   - 其他 method：按 `RequestBodyDecoded` 类型重建请求体
-pub fn build_request(
+///
+/// Referer 只接受真实的 http(s) URL：浏览器扩展捕获的 referrer 可能是 fetch 规范的
+/// 占位符 "about:client"（JS 触发的下载没有真实来源页），部分 CDN（如 hembed）对
+/// 非法 Referer 值直接回 403 —— 这类伪值等同于无。
+pub(crate) fn build_request<'s>(
     client: &Client,
     url: &str,
     method: reqwest::Method,
-    spec: &RequestSpec,
-) -> reqwest::RequestBuilder {
-    let attaches_body = method != reqwest::Method::GET && method != reqwest::Method::HEAD;
-    let mut req = client.request(method, url);
-
-    if !spec.cookies.is_empty() {
-        req = req.header("Cookie", &spec.cookies);
-    }
-    // Referer 只接受真实的 http(s) URL。浏览器扩展捕获的 referrer 可能是
-    // fetch 规范的占位符 "about:client"（JS 触发的下载没有真实来源页），
-    // 部分 CDN（如 hembed）对非法 Referer 值直接回 403 —— 这类伪值等同于无。
-    if is_valid_referrer(&spec.referrer) {
-        req = req.header(reqwest::header::REFERER, &spec.referrer);
-    }
-    req = apply_extra_headers(req, &spec.extra_headers);
-    req = apply_origin_headers(req, url, &spec.origin_headers);
-
-    if attaches_body && let Some(body) = &spec.body {
-        match body {
-            RequestBodyDecoded::Form(pairs) => {
-                req = req.form(pairs);
-            }
-            RequestBodyDecoded::Urlencoded(raw) => {
-                req = req
-                    .header(
-                        reqwest::header::CONTENT_TYPE,
-                        "application/x-www-form-urlencoded",
-                    )
-                    .body(raw.clone());
-            }
-            RequestBodyDecoded::Raw {
-                bytes,
-                content_type,
-            } => {
-                if let Some(ct) = content_type {
-                    req = req.header(reqwest::header::CONTENT_TYPE, ct);
-                }
-                req = req.body(bytes.clone());
-            }
-        }
-    }
-
-    req
+    spec: &'s RequestSpec,
+) -> crate::http_request::HttpRequest<'s> {
+    crate::http_request::HttpRequest::new(client, url, method, spec)
 }
 
 /// Content-Encoding types that the server may apply to response bodies.
@@ -1279,7 +1256,12 @@ fn build_client_inner(
     ignore_tls_errors: bool,
     route: ClientRoute<'_>,
 ) -> Result<Client, DownloadError> {
-    let mut builder = build_client_builder(proxy_config, user_agent, ignore_tls_errors)?;
+    // 下载 client 关闭 reqwest 自动跟随、挂共享 cookie jar：重定向由
+    // `http_request::HttpRequest::send` 逐跳按凭据作用域重建请求头。
+    let mut builder = crate::http_request::configure_download_client(
+        build_client_builder(proxy_config, user_agent, ignore_tls_errors)?,
+        ignore_tls_errors,
+    );
 
     // --- DNS 钉定（多 CDN 节点池）/ 出口绑定（多网卡聚合）---
     match route {
@@ -1332,7 +1314,8 @@ pub(crate) fn build_client_builder(
         // 确保 NAT/防火墙不会因空闲超时而断开长时间下载的连接。
         // reqwest 底层设置 TCP_KEEPIDLE=60s（首次探测前等待时间）。
         .tcp_keepalive(Duration::from_secs(60))
-        // Redirects — follow up to 30 hops like Chrome
+        // Redirects — 宿主自身出口（egress）沿用 reqwest 跟随 30 跳；下载 client 在
+        // `build_client_inner` 改为引擎逐跳跟随（见 `http_request`）。
         .redirect(reqwest::redirect::Policy::limited(30))
         // Timeouts — 15 s is sufficient for initial TCP+TLS handshake;
         // the stall detector (CHUNK_STALL_TIMEOUT) handles mid-transfer
@@ -1352,8 +1335,8 @@ pub(crate) fn build_client_builder(
         // the extra connections shortly after the download finishes.
         .pool_idle_timeout(Duration::from_secs(90))
         .pool_max_idle_per_host(64)
-        // Cookies — needed for session-based downloads (Google Drive, etc.).
-        // reqwest follows RFC 6265: cookies are scoped to their domain.
+        // Cookies — 服务器下发的会话 Cookie（Set-Cookie）在后续请求自动带上；
+        // 下载 client 换成全部下载共享的 jar（见 `http_request`）。
         .cookie_store(true)
         // Do NOT enable auto-decompression (.gzip/.brotli/.deflate).
         // A download manager must receive raw bytes so that:
@@ -2290,6 +2273,15 @@ fn network_desc(e: &reqwest::Error) -> String {
     format!("network-error: {e}{}", format_error_chain(e.source()))
 }
 
+/// [`crate::http_request::HttpRequest::send`] 错误的描述：传输错误同 [`network_desc`]，
+/// 重定向错误（跳数超限 / 非 http(s) 目标）原样。
+fn send_error_desc(e: &DownloadError) -> String {
+    match e {
+        DownloadError::Request(e) => network_desc(e),
+        other => other.to_string(),
+    }
+}
+
 /// `final_attempt`：本轮是否为重试循环的最后一轮——只在最后一轮才把「两路探测都
 /// 断在传输层」交给无 Range 的 plain GET 兜底（见下方 `(None, None)` 分支）。
 async fn resolve_file_info_once(
@@ -2348,9 +2340,8 @@ async fn resolve_file_info_once(
     let transport_only_failure = matches!(head_result, Some(Err(_))) && get_result.is_err();
     // 两路都断在传输层时的类型化分类（GET 优先：Range 0-0 与数据连接同形）。
     let transport_class = match (&head_result, &get_result) {
-        (Some(Err(head)), Err(get)) => {
-            crate::net_failure::classify(get).or_else(|| crate::net_failure::classify(head))
-        }
+        (Some(Err(head)), Err(get)) => crate::net_failure::classify_download_error(get)
+            .or_else(|| crate::net_failure::classify_download_error(head)),
         _ => None,
     };
 
@@ -2381,7 +2372,7 @@ async fn resolve_file_info_once(
             None
         }
         Some(Err(e)) => {
-            head_status_desc = network_desc(&e);
+            head_status_desc = send_error_desc(&e);
             log_info!(
                 "[resolve] HEAD network error: {}{}, cookies_len={}",
                 e,
@@ -2417,7 +2408,7 @@ async fn resolve_file_info_once(
             None
         }
         Err(e) => {
-            get_status_desc = network_desc(&e);
+            get_status_desc = send_error_desc(&e);
             log_info!(
                 "[resolve] GET network error: {}{}, cookies_len={}",
                 e,
@@ -2713,14 +2704,14 @@ async fn resolve_file_info_plain_get_fallback(
             )));
         }
         Err(e) => {
-            let plain_status_desc = network_desc(&e);
+            let plain_status_desc = send_error_desc(&e);
             log_info!(
                 "[resolve] plain GET fallback network error: {}{}",
                 e,
                 format_error_chain(e.source())
             );
-            let transport =
-                prior_transport.and(crate::net_failure::classify(&e).or(prior_transport));
+            let transport = prior_transport
+                .and(crate::net_failure::classify_download_error(&e).or(prior_transport));
             return Err(DownloadError::Other(crate::net_failure::append_tag(
                 format_probe_failure(head_status_desc, get_status_desc, &plain_status_desc),
                 transport,
@@ -2833,8 +2824,8 @@ async fn resolve_file_info_held_get_once(
                 format_error_chain(e.source())
             );
             return Err(DownloadError::Other(crate::net_failure::append_tag(
-                format!("probes failed: plain GET={}", network_desc(&e)),
-                crate::net_failure::classify(&e),
+                format!("probes failed: plain GET={}", send_error_desc(&e)),
+                crate::net_failure::classify_download_error(&e),
             )));
         }
         Ok(Ok(resp)) => resp,
@@ -5483,7 +5474,7 @@ async fn resend_after_refresh(
     spec: &DownloadSpec,
     used: &mut std::sync::Arc<RequestSpec>,
     resp: reqwest::Response,
-    build: &impl Fn(&RequestSpec) -> reqwest::RequestBuilder,
+    build: &impl Fn(&RequestSpec) -> crate::http_request::HttpRequest<'_>,
     cancel_token: &CancellationToken,
 ) -> Result<reqwest::Response, DownloadError> {
     if resp.status().is_success() {
@@ -5504,10 +5495,18 @@ async fn resend_after_refresh(
     }
 }
 
+/// 「按请求身份构造请求」闭包的签名提示：返回值借用的是参数 `&RequestSpec`。
+fn identity_request<F>(build: F) -> F
+where
+    F: Fn(&RequestSpec) -> crate::http_request::HttpRequest<'_>,
+{
+    build
+}
+
 /// 发送请求并与取消令牌、响应头超时竞速。服务器接受连接却迟迟不回头时，
 /// 暂停/删除必须立即生效，超时则按停滞错误交给自动重试。
 async fn send_cancellable(
-    req: reqwest::RequestBuilder,
+    req: crate::http_request::HttpRequest<'_>,
     cancel_token: &CancellationToken,
 ) -> Result<reqwest::Response, DownloadError> {
     tokio::select! {
@@ -5635,7 +5634,7 @@ async fn download_single_once(
     } else {
         format!("bytes={existing_len}-")
     };
-    let build = |used: &RequestSpec| {
+    let build = identity_request(|used: &RequestSpec| {
         let req = build_request(
             client,
             spec.route_url(url).as_deref().unwrap_or(url),
@@ -5650,11 +5649,11 @@ async fn download_single_once(
         } else {
             req
         }
-    };
+    });
     // 放弃续传偏移后的重发：默认不带 Range 取完整文件；声明了 `maxRangeBytes` 时改为
     // 从 0 起的首个有界窗口（无 Range 的请求会被这类端点拒绝）。
     let full_range = format!("bytes=0-{}", (window - 1).min(total_bytes.max(1) - 1));
-    let build_full = |used: &RequestSpec| {
+    let build_full = identity_request(|used: &RequestSpec| {
         let req = build_request(
             client,
             spec.route_url(url).as_deref().unwrap_or(url),
@@ -5666,7 +5665,7 @@ async fn download_single_once(
         } else {
             req
         }
-    };
+    });
     let mut used = spec.current();
     let mut refetched_full = false;
     let mut resp = match use_held.then(|| spec.take_held_response()).flatten() {
@@ -5694,15 +5693,8 @@ async fn download_single_once(
             existing_len
         );
         drop(resp);
-        let full_req = build_full(&used);
-        resp = resend_after_refresh(
-            spec,
-            &mut used,
-            send_cancellable(full_req, cancel_token).await?,
-            &build_full,
-            cancel_token,
-        )
-        .await?;
+        let full = send_cancellable(build_full(&used), cancel_token).await?;
+        resp = resend_after_refresh(spec, &mut used, full, &build_full, cancel_token).await?;
         refetched_full = true;
     }
     let mut resp = resp.error_for_status()?;
@@ -5750,16 +5742,10 @@ async fn download_single_once(
                     existing_len
                 );
                 drop(resp);
-                let full_req = build_full(&used);
-                resp = resend_after_refresh(
-                    spec,
-                    &mut used,
-                    send_cancellable(full_req, cancel_token).await?,
-                    &build_full,
-                    cancel_token,
-                )
-                .await?
-                .error_for_status()?;
+                let full = send_cancellable(build_full(&used), cancel_token).await?;
+                resp = resend_after_refresh(spec, &mut used, full, &build_full, cancel_token)
+                    .await?
+                    .error_for_status()?;
                 refetched_full = true;
             } else {
                 log_warn!(
@@ -5827,16 +5813,10 @@ async fn download_single_once(
                 existing_len
             );
             drop(resp);
-            let full_req = build_full(&used);
-            resp = resend_after_refresh(
-                spec,
-                &mut used,
-                send_cancellable(full_req, cancel_token).await?,
-                &build_full,
-                cancel_token,
-            )
-            .await?
-            .error_for_status()?;
+            let full = send_cancellable(build_full(&used), cancel_token).await?;
+            resp = resend_after_refresh(spec, &mut used, full, &build_full, cancel_token)
+                .await?
+                .error_for_status()?;
             refetched_full = true;
         }
     }
@@ -8812,9 +8792,7 @@ mod tests {
             ..Default::default()
         };
         let req = super::build_request(&client, "https://example.com", reqwest::Method::GET, &spec);
-        let built = req
-            .build()
-            .expect("build_request must produce a valid request");
+        let built = req.first_hop();
         assert_eq!(built.method(), reqwest::Method::GET);
         // GET 请求 body 应为 None
         assert!(
@@ -8843,9 +8821,7 @@ mod tests {
             reqwest::Method::POST,
             &spec,
         );
-        let built = req
-            .build()
-            .expect("build_request must produce a valid request");
+        let built = req.first_hop();
         assert_eq!(built.method(), reqwest::Method::POST);
         // form() 设置 Content-Type 为 application/x-www-form-urlencoded
         assert_eq!(
@@ -8878,7 +8854,7 @@ mod tests {
             reqwest::Method::GET,
             &spec,
         );
-        let built = req.build().unwrap();
+        let built = req.first_hop();
         assert_eq!(
             built.headers().get("Cookie").unwrap().to_str().unwrap(),
             "k1=v1; k2=v2"
@@ -8916,11 +8892,8 @@ mod tests {
             }],
             ..Default::default()
         };
-        let build = |url: &str| {
-            super::build_request(&client, url, reqwest::Method::GET, &spec)
-                .build()
-                .unwrap()
-        };
+        let build =
+            |url: &str| super::build_request(&client, url, reqwest::Method::GET, &spec).first_hop();
         assert_eq!(
             build("https://example.com/a.bin")
                 .headers()
@@ -8963,8 +8936,7 @@ mod tests {
                 reqwest::Method::GET,
                 &spec,
             )
-            .build()
-            .unwrap();
+            .first_hop();
             assert!(
                 built.headers().get(reqwest::header::REFERER).is_none(),
                 "bogus referrer {bogus:?} must be dropped"

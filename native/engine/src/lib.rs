@@ -30,6 +30,8 @@ pub mod bt_verify;
 pub mod category_route;
 pub mod cdn;
 pub mod components;
+/// 请求凭据（Cookie / Authorization / Referer）对锚点 URL 的作用域判定（公共后缀表）。
+pub(crate) mod credential_scope;
 pub mod dash_downloader;
 pub mod data_dir;
 pub mod db;
@@ -45,6 +47,8 @@ pub mod events;
 pub mod file_exists;
 pub mod ftp_downloader;
 pub mod hls_downloader;
+/// 下载请求发送：逐跳跟随重定向，每跳按凭据作用域重建请求头。
+pub(crate) mod http_request;
 pub mod intercept;
 pub mod logger;
 /// 下载来源标记（Windows Zone.Identifier / macOS quarantine）。
