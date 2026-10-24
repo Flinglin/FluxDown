@@ -433,6 +433,8 @@
   "editThreadsInvalid": "Enter a whole number from 0 (auto) to 512.",
   "threadsChanged": "Thread count updated.",
   "threadsChangeRejected": "Cannot change the thread count of a completed task.",
+  "taskErrorPostOnlyEndpoint": "This link only accepts POST requests (HTTP 405). Start the download again from the browser so FluxDown can take it over with the original request.",
+  "taskErrorPostOnlyResume": "This task was started by a browser POST request and can't be resumed or retried. Start it again from the browser (POST only).",
   "configuredThreads": "Thread count",
   "activeSegments": "Active segments",
   "renameOptional": "Rename (optional, auto-detect if empty)",

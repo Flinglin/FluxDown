@@ -2046,8 +2046,9 @@ impl DownloadTableDelegate {
                 })
             }
             TaskState::Paused => Some(bytes_progress(task)),
-            TaskState::Failed => task
-                .error_message
+            TaskState::Failed => self
+                .strings
+                .task_error_text(&task.error_message)
                 .lines()
                 .next()
                 .map(str::trim)
@@ -2282,7 +2283,9 @@ impl DownloadTableDelegate {
         let two_line = self.prefs.density.two_line();
         let detail = self.status_detail(task);
         let tooltip = if task.state == TaskState::Failed && !task.error_message.trim().is_empty() {
-            Some(SharedString::from(task.error_message.clone()))
+            Some(SharedString::from(
+                self.strings.task_error_text(&task.error_message).to_owned(),
+            ))
         } else if two_line {
             None
         } else {

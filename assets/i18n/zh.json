@@ -433,6 +433,8 @@
   "editThreadsInvalid": "请输入 0（自动）到 512 之间的整数。",
   "threadsChanged": "线程数已更新。",
   "threadsChangeRejected": "已完成的任务无法修改线程数。",
+  "taskErrorPostOnlyEndpoint": "该链接仅支持 POST 请求（HTTP 405）。请在浏览器中重新发起下载，由 FluxDown 按原始请求接管。",
+  "taskErrorPostOnlyResume": "该任务需由浏览器重新发起（仅支持 POST），无法继续或重试。",
   "configuredThreads": "线程数",
   "activeSegments": "活跃分段",
   "renameOptional": "重命名（可选，留空自动识别）",

@@ -23,6 +23,7 @@
 - **带子目录的文件名必须在落库前并入 `save_dir`**：下载器只把 `file_name` 当单个组件清洗（防穿越），否则子目录被压平成 `子目录_文件名`（#716）；BT 名字另有语义不拆 → `native/engine/src/download_manager.rs`（`is_bt` / `has_subdir` 分支）。
 - **HLS 小响应拉取不得在共享 client 上设全局 timeout，播放列表首行带 BOM 要先剥**：全局 timeout 会误伤普通 HTTP 长下载；`m3u8_rs` 要求首行就是 `#EXTM3U` → `native/engine/src/hls_downloader.rs::fetch_small` / `trim_playlist_prefix`。
 - **订阅源正文无有效 tracker 必须算该源失败**：HTML 错误页或空页若当「成功 + 空列表」，会覆盖宿主缓存并在刷新间隔内丢光订阅 tracker → `native/engine/src/tracker_subscription.rs::parse_source_body`。
+- **浏览器 POST 接管的任务恢复 / 重试不得改发 GET**：请求体（OneDrive 打包下载含一次性 `access_token`）不落库，旧逻辑恢复时按 GET 发 HEAD + Range 探测，只收 POST 的端点恒 405（#970），表单端点则下回错误内容。建任务时只把非 GET 方法记入 `tasks.request_method`，恢复体首据此以 `POST_ONLY_RESUME_MESSAGE` 失败；以 GET 撞上 `405 + Allow` 只含 POST 时探测标 `405 post-only`、立即停止并报 `POST_ONLY_ENDPOINT_MESSAGE`。两条文案由 GPUI / Web / Android / iOS 按全文匹配本地化（`taskErrorPostOnly*`），改文案须同步各端镜像 → `native/engine/src/downloader.rs`（`allows_only_post` / `probe_post_only`）、`native/engine/src/download_manager.rs::fail_post_only_resume`、回归 `native/engine/tests/engine/post_only.rs`（`#[ignore]`，需 `--ignored`）。
 
 ## BT / eD2K
 

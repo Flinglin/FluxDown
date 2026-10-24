@@ -204,7 +204,7 @@ extension NotificationSpec {
                     title: L("downloadCompleted"), body: event.fileName, category: category, userInfo: info
                 )
             case .failed:
-                let reason = event.errorMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+                let reason = TaskErrorMessage.displayText(event.errorMessage).trimmingCharacters(in: .whitespacesAndNewlines)
                 return NotificationSpec(
                     identifier: "fail.\(hostID).\(event.taskId)", threadID: thread,
                     title: L("subtitleError"), body: reason.isEmpty ? event.fileName : "\(event.fileName)\n\(reason)",

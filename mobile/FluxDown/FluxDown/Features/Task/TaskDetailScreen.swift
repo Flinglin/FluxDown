@@ -193,7 +193,7 @@ private struct TaskDetailPage: View {
     }
 
     private var errorText: String {
-        let line = TaskDetailFormat.firstLine(task.errorMessage)
+        let line = TaskDetailFormat.firstLine(TaskErrorMessage.displayText(task.errorMessage))
         return line.isEmpty ? L("subtitleError") : line
     }
 
@@ -501,7 +501,7 @@ private struct TaskDetailHero: View {
             parts.append("\(L("infoSpeed")) \(Format.speedOrZero(model.speedDown).description)")
             if let eta = model.etaSeconds { parts.append("\(L("infoRemaining")) \(TaskDetailText.eta(eta))") }
         } else if visual == .failed {
-            let line = TaskDetailFormat.firstLine(task.errorMessage)
+            let line = TaskDetailFormat.firstLine(TaskErrorMessage.displayText(task.errorMessage))
             if !line.isEmpty { parts.append(line) }
         } else if visual == .seeding {
             parts.append("\(L("mobileUploadChip")) \(Format.speedOrZero(model.speedUp).description)")

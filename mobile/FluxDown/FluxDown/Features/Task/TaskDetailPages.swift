@@ -76,7 +76,7 @@ struct TaskDetailGeneralPage: View {
         if task.status == .failed, !task.errorMessage.isEmpty {
             KeyValueRow(
                 key: L("infoError"),
-                value: task.errorMessage,
+                value: TaskErrorMessage.displayText(task.errorMessage),
                 monospaced: true,
                 copyable: true,
                 tone: .failure,

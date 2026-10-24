@@ -79,6 +79,8 @@ pub(crate) struct DownloadStrings {
     pub(crate) status_completed: SharedString,
     pub(crate) status_downloading: SharedString,
     pub(crate) status_error: SharedString,
+    pub(crate) task_error_post_only_endpoint: SharedString,
+    pub(crate) task_error_post_only_resume: SharedString,
     pub(crate) status_incomplete: SharedString,
     pub(crate) status_paused: SharedString,
     pub(crate) status_seeding: SharedString,
@@ -256,6 +258,8 @@ impl DownloadStrings {
             status_completed: shared(translator.text(keys::STATUS_COMPLETED)),
             status_downloading: shared(translator.text(keys::STATUS_DOWNLOADING)),
             status_error: shared(translator.text(keys::STATUS_ERROR)),
+            task_error_post_only_endpoint: shared(translator.text("taskErrorPostOnlyEndpoint")),
+            task_error_post_only_resume: shared(translator.text("taskErrorPostOnlyResume")),
             status_incomplete: shared(translator.text("tabDownloading")),
             status_paused: shared(translator.text(keys::STATUS_PAUSED)),
             status_seeding: shared(translator.text("statusSeeding")),
@@ -1052,6 +1056,24 @@ fn group_digits(value: usize) -> String {
     grouped
 }
 
+impl DownloadStrings {
+    /// 任务错误消息的显示文本：引擎两条稳定错误整串匹配（trim 后）时返回本地化文案，
+    /// 其余原样返回。仅用于显示 / 复制，逻辑判断仍用原始 `error_message`。
+    pub(crate) fn task_error_text<'a>(&'a self, raw: &'a str) -> &'a str {
+        match raw.trim() {
+            POST_ONLY_ENDPOINT_MESSAGE => &self.task_error_post_only_endpoint,
+            POST_ONLY_RESUME_MESSAGE => &self.task_error_post_only_resume,
+            _ => raw,
+        }
+    }
+}
+
+/// 镜像引擎 `native/engine/src/downloader.rs` 的 `POST_ONLY_ENDPOINT_MESSAGE`；改动须同步。
+const POST_ONLY_ENDPOINT_MESSAGE: &str =
+    "This link only accepts POST requests (HTTP 405); start the download from the browser";
+/// 镜像引擎 `native/engine/src/downloader.rs` 的 `POST_ONLY_RESUME_MESSAGE`；改动须同步。
+const POST_ONLY_RESUME_MESSAGE: &str = "This task was started by a browser POST request and cannot be resumed; start it again from the browser";
+
 fn shared(value: &str) -> SharedString {
     SharedString::from(value.to_owned())
 }
@@ -1096,6 +1118,24 @@ mod tests {
         ] {
             assert_eq!(group_digits(value), expected);
         }
+    }
+
+    #[test]
+    fn post_only_errors_are_localized_and_others_pass_through()
+    -> Result<(), fluxdown_ui_i18n::I18nError> {
+        let catalog = std::sync::Arc::new(fluxdown_ui_i18n::I18nCatalog::load_embedded()?);
+        let translator = catalog.translator("en");
+        let strings = DownloadStrings::from_translator(&translator);
+        assert_eq!(
+            strings.task_error_text(super::POST_ONLY_ENDPOINT_MESSAGE),
+            translator.text("taskErrorPostOnlyEndpoint")
+        );
+        assert_eq!(
+            strings.task_error_text(&format!("{}\n", super::POST_ONLY_RESUME_MESSAGE)),
+            translator.text("taskErrorPostOnlyResume")
+        );
+        assert_eq!(strings.task_error_text("disk full"), "disk full");
+        Ok(())
     }
 
     /// 引擎 status 5（探测 / 插件解析）在任务表、详情、进度窗口与活动日志都是「准备中」，
