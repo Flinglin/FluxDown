@@ -22,9 +22,9 @@ export default defineContentScript({
   async main(ctx) {
     // 只在顶层帧加载：iframe 内的媒体由各帧 sensor 的浮钮处理
     if (window.self !== window.top) return;
+    installErrorCapture("content");
     await initI18n();
 
-    installErrorCapture("content");
     const ui = await createShadowRootUi(ctx, {
       name: "fluxdown-panel",
       css: contentCss(),

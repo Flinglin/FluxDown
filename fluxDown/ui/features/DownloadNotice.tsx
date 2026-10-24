@@ -20,8 +20,8 @@ import { sendAction } from "@/utils/messaging";
 import "@/ui/theme/tokens.css";
 import "@/ui/theme/base.css";
 import "./download-notice.css";
-
 import { logWarn } from "@/utils/error-log";
+
 /** 完成卡片停留时长；进行中的卡片一直保留到完成 / 失败 / 手动关闭。 */
 const DONE_LINGER_MS = 8000;
 const MAX_CARDS = 4;

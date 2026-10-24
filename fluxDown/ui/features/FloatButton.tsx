@@ -26,8 +26,8 @@ import { variantLabel } from "./labels";
 import "@/ui/theme/tokens.css";
 import "@/ui/theme/base.css";
 import "./float.css";
-
 import { logWarn } from "@/utils/error-log";
+
 export interface FloatButtonController {
   /** 配置变化：决定是否启用、触发方式。 */
   setConfig(config: PageConfig | null): void;

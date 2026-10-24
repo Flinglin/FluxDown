@@ -23,9 +23,9 @@ import { rebuildMenus, type MenuApi, type MenuItemSpec } from "./menu-build";
 import { getContextTarget } from "./tab-state";
 import { buildTabView } from "./tab-view";
 import { allRows, rowsForElement } from "./view-model";
+import { logWarn } from "@/utils/error-log";
 
 type MenuBase =
-import { logWarn } from "@/utils/error-log";
   | "fluxdown-send-link"
   | "fluxdown-send-image"
   | "fluxdown-send-video"
