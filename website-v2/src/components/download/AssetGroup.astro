@@ -26,9 +26,8 @@ interface Props {
   versionPath?: string;
   fallback: string;
   rows: RowSpec[];
-  notifyHref?: string;
 }
-const { lang, id, title, desc, os, versionPath, fallback, rows, notifyHref } = Astro.props;
+const { lang, id, title, desc, os, versionPath, fallback, rows } = Astro.props;
 const t = download[lang];
 ---
 
@@ -52,7 +51,6 @@ const t = download[lang];
       </div>
       <p class="group-empty" data-empty hidden>
         {t.state.notInRelease}
-        {notifyHref && <a class="link" href={notifyHref}>{t.state.notify}</a>}
       </p>
     </Fragment>
   )}

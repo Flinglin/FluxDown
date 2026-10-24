@@ -35,7 +35,6 @@ const linux: RowSpec[] = [
   { path: "assets.linux_arch", label: t.kind.arch, detail: "x64", ext: ".pkg.tar.zst" },
   { path: "assets.linux_tarball", label: t.kind.portable, detail: "x64", ext: ".tar.gz" },
 ];
-const notify = "#subscribe";
 const SCOOP_CMD = "scoop bucket add extras\nscoop install extras/fluxdown";
 ---
 
@@ -49,14 +48,14 @@ const SCOOP_CMD = "scoop bucket add extras\nscoop install extras/fluxdown";
     <AssetGroup lang={lang} id="windows" os="windows" title={t.os.windows} desc={t.desktop.windowsReq} versionPath="version" fallback={fallback} rows={windows}>
       <Fragment slot="icon"><BrandIcon name="windows" size={15} /></Fragment>
     </AssetGroup>
-    <AssetGroup lang={lang} id="macos" os="macos" title={t.os.macos} versionPath="version" fallback={fallback} rows={macos} notifyHref={notify}>
+    <AssetGroup lang={lang} id="macos" os="macos" title={t.os.macos} versionPath="version" fallback={fallback} rows={macos}>
       <Fragment slot="icon"><BrandIcon name="apple" size={16} /></Fragment>
       <a href={href("/macos-gatekeeper", lang)} class="note">
         <AlertTriangle size={14} strokeWidth={1.75} className="text-warn" aria-hidden="true" />
         <span>{t.desktop.macHelp} <span class="link">{t.desktop.macHelpLink}</span></span>
       </a>
     </AssetGroup>
-    <AssetGroup lang={lang} id="linux" os="linux" title={t.os.linux} versionPath="version" fallback={fallback} rows={linux} notifyHref={notify}>
+    <AssetGroup lang={lang} id="linux" os="linux" title={t.os.linux} versionPath="version" fallback={fallback} rows={linux}>
       <Fragment slot="icon"><BrandIcon name="linux" size={16} /></Fragment>
     </AssetGroup>
   </div>
