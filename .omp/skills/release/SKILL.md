@@ -40,10 +40,10 @@ gh release list --limit 20
 
 | 渠道 | tag | 打自分支 | GitHub prerelease | make_latest | 打包范围 |
 |---|---|---|---|---|---|
-| 稳定版 | `vX.Y.Z` | `stable` | false | true | 客户端 / web / 移动 / NAS / 扩展 全部 |
-| 预览版 | `vX.Y.Z-rc.N` | `main` | true | false | 客户端 / web / 移动 / NAS，**不含浏览器扩展** |
+| 稳定版 | `vX.Y.Z` | `stable` | false | true | 客户端 / web / 移动（Android + iOS 侧载 IPA）/ NAS / 扩展 全部 |
+| 预览版 | `vX.Y.Z-rc.N` | `main` | true | false | 客户端 / web / 移动（Android + iOS 侧载 IPA）/ NAS，**不含浏览器扩展** |
 
-- 同一次 `v*` push 按目录 diff 决定本次打包哪些组件（app / server / cli / mobile / extension），产物全部上传到这一个 `vX.Y.Z` release；未改动的组件不重建，官网自动沿用它上一个完整版本。历史上的 `server-v*` / `cli-v*` / `mobile-v*` / `extension-v*` 组件 release 不再新建，官网仍兼容读取。
+- 同一次 `v*` push 按目录 diff 决定本次打包哪些组件（app / server / cli / mobile / ios / extension），产物全部上传到这一个 `vX.Y.Z` release；未改动的组件不重建，官网自动沿用它上一个完整版本。历史上的 `server-v*` / `cli-v*` / `mobile-v*` / `extension-v*` 组件 release 不再新建，官网仍兼容读取。
 - **扩展发布后无法改版本号**，故 `-rc` tag 跳过 `build-extension`（`changes` 判定 extension=false）。
 - latest：`publish-release` 只在「稳定版 + 桌面端完整 + 最高稳定版本」时标记；Rust `FLUXDOWN_APP_VERSION` 与原生 Android `versionName` 保留完整 tag 版本。
 - **分支模型**：`main` = 开发分支（超集 / 最新），`stable` = 稳定分支（子集）；`stable` 只经合并/cherry-pick `main` 前进。稳定发布前 `git log stable --not main` 必须为空。
@@ -102,7 +102,7 @@ gh workflow run release.yml --ref main -f tag="$V" -f component=mobile          
 gh workflow run release.yml --ref main -f tag="$V" -f component=mobile -f source_ref=stable   # 源码含修复
 ```
 
-- `component`：`app` / `extension` / `server` / `cli` / `mobile`，或 `changed`（按该 tag 的变更检测补发全部应发组件）。
+- `component`：`app` / `extension` / `server` / `cli` / `mobile` / `ios`，或 `changed`（按该 tag 的变更检测补发全部应发组件）。
 - `source_ref` 必须包含该 tag 且在发布分支上；版本号、预发布标记恒取 tag。产物以 `--clobber` 覆盖同名资产，旧清单里不再产出的资产会被删除。
 - 补发属于 CI 触发，等同发布动作：仅在用户明确要求时执行。
 
