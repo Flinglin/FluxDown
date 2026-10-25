@@ -1,7 +1,7 @@
 /**
  * 123 云盘 WebDAV 发布资产源（纯逻辑，env 绑定见 pan123.ts）。
  *
- * 发布资产由 .github/actions/pan123-upload 经 WebDAV 上传到授权目录下的
+ * 发布资产由 .github/scripts/pan123_mirror.sh（经东京服务器中转）经 WebDAV 上传到授权目录下的
  * `<OSS_RELEASE_PREFIX>/<版本>/<组件>/<file>`（与 OSS 同一对象键，releaseObjectKey）。
  * WebDAV 的 GET 不返回文件体，而是 302 到一个免鉴权、支持 Range、约 7 天有效的 CDN 签名链接：
  * 官网先 PROPFIND 确认大小与 GitHub 资产一致，再取这个链接 302 给下载者（不代理流量）。
