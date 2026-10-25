@@ -63,7 +63,8 @@ impl CategoryRoute {
     ///
     /// 网址规则固定优先（不看列表位置）：先按列表顺序取首个命中且配置了目录的 `url`
     /// 规则，命中即定落点；扩展名 / 正则分类只处理未被网址规则认领的任务。文件名不含
-    /// `.` 时用 URL 路径末段（百分号解码后含 `.`）匹配；文件名为空时扩展名 / 正则规则
+    /// `.` 时用 `url` 路径末段（百分号解码后含 `.`）匹配；`source` 是网址规则匹配的来源
+    /// 地址（`origin_url` 非空取它，否则取任务链接），与文件名推断用的 `url` 分开；文件名为空时扩展名 / 正则规则
     /// 不命中。文件名规则按顺序取首个配置了目录且命中的普通分类；所有普通分类都不
     /// 命中时取「其他」的目录。
     ///
@@ -81,17 +82,17 @@ impl CategoryRoute {
     ///     }],
     ///     ..Default::default()
     /// };
-    /// assert_eq!(route.save_dir_for("a.JPG", ""), Some("/pictures"));
-    /// assert_eq!(route.save_dir_for("a.zip", ""), None);
+    /// assert_eq!(route.save_dir_for("a.JPG", "", ""), Some("/pictures"));
+    /// assert_eq!(route.save_dir_for("a.zip", "", ""), None);
     /// ```
     #[must_use]
-    pub fn save_dir_for(&self, file_name: &str, url: &str) -> Option<&str> {
+    pub fn save_dir_for(&self, file_name: &str, url: &str, source: &str) -> Option<&str> {
         // 网址规则固定优先（不看列表位置）：先按列表顺序取首个命中且配置了目录的网址
         // 规则，命中即定落点；扩展名 / 正则分类只处理未被网址规则认领的任务。
         if let Some(rule) = self.rules.iter().find(|rule| {
             rule.match_mode == "url"
                 && !rule.save_dir.is_empty()
-                && wildcard_matches(&rule.url_pattern, url)
+                && wildcard_matches(&rule.url_pattern, source)
         }) {
             return Some(rule.save_dir.as_str());
         }
@@ -109,11 +110,11 @@ impl CategoryRoute {
         if let Some(rule) = self
             .rules
             .iter()
-            .find(|rule| !rule.save_dir.is_empty() && rule.matches(name, url))
+            .find(|rule| !rule.save_dir.is_empty() && rule.matches(name, source))
         {
             return Some(rule.save_dir.as_str());
         }
-        (!self.other_dir.is_empty() && !self.rules.iter().any(|rule| rule.matches(name, url)))
+        (!self.other_dir.is_empty() && !self.rules.iter().any(|rule| rule.matches(name, source)))
             .then_some(self.other_dir.as_str())
     }
 
@@ -190,6 +191,16 @@ pub fn wildcard_matches(pattern: &str, url: &str) -> bool {
         .is_ok_and(|regex| regex.is_match(url))
 }
 
+/// 网址规则匹配的来源地址：捕获来源（`origin_url`，如 thunder 原链接）非空优先，否则任务链接。
+/// 建任务、开始写盘前、完成前三个时刻必须用同一口径，落点才不会来回跳。
+pub(crate) fn source_address<'a>(origin_url: &'a str, url: &'a str) -> &'a str {
+    if origin_url.is_empty() {
+        url
+    } else {
+        origin_url
+    }
+}
+
 /// URL 路径末段（百分号解码）且含 `.` 时作为文件名。
 fn file_name_from_url(url: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(url.trim()).ok()?;
@@ -241,12 +252,8 @@ pub(crate) async fn relocate_completed(p: &DownloadParams) -> Option<(String, i6
     if !row.group_id.is_empty() {
         return None;
     }
-    let url = if row.origin_url.is_empty() {
-        row.url.as_str()
-    } else {
-        row.origin_url.as_str()
-    };
-    let target = route.save_dir_for(&row.file_name, url)?;
+    let source = source_address(&row.origin_url, &row.url);
+    let target = route.save_dir_for(&row.file_name, &row.url, source)?;
     if same_dir(target, &row.save_dir).await {
         return None;
     }
@@ -371,10 +378,14 @@ pub(crate) async fn route_before_start(p: &mut DownloadParams) -> Result<(), cra
     if route.base_dir.is_empty() {
         return Ok(());
     }
+    let Some(row) = p.db.load_task_by_id(&p.task_id).await? else {
+        return Ok(());
+    };
+    let source = source_address(&row.origin_url, &row.url);
     let output = output_name(&p.file_name, &p.url);
     let name = output.as_deref().unwrap_or(&p.file_name);
     let target = route
-        .save_dir_for(name, &p.url)
+        .save_dir_for(name, &p.url, source)
         .unwrap_or(&route.base_dir)
         .to_owned();
     if same_dir(&target, &p.save_dir).await {
@@ -508,12 +519,41 @@ mod tests {
         assert!(!cases.is_empty());
         for case in cases {
             assert_eq!(
-                case.route.save_dir_for(&case.file_name, &case.url),
+                case.route
+                    .save_dir_for(&case.file_name, &case.url, &case.url),
                 case.expected.as_deref(),
                 "{}",
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn url_rules_match_the_source_address_not_the_decoded_link() {
+        use super::{CategoryRule, source_address};
+        let route = CategoryRoute {
+            rules: vec![CategoryRule {
+                match_mode: "url".into(),
+                url_pattern: "thunder://*".into(),
+                save_dir: "/thunder".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let decoded = "https://cdn.test/files/a.zip";
+        let origin = "thunder://QUFodHRwczovL2Nkbi50ZXN0L2ZpbGVzL2EuemlwWlo=";
+        // 建任务 / 开始写盘前 / 完成前三个时刻都传 `source_address(origin, url)`。
+        let source = source_address(origin, decoded);
+        assert_eq!(source, origin);
+        assert_eq!(
+            route.save_dir_for("a.zip", decoded, source),
+            Some("/thunder")
+        );
+        // 无来源地址时回落任务链接，不命中 thunder 规则。
+        assert_eq!(
+            route.save_dir_for("a.zip", decoded, source_address("", decoded)),
+            None
+        );
     }
 
     #[test]
