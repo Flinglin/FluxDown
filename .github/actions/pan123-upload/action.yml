@@ -1,4 +1,5 @@
-# 把 release 资产经 WebDAV 同步到 123 云盘（release.yml 各 upload-<组件> job 与 pan123-upload.yml 手动补传共用）
+# 把 release 资产经 WebDAV 同步到 123 云盘（pan123-upload.yml 手动补传用；GitHub runner 到 123 极慢，
+# 不接入 release.yml，发版后优先在国内网络补传）
 #
 # 目录与 OSS 同一契约（website-v2/src/lib/oss.ts 的 releaseObjectKey，改一处须同步另一处）：
 #   <WebDAV 授权目录>/<prefix>/<版本>/<组件>/<asset-name>
