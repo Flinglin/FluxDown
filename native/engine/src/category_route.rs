@@ -18,7 +18,9 @@
 //! 保持组内结构）、带子路径的单条目清单与 `out=子目录/名字`（相对结构由来源决定）。
 //!
 //! 匹配语义与 agent `category_dir.rs`（确认表单预填）逐条对齐，两端共用夹具
-//! `fixtures/category_route_cases.json`。
+//! `fixtures/category_route_cases.json`。`url` 模式按通配符（`*` 任意串、`?` 单字符、
+//! 不分大小写、锚定完整匹配整个网址）匹配来源网址；网址规则固定优先于扩展名 / 正则
+//! 分类（不看列表位置），网址规则之间与文件名规则之间各自按列表顺序取首条命中。
 
 use std::path::Path;
 
@@ -46,10 +48,12 @@ pub struct CategoryRoute {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CategoryRule {
-    /// `regex` = 按正则匹配文件名；其余按扩展名。
+    /// `regex` = 按正则匹配文件名；`url` = 按通配符匹配来源网址；其余按扩展名。
     pub match_mode: String,
     pub extensions: Vec<String>,
     pub regex_pattern: String,
+    /// `url` 模式的通配符模式（[`wildcard_matches`]）。
+    pub url_pattern: String,
     /// 空 = 不改变落点，只阻止「其他」兜底。
     pub save_dir: String,
 }
@@ -57,8 +61,11 @@ pub struct CategoryRule {
 impl CategoryRoute {
     /// 文件名命中的分类目录；未命中 / 命中分类未配置目录时为 `None`（留在当前目录）。
     ///
-    /// 文件名不含 `.` 时用 URL 路径末段（百分号解码后含 `.`）匹配。先取首个配置了目录且
-    /// 命中的普通分类；所有普通分类都不命中时取「其他」的目录。
+    /// 网址规则固定优先（不看列表位置）：先按列表顺序取首个命中且配置了目录的 `url`
+    /// 规则，命中即定落点；扩展名 / 正则分类只处理未被网址规则认领的任务。文件名不含
+    /// `.` 时用 URL 路径末段（百分号解码后含 `.`）匹配；文件名为空时扩展名 / 正则规则
+    /// 不命中。文件名规则按顺序取首个配置了目录且命中的普通分类；所有普通分类都不
+    /// 命中时取「其他」的目录。
     ///
     /// # Examples
     ///
@@ -79,6 +86,15 @@ impl CategoryRoute {
     /// ```
     #[must_use]
     pub fn save_dir_for(&self, file_name: &str, url: &str) -> Option<&str> {
+        // 网址规则固定优先（不看列表位置）：先按列表顺序取首个命中且配置了目录的网址
+        // 规则，命中即定落点；扩展名 / 正则分类只处理未被网址规则认领的任务。
+        if let Some(rule) = self.rules.iter().find(|rule| {
+            rule.match_mode == "url"
+                && !rule.save_dir.is_empty()
+                && wildcard_matches(&rule.url_pattern, url)
+        }) {
+            return Some(rule.save_dir.as_str());
+        }
         let url_name;
         let name = if file_name.contains('.') {
             file_name
@@ -86,17 +102,18 @@ impl CategoryRoute {
             url_name = file_name_from_url(url);
             url_name.as_deref().unwrap_or(file_name)
         };
-        if name.is_empty() {
+        // 没有可参与匹配的文件名且列表里没有 url 规则时保持原语义：不路由。
+        if name.is_empty() && !self.rules.iter().any(|rule| rule.match_mode == "url") {
             return None;
         }
         if let Some(rule) = self
             .rules
             .iter()
-            .find(|rule| !rule.save_dir.is_empty() && rule.matches(name))
+            .find(|rule| !rule.save_dir.is_empty() && rule.matches(name, url))
         {
             return Some(rule.save_dir.as_str());
         }
-        (!self.other_dir.is_empty() && !self.rules.iter().any(|rule| rule.matches(name)))
+        (!self.other_dir.is_empty() && !self.rules.iter().any(|rule| rule.matches(name, url)))
             .then_some(self.other_dir.as_str())
     }
 
@@ -121,24 +138,56 @@ impl CategoryRoute {
 }
 
 impl CategoryRule {
-    fn matches(&self, name: &str) -> bool {
-        if self.match_mode == "regex" {
-            return !self.regex_pattern.is_empty()
-                && regex::RegexBuilder::new(&self.regex_pattern)
-                    .case_insensitive(true)
-                    .build()
-                    .is_ok_and(|regex| regex.is_match(name));
+    /// `extension` / `regex` 匹配文件名，`url` 匹配来源网址；规则按顺序求值，
+    /// 同一规则只按自己的模式参与。
+    fn matches(&self, name: &str, url: &str) -> bool {
+        match self.match_mode.as_str() {
+            "url" => wildcard_matches(&self.url_pattern, url),
+            "regex" => {
+                !self.regex_pattern.is_empty()
+                    && regex::RegexBuilder::new(&self.regex_pattern)
+                        .case_insensitive(true)
+                        .build()
+                        .is_ok_and(|regex| regex.is_match(name))
+            }
+            _ => {
+                let Some((_, extension)) = name.rsplit_once('.') else {
+                    return false;
+                };
+                !extension.is_empty()
+                    && self.extensions.iter().any(|candidate| {
+                        candidate
+                            .trim_start_matches('.')
+                            .eq_ignore_ascii_case(extension)
+                    })
+            }
         }
-        let Some((_, extension)) = name.rsplit_once('.') else {
-            return false;
-        };
-        !extension.is_empty()
-            && self.extensions.iter().any(|candidate| {
-                candidate
-                    .trim_start_matches('.')
-                    .eq_ignore_ascii_case(extension)
-            })
     }
+}
+
+/// 通配符网址匹配：`*` 匹配任意长度任意字符、`?` 匹配恰好一个字符，其余字面；不分
+/// 大小写；模式须完整匹配整个网址（锚定，非子串）。空 / 非法模式不命中。与正则模式
+/// 一致即时编译；agent `category_dir.rs` 与 Web `categoryRoute.ts` 镜像同一语义。
+#[must_use]
+pub fn wildcard_matches(pattern: &str, url: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return false;
+    }
+    let mut source = String::with_capacity(pattern.len() + 2);
+    source.push('^');
+    for ch in pattern.chars() {
+        match ch {
+            '*' => source.push_str(".*"),
+            '?' => source.push('.'),
+            other => source.push_str(&regex::escape(&other.to_string())),
+        }
+    }
+    source.push('$');
+    regex::RegexBuilder::new(&source)
+        .case_insensitive(true)
+        .build()
+        .is_ok_and(|regex| regex.is_match(url))
 }
 
 /// URL 路径末段（百分号解码）且含 `.` 时作为文件名。
@@ -465,6 +514,31 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn wildcard_url_semantics() {
+        use super::wildcard_matches;
+        assert!(wildcard_matches(
+            "https://example.com/*",
+            "https://example.com/a/b.zip?token=1"
+        ));
+        assert!(wildcard_matches(
+            "HTTPS://X.TEST/file?.zip",
+            "https://x.test/fileA.zip"
+        ));
+        assert!(!wildcard_matches(
+            "https://x.test/file?.zip",
+            "https://x.test/file12.zip"
+        ));
+        // 锚定：子串出现不算命中。
+        assert!(!wildcard_matches("x.test/*", "https://x.test/a"));
+        assert!(!wildcard_matches(
+            "https://*.example.com/*",
+            "https://example.com/a"
+        ));
+        assert!(!wildcard_matches("", "https://x.test/a"));
+        assert!(!wildcard_matches("   ", "https://x.test/a"));
     }
 
     #[test]
