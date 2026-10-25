@@ -25,6 +25,16 @@ const ossMock = () => ({
   },
 });
 mock.module("../src/lib/oss", ossMock);
+let pan123Configured = false;
+let pan123Link: string | null = "https://pan.example/app.zip";
+const pan123Mock = () => ({
+  pan123Configured,
+  pan123DownloadUrl: async (key: string, size: number) => {
+    signatures.push(`PAN123 ${key} ${size}`);
+    return pan123Link;
+  },
+});
+mock.module("../src/lib/pan123", pan123Mock);
 const { GET } = await import("../src/pages/api/download/[filename]");
 const originalFetch = globalThis.fetch;
 let draft = false;
@@ -42,6 +52,9 @@ beforeEach(() => {
   configured = true;
   cdnConfigured = true;
   mock.module("../src/lib/oss", ossMock);
+  pan123Configured = false;
+  pan123Link = "https://pan.example/app.zip";
+  mock.module("../src/lib/pan123", pan123Mock);
   prerelease = false;
   status = 200;
   headSize = "12";
@@ -180,6 +193,77 @@ test("size mismatch: mainland falls back to GitHub, forced OSS returns 503 witho
   expect(response.status).toBe(503);
   expect(response.headers.has("Location")).toBe(false);
   expect(signatures).toEqual(["HEAD"]);
+});
+
+function enablePan123(link: string | null = "https://pan.example/app.zip") {
+  pan123Configured = true;
+  pan123Link = link;
+  mock.module("../src/lib/pan123", pan123Mock);
+}
+
+test("admitted mainland visitors prefer the verified 123pan link over the OSS mirror", async () => {
+  enablePan123();
+  for (const ua of ["", "Mozilla/5.0 (Windows NT 10.0)", "fluxdown-agent/0.6.0"]) {
+    const response = await get("auto", `v${sequence}`, "app.zip", MAINLAND_IP, ua);
+    expect(response.headers.get("X-Download-Source")).toBe("pan123");
+    expect(response.headers.get("Location")).toBe("https://pan.example/app.zip");
+  }
+  expect(signatures.every((s) => s === `PAN123 v${sequence}/app.zip 12`)).toBe(true);
+  // 123 不可用（缺资产 / 大小不符 / 超时）时回落 dl-cn 镜像，镜像也不行才是 GitHub。
+  enablePan123(null);
+  signatures.length = 0;
+  expect((await get("auto")).headers.get("X-Download-Source")).toBe("cdn");
+  expect(signatures).toEqual([`PAN123 v${sequence}/app.zip 12`, "HEAD", "CDN"]);
+  headSize = "11";
+  sequence++;
+  expect((await get("auto")).headers.get("X-Download-Source")).toBe("github");
+  expect((await get("oss")).status).toBe(503);
+});
+
+test("in-app updates outside mainland China use 123pan; browsers there keep GitHub", async () => {
+  enablePan123();
+  markReleaseViewer("8.8.8.8");
+  for (const ua of ["fluxdown-agent/0.6.0", "fluxdown-android/0.6.0", ""]) {
+    const response = await get("", `v${sequence}`, "app.zip", "8.8.8.8", ua);
+    expect(response.headers.get("X-Download-Source")).toBe("pan123");
+  }
+  signatures.length = 0;
+  expect((await get("auto", `v${sequence}`, "app.zip", "8.8.8.8", "Mozilla/5.0")).headers.get("X-Download-Source"))
+    .toBe("github");
+  // 123 不可用时非大陆更新器直接 GitHub，不消耗付费镜像；source=oss 也不返回 503。
+  enablePan123(null);
+  expect((await get("", `v${sequence}`, "app.zip", "8.8.8.8", "fluxdown-agent/0.6.0")).headers.get("X-Download-Source"))
+    .toBe("github");
+  expect((await get("oss", `v${sequence}`, "app.zip", "8.8.8.8", "fluxdown-agent/0.6.0")).headers.get("X-Download-Source"))
+    .toBe("github");
+  expect(signatures).toEqual([`PAN123 v${sequence}/app.zip 12`, `PAN123 v${sequence}/app.zip 12`]);
+});
+
+test("123pan obeys the download gate, source=github and stale metadata", async () => {
+  const originalNow = Date.now;
+  let now = originalNow();
+  // 下载元数据缓存在首个请求时创建并捕获 Date.now：必须先替换。
+  Date.now = () => now;
+  try {
+    enablePan123();
+    resetReleaseViewers();
+    expect((await get("", `v${sequence}`, "app.zip", "8.8.8.8", "fluxdown-agent/0.6.0")).headers.get("X-Download-Source"))
+      .toBe("github");
+    expect((await get("auto")).headers.get("X-Download-Source")).toBe("github");
+    markReleaseViewer(MAINLAND_IP, now);
+    expect((await get("auto", `v${sequence}`, "app.zip", MAINLAND_IP, "curl/8.7.1")).headers.get("X-Download-Source"))
+      .toBe("github");
+    expect((await get("github")).headers.get("X-Download-Source")).toBe("github");
+    expect(signatures).toEqual([]);
+    now += 120_001;
+    status = 503;
+    const fallback = await get("auto");
+    expect(fallback.headers.get("X-Download-Source")).toBe("github");
+    expect(fallback.headers.get("X-Download-Metadata")).toBe("stale");
+    expect(signatures).toEqual([]);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test("unconfigured OSS is explicit 503", async () => {

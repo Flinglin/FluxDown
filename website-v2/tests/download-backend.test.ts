@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { DownloadLookupCache } from "../src/lib/download-cache";
 import { createOssProbe } from "../src/lib/download-probe";
+import { createPan123Resolver, pan123SchedulerUrl, webdavContentLength } from "../src/lib/download-pan123";
 import {
   DownloadLookupError, downloadSource, latestWithAsset, matchesAssetSize,
   ossUnavailable, downloadRedirect, transientGitHubStatus, isGitHubDownloadUrl,
@@ -154,5 +155,98 @@ describe("OSS HEAD cache", () => {
     expect(calls).toBe(1);
     const failed = createOssProbe(() => { throw new Error("signing failed"); });
     expect(await failed("a", 12)).toBe(false);
+  });
+});
+
+describe("123pan WebDAV resolver", () => {
+  const EXPIRES_MS = 1_800_000_000 * 1000;
+  const NODE_LINK = "https://42-4-59-151-v3.pd1.cjjd19.com/vip-download-cdn.123295.com/123-412/abc/c-m8006" +
+    "?t=1800000000&s=sig&filename=a.zip";
+  const propfind = (size: string) => new Response(
+    `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"><D:response><D:prop>` +
+      `<D:getcontentlength>${size}</D:getcontentlength></D:prop></D:response></D:multistatus>`,
+    { status: 207 },
+  );
+
+  test("node links are rewritten to the scheduler host; other shapes kept, unsafe rejected", () => {
+    expect(pan123SchedulerUrl(NODE_LINK)).toBe(
+      "https://vip-download-cdn.123295.com/123-412/abc/c-m8006?t=1800000000&s=sig&filename=a.zip",
+    );
+    expect(pan123SchedulerUrl("https://cdn.example/file/a.zip?x=1")).toBe("https://cdn.example/file/a.zip?x=1");
+    expect(pan123SchedulerUrl("https://cdn.example/a.zip")).toBe("https://cdn.example/a.zip");
+    expect(pan123SchedulerUrl("http://node.example/host.example/a")).toBeNull();
+    expect(pan123SchedulerUrl("https://u:p@node.example/host.example/a")).toBeNull();
+    expect(pan123SchedulerUrl("not a url")).toBeNull();
+    expect(webdavContentLength("<d:getcontentlength>42</d:getcontentlength>")).toBe(42);
+    expect(webdavContentLength("<getcontentlength> 7 </getcontentlength>")).toBe(7);
+    expect(webdavContentLength("<D:getcontentlength></D:getcontentlength>")).toBeNull();
+  });
+
+  test("verifies size before asking for a link; caches success within link lifetime", async () => {
+    let now = EXPIRES_MS - 4 * 3_600_000;
+    const calls: string[] = [];
+    let link = NODE_LINK;
+    const request = (async (input, init) => {
+      calls.push(`${init?.method} ${input}`);
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Basic x");
+      if (init?.method === "PROPFIND") return propfind("12");
+      expect(init?.redirect).toBe("manual");
+      return new Response("moved", { status: 302, headers: { Location: link } });
+    }) as typeof fetch;
+    const resolve = createPan123Resolver("https://dav.example/webdav/", "Basic x", request, () => now, 4);
+    const expected = pan123SchedulerUrl(NODE_LINK);
+    expect(await Promise.all([resolve("R/v1/app/a b.zip", 12), resolve("R/v1/app/a b.zip", 12)]))
+      .toEqual([expected, expected]);
+    expect(calls).toEqual([
+      "PROPFIND https://dav.example/webdav/R/v1/app/a%20b.zip",
+      "GET https://dav.example/webdav/R/v1/app/a%20b.zip",
+    ]);
+    // 大小不符：不取链接，且负缓存 60 秒。
+    calls.length = 0;
+    expect(await resolve("R/v1/app/a b.zip", 13)).toBeNull();
+    expect(await resolve("R/v1/app/a b.zip", 13)).toBeNull();
+    expect(calls.length).toBe(1);
+    // 正缓存 1 小时内不重复请求，过期后重新取。
+    now += 3_600_000 - 1;
+    calls.length = 0;
+    expect(await resolve("R/v1/app/a b.zip", 12)).toBe(expected);
+    expect(calls).toEqual([]);
+    // 链接只剩 1 小时：只缓存剩余有效期的一半。
+    now = EXPIRES_MS - 3_600_000;
+    expect(await resolve("R/v1/app/a b.zip", 12)).toBe(expected);
+    expect(calls.length).toBe(2);
+    now += 1_800_000 - 1;
+    calls.length = 0;
+    expect(await resolve("R/v1/app/a b.zip", 12)).toBe(expected);
+    expect(calls).toEqual([]);
+    now += 2;
+    // 已过期的链接不下发。
+    link = "https://cdn.example/a.zip?t=1700000000";
+    expect(await resolve("R/v1/app/a b.zip", 12)).toBeNull();
+    expect(calls.length).toBe(2);
+  });
+
+  test("missing assets, non-redirects and failures resolve to null", async () => {
+    for (const respond of [
+      (method: string) => method === "PROPFIND" ? new Response("Not Found", { status: 404 }) : null,
+      (method: string) => method === "PROPFIND" ? propfind("12") : new Response("body", { status: 200 }),
+      (method: string) => method === "PROPFIND" ? propfind("12") : new Response(null, { status: 302 }),
+      (method: string) => method === "PROPFIND" ? propfind("12") :
+        new Response(null, { status: 302, headers: { Location: "http://insecure.example/a" } }),
+      () => { throw new TypeError("network down"); },
+    ]) {
+      const resolve = createPan123Resolver("https://dav.example", "Basic x", (async (_input, init) => {
+        const response = respond(init?.method ?? "");
+        if (!response) throw new Error("GET must not run after a failed PROPFIND");
+        return response;
+      }) as typeof fetch);
+      expect(await resolve("a", 12)).toBeNull();
+    }
+    const saturated = createPan123Resolver("https://dav.example", "Basic x",
+      (() => new Promise<Response>(() => {})) as typeof fetch, () => 0, 1);
+    void saturated("a", 12);
+    await Promise.resolve();
+    expect(await saturated("b", 12)).toBeNull();
+    expect(await saturated("c", -1)).toBeNull();
   });
 });

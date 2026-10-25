@@ -237,6 +237,24 @@ export default defineConfig({
         access: "secret",
         optional: true,
       }),
+      // 123 云盘下载源（src/lib/pan123.ts）：.github/actions/pan123-upload 经 WebDAV 上传到同一对象键；
+      // 中国大陆访客与应用内更新（均须通过下载准入）优先 302 到 123 的 CDN 链接，失败再走 dl-cn / GitHub。
+      // 账号 / 应用密码 = 123 云盘「第三方挂载」中只授权发布目录的应用，缺任一项则关闭。
+      PAN123_WEBDAV_URL: envField.string({
+        context: "server",
+        access: "secret",
+        default: "https://webdav.123pan.cn/webdav",
+      }),
+      PAN123_WEBDAV_USER: envField.string({
+        context: "server",
+        access: "secret",
+        optional: true,
+      }),
+      PAN123_WEBDAV_PASSWORD: envField.string({
+        context: "server",
+        access: "secret",
+        optional: true,
+      }),
 
       // ── 赞助名录（Sponsor Wall）──
       // 支付成功后自动把赞助者名称/留言评论到公开仓库的置顶 issue
