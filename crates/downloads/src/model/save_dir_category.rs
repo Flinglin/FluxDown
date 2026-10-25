@@ -143,9 +143,45 @@ pub(crate) fn auto_follow_target(
     following.then(|| predicted.unwrap_or(offered).to_owned())
 }
 
-/// 由下载链接推断网址规则模式：域名 ≥3 段时最左段通配为 `*`（覆盖 `filecache44` /
-/// `supporter-files` 这类轮换、多 CDN 子域），路径丢掉末段文件名并过滤疑似易变段
-/// （哈希分片 / 短码：长度 ≤3 或纯十六进制），末尾接 `*`（跨 `/` 匹配子路径）。
+/// 常见的二级公共后缀（`co.uk` 这类）：三段域名以它结尾时注册域占两段，最左段不是子域，
+/// 不能通配。刻意只列常见项，不引入公共后缀库依赖。
+const TWO_LEVEL_SUFFIXES: &[&str] = &[
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "com.cn", "net.cn", "org.cn", "gov.cn",
+    "edu.cn", "com.au", "net.au", "org.au", "edu.au", "co.jp", "ne.jp", "or.jp", "ac.jp", "co.nz",
+    "co.kr", "com.br", "com.tw", "com.hk", "co.in", "co.za",
+];
+
+/// 主机是否该把最左段通配：IP 字面量（IPv4 / 方括号 IPv6）与含空段的主机永不通配；
+/// ≥4 段通配；3 段时仅当末两段不是常见二级公共后缀才通配。
+fn wildcard_leftmost_label(host: &str) -> bool {
+    if host.starts_with('[') {
+        return false;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.iter().any(|label| label.is_empty())
+        || labels
+            .iter()
+            .all(|label| label.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return false;
+    }
+    match labels.len() {
+        0..=2 => false,
+        3 => {
+            let suffix = format!("{}.{}", labels[1], labels[2]).to_ascii_lowercase();
+            !TWO_LEVEL_SUFFIXES.contains(&suffix.as_str())
+        }
+        _ => true,
+    }
+}
+
+/// 由下载链接推断网址规则模式，保证建议必然命中来源链接本身：
+/// - 域名最左段按 [`wildcard_leftmost_label`] 通配（覆盖 `filecache44` / `supporter-files`
+///   这类轮换、多 CDN 子域）；端口原样保留，用户信息整体通配为 `*@`（不把凭据写进规则）；
+/// - 路径丢掉末段文件名，目录段从头保留到第一个易变段（长度 ≤3、纯十六进制、含通配
+///   字符或空段）为止，其后一律交给末尾的 `*`（跨 `/` 匹配子路径），不跳过中间段；
+/// - 查询串 / 片段恒丢弃。
+///
 /// 非 http(s) 或解析不出域名的链接返回空串（对话框仍可手填）。
 pub(crate) fn suggest_url_pattern(url: &str) -> String {
     let trimmed = url.trim();
@@ -157,35 +193,51 @@ pub(crate) fn suggest_url_pattern(url: &str) -> String {
     }
     let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, tail) = rest.split_at(authority_end);
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    let host = host.split_once(':').map_or(host, |(host, _)| host);
-    if host.is_empty() {
+    if authority.contains('*') {
         return String::new();
     }
-    let labels: Vec<&str> = host.split('.').collect();
-    let pattern_host = if labels.len() >= 3 {
-        let mut next = vec!["*"];
-        next.extend_from_slice(&labels[1..]);
-        next.join(".")
+    let (userinfo, host_port) = authority
+        .rsplit_once('@')
+        .map_or(("", authority), |(_, host_port)| ("*@", host_port));
+    let (host, port) = if host_port.starts_with('[') {
+        match host_port.find(']') {
+            Some(end) => host_port.split_at(end + 1),
+            None => return String::new(),
+        }
+    } else {
+        host_port
+            .find(':')
+            .map_or((host_port, ""), |at| host_port.split_at(at))
+    };
+    if host.is_empty() || host == "[]" {
+        return String::new();
+    }
+    let pattern_host = if wildcard_leftmost_label(host) {
+        host.split_once('.')
+            .map_or_else(|| host.to_owned(), |(_, rest)| format!("*.{rest}"))
     } else {
         host.to_owned()
     };
-    let path = tail.split(['?', '#']).next().unwrap_or("");
-    let mut dirs: Vec<&str> = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    dirs.pop();
-    let stable: Vec<&str> = dirs
+    let origin = format!("{scheme}://{userinfo}{pattern_host}{port}");
+    let Some(path) = tail.strip_prefix('/') else {
+        // 没有路径（`https://host`、`https://host?x`）：不带 `/`，直接以 `*` 收尾。
+        return format!("{origin}*");
+    };
+    let path = path.split(['?', '#']).next().unwrap_or("");
+    let mut segments: Vec<&str> = path.split('/').collect();
+    segments.pop();
+    let stable: Vec<&str> = segments
         .into_iter()
-        .filter(|segment| segment.len() > 3 && !segment.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .take_while(|segment| {
+            segment.len() > 3
+                && !segment.chars().all(|ch| ch.is_ascii_hexdigit())
+                && !segment.contains(['*', '?'])
+        })
         .collect();
     if stable.is_empty() {
-        format!("{scheme}://{pattern_host}/*")
+        format!("{origin}/*")
     } else {
-        format!("{scheme}://{pattern_host}/{}*", stable.join("/"))
+        format!("{origin}/{}*", stable.join("/"))
     }
 }
 
@@ -240,6 +292,72 @@ mod tests {
         assert_eq!(suggest_url_pattern("magnet:?xt=urn:btih:abc"), "");
         assert_eq!(suggest_url_pattern("ed2k://|file|x|1|a|/"), "");
         assert_eq!(suggest_url_pattern("not a url"), "");
+    }
+
+    #[test]
+    fn url_pattern_suggestions_always_match_their_source_url() {
+        let cases = [
+            // 中间段易变:截断在第一个易变段,不跳过去拼后面的段。
+            (
+                "https://github.com/abc/releases/download/v1/app.zip",
+                "https://github.com/*",
+            ),
+            (
+                "https://example.com/files/2024/setup/app.exe",
+                "https://example.com/files*",
+            ),
+            (
+                "https://example.com/files/2024/setup/",
+                "https://example.com/files*",
+            ),
+            // 端口 / 用户信息保留在 authority。
+            (
+                "http://cdn1.example.com:8080/mods/a.zip",
+                "http://*.example.com:8080/mods*",
+            ),
+            (
+                "https://user:pw@dl.example.com/mods/a.zip",
+                "https://*@*.example.com/mods*",
+            ),
+            // IP 字面量不通配、不被改写。
+            (
+                "http://192.168.1.10:9000/dl/a.zip",
+                "http://192.168.1.10:9000/*",
+            ),
+            (
+                "http://[2001:db8::1]:8080/pub/a.zip",
+                "http://[2001:db8::1]:8080/*",
+            ),
+            ("http://[::1]/mods/a.zip", "http://[::1]/mods*"),
+            // 二级公共后缀的注册域不通配;更深的子域仍通配。
+            (
+                "https://example.co.uk/files/a.zip",
+                "https://example.co.uk/files*",
+            ),
+            (
+                "https://cdn.example.co.uk/files/a.zip",
+                "https://*.example.co.uk/files*",
+            ),
+            (
+                "https://a.b.example.com/files/a.zip",
+                "https://*.b.example.com/files*",
+            ),
+            (
+                "https://filecache44.gamebanana.com/mods/v832.zip",
+                "https://*.gamebanana.com/mods*",
+            ),
+            // 没有路径 / 仅查询串。
+            ("https://example.com", "https://example.com*"),
+            ("https://example.com?x=1", "https://example.com*"),
+        ];
+        for (url, expected) in cases {
+            let pattern = suggest_url_pattern(url);
+            assert_eq!(pattern, expected, "{url}");
+            assert!(
+                super::super::categories::wildcard_matches(&pattern, url),
+                "{pattern} should match {url}"
+            );
+        }
     }
 
     #[test]

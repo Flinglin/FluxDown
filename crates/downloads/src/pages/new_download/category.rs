@@ -54,9 +54,9 @@ impl NewDownloadView {
             && !self.is_remote()
     }
 
-    /// 快捷添加的网址规则在本表单内生效：追加进分类列表并重算路由 / 候选（对话框打开期间
-    /// 偏好变化不会推送进来），模式回「自动」让网址优先预测立即命中。偏好写回由对话框自己
-    /// 发起（快照 + 新条目整体写回），这里只管本地反馈。
+    /// 快捷添加的网址规则在本表单内生效：追加进分类列表并重算路由 / 候选，模式回「自动」
+    /// 让网址优先预测立即命中。偏好写回由对话框自己发起（最新列表 + 新条目整体写回），
+    /// 这里只管本地反馈。
     pub(super) fn apply_url_rule(
         &mut self,
         entry: fluxdown_protocol::CustomCategoryDto,
@@ -76,6 +76,35 @@ impl NewDownloadView {
             fluxdown_protocol::CategoryRouteDto::from_categories(&categories);
         self.context.category_options = category_options(&categories);
         self.category_mode = CategoryMode::Auto;
+        self.sync_category(window, cx);
+        cx.notify();
+    }
+
+    /// 宿主随偏好快照推送的最新 `custom_categories`：整体替换原始列表并重算路由 / 候选，
+    /// 让快捷添加网址规则永远基于最新列表写回（设置页 / 其他设备的并发修改不被旧快照覆盖）。
+    /// 当前手选的分类若已不在候选里则回到「自动」。
+    pub fn set_custom_categories(
+        &mut self,
+        categories: Vec<fluxdown_protocol::CustomCategoryDto>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if categories == self.context.custom_categories {
+            return;
+        }
+        self.context.category_route =
+            fluxdown_protocol::CategoryRouteDto::from_categories(&categories);
+        self.context.category_options = category_options(&categories);
+        self.context.custom_categories = categories;
+        if let CategoryMode::Category(id) = &self.category_mode
+            && !self
+                .context
+                .category_options
+                .iter()
+                .any(|option| option.id == *id)
+        {
+            self.category_mode = CategoryMode::Auto;
+        }
         self.sync_category(window, cx);
         cx.notify();
     }

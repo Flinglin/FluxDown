@@ -3,8 +3,9 @@
 //! `custom_categories` 偏好（云同步，与设置页同一条写入链路）并让本表单立即按新规则
 //! 预测保存目录（网址规则固定优先）。
 //!
-//! 偏好写入由对话框自己发起（打开时的分类快照 + 新条目整体写回），不依赖跨实体更新：
-//! 即使表单视图在对话框存活期间被释放，规则也能落地。
+//! 偏好写入由对话框自己发起：保存时在表单当前持有的最新 `custom_categories`（宿主随偏好
+//! 快照推送刷新，见 `NewDownloadView::set_custom_categories`）上追加后整体写回，不使用
+//! 打开时的旧快照；写入失败以表单错误呈现，成功后才在表单本地生效并关闭对话框。
 
 use std::sync::Arc;
 
@@ -33,9 +34,8 @@ use crate::model::save_dir_category::{suggest_rule_name, suggest_url_pattern};
 pub(super) struct UrlRuleDialog {
     view: WeakEntity<NewDownloadView>,
     port: Arc<dyn DownloadsPort>,
-    /// 打开对话框时的 `custom_categories` 快照；保存时在其上追加后整体写回。
-    base_categories: Vec<fluxdown_protocol::CustomCategoryDto>,
     translator: Translator,
+    saving: bool,
     name: Entity<InputState>,
     pattern: Entity<InputState>,
     save_dir: Entity<InputState>,
@@ -45,7 +45,7 @@ pub(super) struct UrlRuleDialog {
 
 /// 打开对话框：模式与名称由第一条链接自动识别，目录预填当前表单的保存目录。
 pub(super) fn open(view: Entity<NewDownloadView>, window: &mut Window, cx: &mut App) {
-    let (translator, url, dir, port, base_categories) = view.read_with(cx, |view, cx| {
+    let (translator, url, dir, port) = view.read_with(cx, |view, cx| {
         let url = view.first_http_url().unwrap_or_default();
         let current = view.save_dir.read(cx).value().trim().to_owned();
         let dir = if current.is_empty() {
@@ -58,7 +58,6 @@ pub(super) fn open(view: Entity<NewDownloadView>, window: &mut Window, cx: &mut 
             url,
             dir,
             view.port.clone(),
-            view.context.custom_categories.clone(),
         )
     });
     let title = SharedString::from(translator.text("addUrlRuleTitle").to_owned());
@@ -84,11 +83,11 @@ pub(super) fn open(view: Entity<NewDownloadView>, window: &mut Window, cx: &mut 
         UrlRuleDialog {
             view: view.downgrade(),
             port,
-            base_categories,
             translator,
             name,
             pattern,
             save_dir,
+            saving: false,
             picking_dir: false,
             error: None,
         }
@@ -115,6 +114,9 @@ impl UrlRuleDialog {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         let name = self.name.read(cx).value().trim().to_owned();
         if name.is_empty() {
             self.fail("categoryNameRequired", cx);
@@ -130,8 +132,16 @@ impl UrlRuleDialog {
             self.fail("urlRuleDirRequired", cx);
             return;
         }
+        // 以表单当前持有的最新分类列表为基准（而非打开对话框时的快照）。
+        let Ok(mut list) = self
+            .view
+            .read_with(cx, |view, _| view.context.custom_categories.clone())
+        else {
+            self.fail("urlRuleSaveFailed", cx);
+            return;
+        };
         let entry = fluxdown_protocol::CustomCategoryDto {
-            id: unique_category_id(&self.base_categories),
+            id: unique_category_id(&list),
             name,
             icon: "globe".to_owned(),
             match_mode: "url".to_owned(),
@@ -144,14 +154,9 @@ impl UrlRuleDialog {
             builtin_type: None,
             save_dir,
         };
-        // 对话框自己写偏好：快照 + 新条目整体写回（云同步链路，与设置页一致）。
-        // 编码失败绝不能回退空数组写入（那会清空用户全部自定义分类）。
-        let mut list = self.base_categories.clone();
         list.push(entry.clone());
+        // 编码失败绝不能回退空数组写入（那会清空用户全部自定义分类）。
         let Ok(value) = serde_json::to_value(&list) else {
-            eprintln!(
-                "url rule dialog: could not encode custom_categories; preference not written"
-            );
             self.fail("urlRuleSaveFailed", cx);
             return;
         };
@@ -159,29 +164,36 @@ impl UrlRuleDialog {
             key: fluxdown_protocol::CUSTOM_CATEGORIES_PREF_KEY,
             value,
         });
-        cx.background_executor()
-            .spawn(async move {
-                if let Err(error) = write.await {
+        self.saving = true;
+        self.error = None;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            let Ok(()) = this.update_in(cx, |this, window, cx| {
+                this.saving = false;
+                if let Err(error) = result {
                     eprintln!(
                         "url rule dialog: preference write failed: {:?} ({:?})",
                         error.code, error.reason
                     );
+                    this.fail("urlRuleSaveFailed", cx);
+                    return;
                 }
-            })
-            .detach();
-        // 表单本地立刻生效（预测目录跟随新规则）。`update_in` 会按目标实体的窗口关联
-        // 解析窗口而失败（“entity has no current window”），这里直接用当前窗口 +
-        // 普通 update——对话框本就渲染在表单所在窗口里。
-        let view = self.view.clone();
-        if view
-            .update(cx, |view, cx| {
-                view.apply_url_rule(entry, window, cx);
-            })
-            .is_err()
-        {
-            eprintln!("url rule dialog: new download view unavailable for local apply");
-        }
-        window.close_dialog(cx);
+                // 表单本地立刻生效（预测目录跟随新规则）；对话框渲染在表单所在窗口里，
+                // 直接用当前窗口 + 普通 update（`update_in` 会按目标实体窗口关联解析而失败）。
+                let view = this.view.clone();
+                if view
+                    .update(cx, |view, cx| view.apply_url_rule(entry, window, cx))
+                    .is_err()
+                {
+                    eprintln!("url rule dialog: new download view unavailable for local apply");
+                }
+                window.close_dialog(cx);
+            }) else {
+                return;
+            };
+        })
+        .detach();
     }
 
     fn pick_dir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
