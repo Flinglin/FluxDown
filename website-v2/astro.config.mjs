@@ -237,9 +237,9 @@ export default defineConfig({
         access: "secret",
         optional: true,
       }),
-      // 123 云盘下载源（src/lib/pan123.ts）：.github/actions/pan123-upload 经 WebDAV 上传到同一对象键；
-      // 中国大陆访客与应用内更新（均须通过下载准入）优先 302 到 123 的 CDN 链接，失败再走 dl-cn / GitHub。
-      // 账号 / 应用密码 = 123 云盘「第三方挂载」中只授权发布目录的应用，缺任一项则关闭。
+      // 123 云盘下载源（src/lib/pan123.ts）：.github/scripts/pan123_mirror.sh 经 WebDAV 上传到同一对象键；
+      // 中国大陆访客与应用内更新（均须通过下载准入）优先 302 到 123 直链（URL 鉴权签名），失败再走 dl-cn / GitHub。
+      // WebDAV 账号 / 应用密码（只授权发布目录）用于 PROPFIND 确认资产；UID + 鉴权密钥用于签直链。缺任一项则关闭。
       PAN123_WEBDAV_URL: envField.string({
         context: "server",
         access: "secret",
@@ -254,6 +254,29 @@ export default defineConfig({
         context: "server",
         access: "secret",
         optional: true,
+      }),
+      PAN123_UID: envField.string({
+        context: "server",
+        access: "secret",
+        optional: true,
+      }),
+      // 123「直链管理 → URL 鉴权」密钥（1–16 位字母数字）
+      PAN123_AUTH_KEY: envField.string({
+        context: "server",
+        access: "secret",
+        optional: true,
+      }),
+      // 空 = https://<PAN123_UID>.cdn.123clouddisk.cn（备用域名 123clouddisk.com）
+      PAN123_DIRECT_BASE: envField.string({
+        context: "server",
+        access: "secret",
+        default: "",
+      }),
+      // 已启用直链空间的根目录文件夹（即 WebDAV 授权目录）
+      PAN123_DIRECT_FOLDER: envField.string({
+        context: "server",
+        access: "secret",
+        default: "fd-release",
       }),
 
       // ── 赞助名录（Sponsor Wall）──
