@@ -2,7 +2,7 @@
 // 由偏好 `custom_categories` 构建，按扩展名 / 正则 / 网址通配符把任务归类。
 
 import type { CustomCategoryDto } from '../../../lib/rpc'
-import { wildcardMatches } from '../../../lib/categoryRoute'
+import { compileWildcard } from '../../../lib/categoryRoute'
 import { compileEngineRegex } from '../../rss/filter'
 import { extensionOf, shareUrl } from './task'
 import type { DownloadTaskView } from './task'
@@ -12,7 +12,7 @@ type Matcher =
   | { type: 'other' }
   | { type: 'extensions'; set: ReadonlySet<string> }
   | { type: 'regex'; regex: RegExp | null }
-  | { type: 'url'; pattern: string }
+  | { type: 'url'; regex: RegExp | null }
 
 export interface CategoryRule {
   dto: CustomCategoryDto
@@ -102,7 +102,7 @@ export class CategoryIndex {
         return { dto, matcher: { type: 'regex', regex } }
       }
       if (dto.matchMode === 'url') {
-        return { dto, matcher: { type: 'url', pattern: dto.urlPattern } }
+        return { dto, matcher: { type: 'url', regex: compileWildcard(dto.urlPattern) } }
       }
       return {
         dto,
@@ -141,7 +141,7 @@ export class CategoryIndex {
       case 'regex':
         return matcher.regex !== null && matcher.regex.test(view.name)
       case 'url':
-        return wildcardMatches(matcher.pattern, shareUrl(view))
+        return matcher.regex !== null && matcher.regex.test(shareUrl(view))
     }
   }
 

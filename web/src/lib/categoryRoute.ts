@@ -37,14 +37,14 @@ export function routeFollows(route: CategoryRouteDto, submitted: string, offered
   const base = offered.trim()
   if (base !== '' && dir === base) return true
   if (route.otherDir && dir === route.otherDir) return true
-  return route.rules.some((rule) => !!rule.saveDir && rule.saveDir === dir)
+  return (route.rules ?? []).some((rule) => !!rule.saveDir && rule.saveDir === dir)
 }
 
 /** following 时作为 `saveDir` 下发的基准目录（无分类命中时使用）。 */
 export function routeBaseDir(route: CategoryRouteDto, submitted: string, offered: string): string {
   const dir = submitted.trim()
   if (dir === '') return offered.trim()
-  const isCategoryDir = (!!route.otherDir && dir === route.otherDir) || route.rules.some((rule) => !!rule.saveDir && rule.saveDir === dir)
+  const isCategoryDir = (!!route.otherDir && dir === route.otherDir) || (route.rules ?? []).some((rule) => !!rule.saveDir && rule.saveDir === dir)
   return isCategoryDir ? offered.trim() : dir
 }
 
@@ -84,9 +84,9 @@ function fileNameFromUrl(url: string): string | null {
  * `category_route.rs::wildcard_matches` 一致：`*` 任意串、`?` 恰一个字符，其余字面；
  * 不分大小写；锚定完整匹配整个网址；空 / 非法模式不命中。
  */
-export function wildcardMatches(pattern: string, url: string): boolean {
+export function compileWildcard(pattern: string): RegExp | null {
   const trimmed = pattern.trim()
-  if (trimmed === '') return false
+  if (trimmed === '') return null
   let source = '^'
   for (const ch of trimmed) {
     if (ch === '*') source += '.*'
@@ -95,10 +95,14 @@ export function wildcardMatches(pattern: string, url: string): boolean {
   }
   source += '$'
   try {
-    return new RegExp(source, 'i').test(url)
+    return new RegExp(source, 'iu')
   } catch {
-    return false
+    return null
   }
+}
+
+export function wildcardMatches(pattern: string, url: string): boolean {
+  return compileWildcard(pattern)?.test(url) ?? false
 }
 
 function ruleMatches(rule: NonNullable<CategoryRouteDto['rules']>[number], name: string, url: string): boolean {
@@ -123,16 +127,17 @@ function ruleMatches(rule: NonNullable<CategoryRouteDto['rules']>[number], name:
  * 语义同 agent `category_dir.rs::route_save_dir`（夹具 `native/engine/src/fixtures/category_route_cases.json`）。
  */
 export function routeSaveDir(route: CategoryRouteDto, fileName: string, url: string): string | null {
-  const urlHit = route.rules.find(
+  const rules = route.rules ?? []
+  const urlHit = rules.find(
     (rule) => rule.matchMode === 'url' && !!rule.saveDir && wildcardMatches(rule.urlPattern ?? '', url),
   )
   if (urlHit?.saveDir) return urlHit.saveDir
   const name = fileName.includes('.') ? fileName : (fileNameFromUrl(url) ?? fileName)
   // 文件名未知时只有网址规则参与（上面的网址优先层已返回）。
   if (name === '') return null
-  const hit = route.rules.find((rule) => !!rule.saveDir && ruleMatches(rule, name, url))
+  const hit = rules.find((rule) => !!rule.saveDir && ruleMatches(rule, name, url))
   if (hit?.saveDir) return hit.saveDir
-  if (route.otherDir && !route.rules.some((rule) => ruleMatches(rule, name, url))) return route.otherDir
+  if (route.otherDir && !rules.some((rule) => ruleMatches(rule, name, url))) return route.otherDir
   return null
 }
 
