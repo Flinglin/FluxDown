@@ -3,16 +3,16 @@
  * 下载源优先级：123 云盘 CDN（中国大陆访客与应用内更新）→ dl-cn 镜像（中国大陆访客）→ GitHub。
  * 两个镜像都不能回退 GitHub，302 前必须确认镜像有该资产且大小与 GitHub 资产一致。
  * 镜像只发给像正常客户端的请求（24 小时内读过发布清单、非脚本 User-Agent，见 download-gate.ts）；
- * 大陆按 ip2region 以 X-Client-IP 判定，应用内更新按 User-Agent（isAppUpdaterUserAgent）判定。
+ * 大陆按 Cloudflare 判定的访客国家（X-Client-Country = CN，见 client-ip.ts）判定，
+ * 应用内更新按 User-Agent（isAppUpdaterUserAgent）判定。
  * source=github：仅 GitHub；source=oss：大陆准入访客在镜像都不可用时返回 503，其余同 auto。
  */
 import type { APIRoute } from "astro";
 import { GITHUB_TOKEN, GITHUB_REPO } from "astro:env/server";
 import { getCached, setCached } from "@/lib/api-cache";
-import { getClientIp } from "@/lib/client-ip";
+import { getClientCountry, getClientIp } from "@/lib/client-ip";
 import { recordDownload } from "@/lib/download-ban";
 import { isAppUpdaterUserAgent, mayUseMirror } from "@/lib/download-gate";
-import { isMainlandChinaIp } from "@/lib/geoip";
 import { cdnConfigured, cdnDownloadUrl, ossConfigured, presignOssHeadUrl, releaseObjectKey } from "@/lib/oss";
 import { DownloadLookupCache } from "@/lib/download-cache";
 import { createOssProbe } from "@/lib/download-probe";
@@ -122,7 +122,7 @@ export const GET: APIRoute = async ({ params, url, request, clientAddress }) => 
   }
   const userAgent = request.headers.get("user-agent");
   const admitted = source !== "github" && mayUseMirror(ip, userAgent);
-  const wantsMirror = admitted && isMainlandChinaIp(ip);
+  const wantsMirror = admitted && getClientCountry(request) === "CN";
   const wantsPan123 = admitted && (wantsMirror || isAppUpdaterUserAgent(userAgent));
 
   try {

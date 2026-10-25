@@ -6,11 +6,13 @@ import { resetDownloadBans } from "../src/lib/download-ban";
 let configured = true;
 let cdnConfigured = true;
 const MAINLAND_IP = "114.114.114.114";
+const MAINLAND_IPV6 = "2408:8207:78ae:7a51:f55e:4f2f:261d:ccc9";
+/** 反代按 Cloudflare 的 CF-IPCountry 写入的 X-Client-Country。 */
+const COUNTRY: Record<string, string> = {
+  [MAINLAND_IP]: "CN", [MAINLAND_IPV6]: "CN", "8.8.8.8": "US", "1.1.1.1": "HK",
+};
 const signatures: string[] = [];
 mock.module("astro:env/server", () => ({ GITHUB_TOKEN: "", GITHUB_REPO: "owner/repo" }));
-// mock.module 在 bun test 进程内全局生效且不会被 mock.restore 撤销：必须保留真实导出，否则后运行的 geoip.test.ts 取不到 Ip2RegionV4。
-const realGeoip = await import("../src/lib/geoip");
-mock.module("../src/lib/geoip", () => ({ ...realGeoip, isMainlandChinaIp: (ip: string) => ip === MAINLAND_IP }));
 const ossMock = () => ({
   ossConfigured: configured,
   cdnConfigured,
@@ -82,10 +84,19 @@ async function get(source = "", tag = `v${sequence}`, filename = "app.zip", clie
   if (tag) url.searchParams.set("tag", tag);
   const headers: Record<string, string> = {};
   if (clientIp) headers["x-client-ip"] = clientIp;
+  if (COUNTRY[clientIp]) headers["x-client-country"] = COUNTRY[clientIp];
   if (userAgent) headers["user-agent"] = userAgent;
   const request = new Request(url, { headers });
   return GET({ params: { filename }, url, request, clientAddress: "10.0.0.1" } as Parameters<typeof GET>[0]);
 }
+
+test("mainland is Cloudflare's country code, so IPv6 visitors count and HK / unknown do not", async () => {
+  for (const [ip, expected] of [[MAINLAND_IPV6, "cdn"], ["1.1.1.1", "github"], ["10.9.9.9", "github"]]) {
+    markReleaseViewer(ip);
+    const response = await get("auto", `v${sequence}`, "app.zip", ip, "Mozilla/5.0");
+    expect(response.headers.get("X-Download-Source")).toBe(expected);
+  }
+});
 
 test("github never signs or probes OSS, even for mainland visitors", async () => {
   const response = await get("github", `v${sequence}`, "app.zip", MAINLAND_IP);
