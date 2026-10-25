@@ -43,8 +43,8 @@ pub fn route_save_dir<'a>(
         url_name = file_name_from_url(url);
         url_name.as_deref().unwrap_or(file_name)
     };
-    // 没有可参与匹配的文件名且列表里没有 url 规则时保持原语义：不路由。
-    if name.is_empty() && !route.rules.iter().any(|rule| rule.match_mode == "url") {
+    // 文件名未知时只有网址规则参与：扩展名 / 正则与「其他」兜底保持原语义（不路由）。
+    if name.is_empty() {
         return None;
     }
     if let Some(rule) = route

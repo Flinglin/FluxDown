@@ -942,19 +942,16 @@ impl NewDownloadView {
         value: serde_json::Value,
         cx: &mut Context<Self>,
     ) {
-        self.spawn_preference_write(DownloadsCommand::SetLocalPreference { key, value }, cx);
-    }
-
-    fn spawn_preference_write(&self, command: DownloadsCommand, cx: &mut Context<Self>) {
-        let write = self.port.execute(command);
+        let write = self
+            .port
+            .execute(DownloadsCommand::SetLocalPreference { key, value });
         // 表单随后可能关窗：写入在后台执行器上跑完，不随视图释放而取消。
         cx.background_executor()
             .spawn(async move {
                 if let Err(error) = write.await {
-                    log::error!(
-                        "new download preference write failed: {:?} ({:?})",
-                        error.code,
-                        error.reason
+                    eprintln!(
+                        "local preference write failed: {:?} ({:?})",
+                        error.code, error.reason
                     );
                 }
             })

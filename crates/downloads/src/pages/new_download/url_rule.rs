@@ -131,7 +131,7 @@ impl UrlRuleDialog {
             return;
         }
         let entry = fluxdown_protocol::CustomCategoryDto {
-            id: format!("custom_{}", unix_ms()),
+            id: unique_category_id(&self.base_categories),
             name,
             icon: "globe".to_owned(),
             match_mode: "url".to_owned(),
@@ -145,11 +145,16 @@ impl UrlRuleDialog {
             save_dir,
         };
         // 对话框自己写偏好：快照 + 新条目整体写回（云同步链路，与设置页一致）。
+        // 编码失败绝不能回退空数组写入（那会清空用户全部自定义分类）。
         let mut list = self.base_categories.clone();
-        if !list.iter().any(|known| known.id == entry.id) {
-            list.push(entry.clone());
-        }
-        let value = serde_json::to_value(&list).unwrap_or(serde_json::Value::Array(Vec::new()));
+        list.push(entry.clone());
+        let Ok(value) = serde_json::to_value(&list) else {
+            eprintln!(
+                "url rule dialog: could not encode custom_categories; preference not written"
+            );
+            self.fail("urlRuleSaveFailed", cx);
+            return;
+        };
         let write = self.port.execute(DownloadsCommand::SetSyncedPreference {
             key: fluxdown_protocol::CUSTOM_CATEGORIES_PREF_KEY,
             value,
@@ -157,10 +162,9 @@ impl UrlRuleDialog {
         cx.background_executor()
             .spawn(async move {
                 if let Err(error) = write.await {
-                    log::error!(
+                    eprintln!(
                         "url rule dialog: preference write failed: {:?} ({:?})",
-                        error.code,
-                        error.reason
+                        error.code, error.reason
                     );
                 }
             })
@@ -175,7 +179,7 @@ impl UrlRuleDialog {
             })
             .is_err()
         {
-            log::warn!("url rule dialog: new download view unavailable for local apply");
+            eprintln!("url rule dialog: new download view unavailable for local apply");
         }
         window.close_dialog(cx);
     }
@@ -313,6 +317,23 @@ fn unix_ms() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0)
+}
+
+/// 新建分类 id：`custom_<unix 毫秒>`；与既有 id 冲突（时钟异常退化、同毫秒新建）时追加
+/// `-2`、`-3` … 序号，保证追加永远发生（不因 id 撞车被静默跳过）。
+fn unique_category_id(existing: &[fluxdown_protocol::CustomCategoryDto]) -> String {
+    let base = format!("custom_{}", unix_ms());
+    if !existing.iter().any(|known| known.id == base) {
+        return base;
+    }
+    let mut suffix = 2_u64;
+    loop {
+        let candidate = format!("{base}-{suffix}");
+        if !existing.iter().any(|known| known.id == candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
 }
 
 impl NewDownloadView {

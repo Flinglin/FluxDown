@@ -128,8 +128,8 @@ export function routeSaveDir(route: CategoryRouteDto, fileName: string, url: str
   )
   if (urlHit?.saveDir) return urlHit.saveDir
   const name = fileName.includes('.') ? fileName : (fileNameFromUrl(url) ?? fileName)
-  const hasUrlRules = route.rules.some((rule) => rule.matchMode === 'url')
-  if (name === '' && !hasUrlRules) return null
+  // 文件名未知时只有网址规则参与（上面的网址优先层已返回）。
+  if (name === '') return null
   const hit = route.rules.find((rule) => !!rule.saveDir && ruleMatches(rule, name, url))
   if (hit?.saveDir) return hit.saveDir
   if (route.otherDir && !route.rules.some((rule) => ruleMatches(rule, name, url))) return route.otherDir

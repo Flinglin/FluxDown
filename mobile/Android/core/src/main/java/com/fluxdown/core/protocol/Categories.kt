@@ -13,10 +13,12 @@ data class CustomCategoryDto(
     val id: String,
     val name: String,
     val icon: String = "file",
-    /** `extension` | `regex`。 */
+    /** `extension` | `regex` | `url`。 */
     val matchMode: String = "extension",
     val extensions: List<String> = emptyList(),
     val regexPattern: String = "",
+    /** `url` 模式的通配符模式（`*` 任意串、`?` 单字符、不分大小写、锚定完整匹配整个网址）。 */
+    val urlPattern: String = "",
     val position: Long = 0,
     val visible: Boolean = true,
     val isBuiltin: Boolean = false,
@@ -38,6 +40,7 @@ data class CustomCategoryDto(
         "matchMode" to matchMode,
         "extensions" to extensions,
         "regexPattern" to regexPattern,
+        "urlPattern" to urlPattern,
         "position" to position,
         "visible" to visible,
         "isBuiltin" to isBuiltin,
@@ -60,6 +63,7 @@ data class CustomCategoryDto(
                 matchMode = v.str("matchMode", "extension"),
                 extensions = v.strings("extensions"),
                 regexPattern = v.str("regexPattern"),
+                urlPattern = v.str("urlPattern"),
                 position = v.long("position", 0),
                 visible = v.bool("visible", true),
                 isBuiltin = v.bool("isBuiltin", false),
@@ -117,8 +121,12 @@ data class CategoryDraft(
     val existing: CustomCategoryDto? = null,
     val name: String = existing?.name.orEmpty(),
     val icon: String = existing?.icon ?: "file",
-    /** `extension` | `regex`。 */
-    val matchMode: String = if (existing?.matchMode == "regex") "regex" else "extension",
+    /** `extension` | `regex` | `url`（移动端编辑器暂无网址输入，`url` 仅用于保留既有模式）。 */
+    val matchMode: String = when (existing?.matchMode) {
+        "regex" -> "regex"
+        "url" -> "url"
+        else -> "extension"
+    },
     val extensionsText: String = existing?.extensions?.joinToString(", ").orEmpty(),
     val regexText: String = existing?.regexPattern.orEmpty(),
     val saveDir: String = existing?.saveDir.orEmpty(),
@@ -269,16 +277,32 @@ object CategoryRules {
         if (name.isEmpty() && !isBuiltin) return CategoryBuild.Failure(CategoryValidationError.NameRequired)
         var extensions = existing?.extensions.orEmpty()
         var regex = existing?.regexPattern.orEmpty()
-        val mode = if (draft.matchMode == "regex") "regex" else "extension"
+        var urlPattern = existing?.urlPattern.orEmpty()
+        val mode = when (draft.matchMode) {
+            "regex" -> "regex"
+            "url" -> "url"
+            else -> "extension"
+        }
         if (existing?.hasMatchRules ?: true) {
-            if (mode == "extension") {
-                extensions = parseExtensions(draft.extensionsText)
-                if (extensions.isEmpty() && !isBuiltin) return CategoryBuild.Failure(CategoryValidationError.ExtensionsRequired)
-                regex = ""
-            } else {
-                regex = draft.regexText.trim()
-                if (regex.isNotEmpty() && !regexLooksValid(regex)) return CategoryBuild.Failure(CategoryValidationError.RegexInvalid)
-                extensions = emptyList()
+            when (mode) {
+                "extension" -> {
+                    extensions = parseExtensions(draft.extensionsText)
+                    if (extensions.isEmpty() && !isBuiltin) return CategoryBuild.Failure(CategoryValidationError.ExtensionsRequired)
+                    regex = ""
+                    urlPattern = ""
+                }
+                "regex" -> {
+                    regex = draft.regexText.trim()
+                    if (regex.isNotEmpty() && !regexLooksValid(regex)) return CategoryBuild.Failure(CategoryValidationError.RegexInvalid)
+                    extensions = emptyList()
+                    urlPattern = ""
+                }
+                // 编辑器暂无网址输入：保留既有模式与字段（清空扩展名 / 正则，防止回写成混合形状）。
+                "url" -> {
+                    urlPattern = existing?.urlPattern.orEmpty()
+                    extensions = emptyList()
+                    regex = ""
+                }
             }
         }
         val saveDir = draft.saveDir.trim()
@@ -286,14 +310,14 @@ object CategoryRules {
             return CategoryBuild.Success(
                 existing.copy(
                     name = name, icon = draft.icon, matchMode = mode, extensions = extensions,
-                    regexPattern = regex, saveDir = saveDir,
+                    regexPattern = regex, urlPattern = urlPattern, saveDir = saveDir,
                 ),
             )
         }
         return CategoryBuild.Success(
             CustomCategoryDto(
                 id = newId(nowMs), name = name, icon = draft.icon, matchMode = mode, extensions = extensions,
-                regexPattern = regex, position = NEW_POSITION, visible = true, isBuiltin = false, builtinType = null,
+                regexPattern = regex, urlPattern = urlPattern, position = NEW_POSITION, visible = true, isBuiltin = false, builtinType = null,
                 saveDir = saveDir,
             ),
         )
@@ -307,19 +331,45 @@ object CategoryRules {
 
     /**
      * 外部唤起的分类保存目录（同 agent `category_dir.rs::category_save_dir`）：
-     * 只看可见分类、按 [list] 顺序（调用方传 [CustomCategoryDto.fromPreference] 的已排序结果）；先取首个
-     * 配置了目录且命中的普通分类（非 all / other），否则文件不命中任何普通分类时取 other 的目录。
-     * [fileName] 不含 `.` 时用 URL 路径末段（百分号解码后含 `.`）参与匹配；无命中 / 未配置目录返回 null。
+     * 只看可见分类；网址规则固定优先于扩展名 / 正则（不看列表位置，网址规则之间按 [list] 顺序），
+     * 未被认领的任务再按列表顺序取首个配置了目录且命中的普通分类（非 all / other），都不命中时取
+     * other 的目录。[fileName] 不含 `.` 时用 URL 路径末段（百分号解码后含 `.`）参与匹配，文件名
+     * 未知时只有网址规则参与；无命中 / 未配置目录返回 null。
      */
     fun saveDirFor(list: List<CustomCategoryDto>, fileName: String, url: String): String? {
-        val name = if ('.' in fileName) fileName else fileNameFromUrl(url) ?: fileName
-        if (name.isEmpty()) return null
         val visible = list.filter { it.visible }
         val normals = visible.filter { it.builtinType != "all" && it.builtinType != "other" }
+        // 网址规则固定优先（不看列表位置）：首个命中且配置了目录的网址规则直接定落点。
+        normals.firstOrNull {
+            it.saveDir.isNotEmpty() && it.matchMode == "url" && matchesUrl(it.urlPattern, url)
+        }?.let { return it.saveDir }
+        val name = if ('.' in fileName) fileName else fileNameFromUrl(url) ?: fileName
+        if (name.isEmpty()) return null
         normals.firstOrNull { it.saveDir.isNotEmpty() && matchesName(it, name) }?.let { return it.saveDir }
         val other = visible.firstOrNull { it.builtinType == "other" } ?: return null
-        if (other.saveDir.isEmpty() || normals.any { matchesName(it, name) }) return null
+        // 「其他」兜底前的命中检查包含网址规则（命中但没配目录的网址规则同样阻止兜底）。
+        val claimed = normals.any { matchesName(it, name) || (it.matchMode == "url" && matchesUrl(it.urlPattern, url)) }
+        if (other.saveDir.isEmpty() || claimed) return null
         return other.saveDir
+    }
+
+    /** 网址通配符（`*` 任意串、`?` 单字符，其余字面；不分大小写；锚定完整匹配）；空 / 非法模式不命中。 */
+    private fun matchesUrl(pattern: String, url: String): Boolean {
+        val trimmed = pattern.trim()
+        if (trimmed.isEmpty()) return false
+        val source = buildString {
+            append('^')
+            for (ch in trimmed) {
+                when (ch) {
+                    '*' -> append(".*")
+                    '?' -> append('.')
+                    else -> append(Regex.escape(ch.toString()))
+                }
+            }
+            append('$')
+        }
+        val regex = runCatching { Regex(source, RegexOption.IGNORE_CASE) }.getOrNull() ?: return false
+        return regex.containsMatchIn(url)
     }
 
     /** 正则不区分大小写、任意位置命中，非法正则视为不命中；扩展名比较不区分大小写（同 `category_dir.rs::matches`）。 */

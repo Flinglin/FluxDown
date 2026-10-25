@@ -291,4 +291,66 @@ class CategoriesTest {
         )
         assertEquals("/iso", CategoryRules.saveDirFor(list, "Ubuntu-24.04.ISO", ""))
     }
+
+    // ── 网址规则（url 模式）──
+
+    @Test fun urlPatternRoundTripsThroughPreferenceJson() {
+        val list = listOf(
+            CustomCategoryDto(
+                id = "u1", name = "Site", matchMode = "url",
+                urlPattern = "https://*.gamebanana.com/mods*", saveDir = "/mod",
+            ),
+        )
+        val back = CustomCategoryDto.fromPreference(CustomCategoryDto.preferenceValue(list))
+        assertEquals("url", back[0].matchMode)
+        assertEquals("https://*.gamebanana.com/mods*", back[0].urlPattern)
+        // 缺失字段取默认空串。
+        val sparse = CustomCategoryDto.fromPreference(JsonValue.Str("""[{"id":"a","name":"A","matchMode":"url"}]"""))
+        assertEquals("", sparse[0].urlPattern)
+    }
+
+    @Test fun editingPreservesUrlModeAndPattern() {
+        val existing = CustomCategoryDto(
+            id = "u1", name = "Site", matchMode = "url",
+            urlPattern = "https://*.gamebanana.com/mods*", saveDir = "/mod",
+        )
+        val draft = CategoryDraft(existing).copy(name = "Site2", saveDir = "/mod2")
+        val built = success(CategoryRules.build(draft, nowMs = 42L))
+        assertEquals("url", built.matchMode)
+        assertEquals("https://*.gamebanana.com/mods*", built.urlPattern)
+        assertTrue(built.extensions.isEmpty())
+        // 切回扩展名模式时清空网址字段，不留下混合形状。
+        val switched = CategoryDraft(existing).copy(matchMode = "extension", extensionsText = "zip")
+        val rebuilt = success(CategoryRules.build(switched, nowMs = 43L))
+        assertEquals("extension", rebuilt.matchMode)
+        assertEquals("", rebuilt.urlPattern)
+    }
+
+    @Test fun saveDirForPutsUrlRulesAheadOfExtensionRules() {
+        val list = listOf(
+            CustomCategoryDto(id = "b1", name = "zip", extensions = listOf("zip"), saveDir = "/archives"),
+            CustomCategoryDto(id = "u1", name = "site", matchMode = "url", urlPattern = "https://mirror.test/*", saveDir = "/mirror"),
+            CustomCategoryDto(id = "o1", name = "other", isBuiltin = true, builtinType = "other", saveDir = "/other"),
+        )
+        // 网址规则排在后面也优先命中。
+        assertEquals("/mirror", CategoryRules.saveDirFor(list, "a.zip", "https://mirror.test/a.zip"))
+        // 未命中网址：按扩展名走，后续进 other。
+        assertEquals("/archives", CategoryRules.saveDirFor(list, "a.zip", "https://x.test/a.zip"))
+        assertEquals("/other", CategoryRules.saveDirFor(list, "setup.exe", "https://x.test/setup.exe"))
+        // 文件名未知：只有网址规则参与；未命中网址规则时不进 other。
+        assertNull(CategoryRules.saveDirFor(list, "", "https://x.test/download/blob"))
+        assertEquals("/mirror", CategoryRules.saveDirFor(list, "", "https://mirror.test/download/blob"))
+        // 空 / 非法模式不命中：照常落到 other。
+        val blanks = listOf(
+            CustomCategoryDto(id = "u0", name = "blank", matchMode = "url", urlPattern = "   ", saveDir = "/never"),
+            CustomCategoryDto(id = "o1", name = "other", isBuiltin = true, builtinType = "other", saveDir = "/other"),
+        )
+        assertEquals("/other", CategoryRules.saveDirFor(blanks, "setup.exe", "https://nokeep.test/setup.exe"))
+        // 命中但没配目录的网址规则阻止 other 兜底（同引擎夹具语义）。
+        val noDir = listOf(
+            CustomCategoryDto(id = "u0", name = "site", matchMode = "url", urlPattern = "https://nokeep.test/*"),
+            CustomCategoryDto(id = "o1", name = "other", isBuiltin = true, builtinType = "other", saveDir = "/other"),
+        )
+        assertNull(CategoryRules.saveDirFor(noDir, "setup.exe", "https://nokeep.test/setup.exe"))
+    }
 }

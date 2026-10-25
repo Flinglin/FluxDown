@@ -1004,6 +1004,7 @@
   "addUrlRuleTitle": "Quick Add URL Rule",
   "addUrlRuleDesc": "Generate a URL pattern from the current link; matching downloads go to the chosen folder",
   "urlRuleDirRequired": "Choose or enter a save folder",
+  "urlRuleSaveFailed": "Failed to save the rule, please retry",
   "categoryNameRequired": "Category name is required",
   "extensionsRequired": "Enter at least one extension",
   "categorySaveDir": "Category Save Directory",

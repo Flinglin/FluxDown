@@ -47,9 +47,11 @@ struct MenuEntry {
 }
 
 impl NewDownloadView {
-    /// 分类选择器可见：目标是本机（「添加网址规则」入口也挂在这里，零分类时仍显示）。
+    /// 分类选择器可见：有可路由的分类、有可选目录，且目标是本机。
     fn category_picker_visible(&self) -> bool {
-        !self.is_remote()
+        self.context.category_route.is_some()
+            && !self.context.category_options.is_empty()
+            && !self.is_remote()
     }
 
     /// 快捷添加的网址规则在本表单内生效：追加进分类列表并重算路由 / 候选（对话框打开期间
