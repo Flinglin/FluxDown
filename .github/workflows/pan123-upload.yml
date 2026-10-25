@@ -1,0 +1,64 @@
+name: Upload Release to 123pan
+
+# 手动把指定 GitHub Release 的资产（重新）同步到 123 云盘：补传历史版本、release.yml 里 123 步骤
+# 失败或超时后补救。资产取自 Release 本身（gh release download），目录规则与 release.yml 一致，
+# 逻辑见 .github/actions/pan123-upload。示例：
+#   gh workflow run pan123-upload.yml --ref main -f tag=v0.6.0 [-f pattern='*.apk'] [-f dry-run=true]
+run-name: "123 云盘上传 ${{ inputs.tag }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag（如 v0.6.0、v0.6.1-rc.1、历史组件 release extension-v0.4.8）
+        required: true
+        type: string
+      pattern:
+        description: 只上传匹配的资产（gh release download --pattern 通配，留空 = 全部）
+        required: false
+        default: ""
+        type: string
+      dry-run:
+        description: 只下载并探活 WebDAV，不上传
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pan123-upload-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Upload ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          PATTERN: ${{ inputs.pattern }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in *[!A-Za-z0-9._-]*|"") echo "::error::invalid tag '$TAG'"; exit 1 ;; esac
+          args=(--repo "$GITHUB_REPOSITORY" --dir release-assets)
+          if [ -n "$PATTERN" ]; then args+=(--pattern "$PATTERN"); fi
+          gh release download "$TAG" "${args[@]}"
+          COUNT=$(find release-assets -maxdepth 1 -type f | wc -l)
+          if [ "$COUNT" -eq 0 ]; then echo "::error::no assets matched in release $TAG"; exit 1; fi
+          du -sh release-assets
+          ls -l release-assets
+
+      - name: Upload to 123pan
+        uses: ./.github/actions/pan123-upload
+        with:
+          tag: ${{ inputs.tag }}
+          username: ${{ secrets.PAN123_WEBDAV_USER }}
+          password: ${{ secrets.PAN123_WEBDAV_PASSWORD }}
+          dry-run: ${{ inputs.dry-run }}

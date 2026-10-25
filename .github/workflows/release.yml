@@ -1874,10 +1874,10 @@ jobs:
           if-no-files-found: error
 
   # ── Release Job 2: 各组件上传到统一 release（互不依赖，任一组件失败不影响其余）──
-  # release-upload 最后上传 SHA256SUMS-<组件>.txt 完成哨兵；OSS 同步失败不阻断发布
-  # （官网 /api/download 缺 OSS 对象时回退 GitHub）。
-  # 演练：release-upload / oss-upload 走 dry-run（只生成哨兵、只读探活 OSS，OSS 失败即报错），
-  # 哨兵存为 rehearsal-sums-<组件> artifact 供 publish-release 预览。
+  # release-upload 最后上传 SHA256SUMS-<组件>.txt 完成哨兵；OSS / 123 云盘同步失败不阻断发布
+  # （官网 /api/download 缺镜像对象时回退下一个源，最终 GitHub）。
+  # 演练：release-upload / oss-upload / pan123-upload 走 dry-run（只生成哨兵、只读探活 OSS 与 WebDAV，
+  # 镜像凭据失败即报错），哨兵存为 rehearsal-sums-<组件> artifact 供 publish-release 预览。
   upload-app:
     name: Upload Desktop App
     runs-on: ubuntu-latest
@@ -1944,6 +1944,16 @@ jobs:
           access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
 
+      - name: Upload release assets to 123pan
+        continue-on-error: ${{ needs.changes.outputs.rehearsal == 'false' }}
+        timeout-minutes: 90
+        uses: ./.github/actions/pan123-upload
+        with:
+          tag: ${{ needs.changes.outputs.tag }}
+          username: ${{ secrets.PAN123_WEBDAV_USER }}
+          password: ${{ secrets.PAN123_WEBDAV_PASSWORD }}
+          dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
+
   upload-extension:
     name: Upload Browser Extension
     runs-on: ubuntu-latest
@@ -1985,6 +1995,16 @@ jobs:
           tag: ${{ needs.changes.outputs.tag }}
           access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
           access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
+
+      - name: Upload release assets to 123pan
+        continue-on-error: ${{ needs.changes.outputs.rehearsal == 'false' }}
+        timeout-minutes: 90
+        uses: ./.github/actions/pan123-upload
+        with:
+          tag: ${{ needs.changes.outputs.tag }}
+          username: ${{ secrets.PAN123_WEBDAV_USER }}
+          password: ${{ secrets.PAN123_WEBDAV_PASSWORD }}
           dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
 
   # Docker 镜像直接推 ghcr（不是 release 资产），其失败由 publish-release 单独报告，不阻断二进制上传。
@@ -2036,6 +2056,16 @@ jobs:
           access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
 
+      - name: Upload release assets to 123pan
+        continue-on-error: ${{ needs.changes.outputs.rehearsal == 'false' }}
+        timeout-minutes: 90
+        uses: ./.github/actions/pan123-upload
+        with:
+          tag: ${{ needs.changes.outputs.tag }}
+          username: ${{ secrets.PAN123_WEBDAV_USER }}
+          password: ${{ secrets.PAN123_WEBDAV_PASSWORD }}
+          dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
+
   upload-cli:
     name: Upload CLI
     runs-on: ubuntu-latest
@@ -2084,6 +2114,16 @@ jobs:
           access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
 
+      - name: Upload release assets to 123pan
+        continue-on-error: ${{ needs.changes.outputs.rehearsal == 'false' }}
+        timeout-minutes: 90
+        uses: ./.github/actions/pan123-upload
+        with:
+          tag: ${{ needs.changes.outputs.tag }}
+          username: ${{ secrets.PAN123_WEBDAV_USER }}
+          password: ${{ secrets.PAN123_WEBDAV_PASSWORD }}
+          dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
+
   upload-mobile:
     name: Upload Mobile
     runs-on: ubuntu-latest
@@ -2130,6 +2170,16 @@ jobs:
           tag: ${{ needs.changes.outputs.tag }}
           access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
           access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
+
+      - name: Upload release assets to 123pan
+        continue-on-error: ${{ needs.changes.outputs.rehearsal == 'false' }}
+        timeout-minutes: 90
+        uses: ./.github/actions/pan123-upload
+        with:
+          tag: ${{ needs.changes.outputs.tag }}
+          username: ${{ secrets.PAN123_WEBDAV_USER }}
+          password: ${{ secrets.PAN123_WEBDAV_PASSWORD }}
           dry-run: ${{ needs.changes.outputs.rehearsal != 'false' }}
 
   # ── Release Job 3: 收尾发布（tag 推送与补发都跑，幂等）──

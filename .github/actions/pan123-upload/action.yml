@@ -1,0 +1,136 @@
+# 把 release 资产经 WebDAV 同步到 123 云盘（release.yml 各 upload-<组件> job 与 pan123-upload.yml 手动补传共用）
+#
+# 目录与 OSS 同一契约（website-v2/src/lib/oss.ts 的 releaseObjectKey，改一处须同步另一处）：
+#   <WebDAV 授权目录>/<prefix>/<版本>/<组件>/<asset-name>
+# v0.4.8 → v0.4.8/app/（统一 release 的全部组件都在这个目录）；历史组件 release extension-v0.4.8 →
+# v0.4.8/extension/，server-v… / cli-v… / mobile-v… 同理。123 不拦截 .apk / .ipa，不做 OSS 那样的 .bin 改名。
+# 官网（website-v2/src/lib/pan123.ts）PROPFIND 确认大小一致后，把 WebDAV GET 的 302 CDN 链接发给下载者。
+#
+# 凭据 = 123 云盘「第三方挂载」里只授权发布目录的 WebDAV 应用（secrets PAN123_WEBDAV_USER /
+# PAN123_WEBDAV_PASSWORD）；未配置时整步跳过，不阻断 GitHub Release（官网回退 dl-cn / GitHub）。
+# dry-run=true（release.yml 演练）：推导目标目录并 PROPFIND 只读探活凭据，不上传。
+name: Upload release assets to 123pan
+description: 用 WebDAV 把 release-assets/ 上传到 123 云盘的 <prefix>/<版本>/<组件>/ 下
+
+inputs:
+  tag:
+    description: 资产所属 GitHub Release 的 tag（决定子目录）
+    required: true
+  dir:
+    description: 本地资产目录
+    required: false
+    default: release-assets
+  username:
+    description: WebDAV 账号（secrets.PAN123_WEBDAV_USER）
+    required: true
+  password:
+    description: WebDAV 应用密码（secrets.PAN123_WEBDAV_PASSWORD）
+    required: true
+  url:
+    description: WebDAV 根地址（即授权目录）
+    required: false
+    default: https://webdav.123pan.cn/webdav
+  prefix:
+    description: 授权目录内根目录（无首尾斜杠），与官网 OSS_RELEASE_PREFIX 一致
+    required: false
+    default: FluxDownRelease
+  dry-run:
+    description: "'true' = 只推导目标目录并只读探活凭据，不上传"
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Upload to 123pan
+      shell: bash
+      env:
+        DAV_USER: ${{ inputs.username }}
+        DAV_PASSWORD: ${{ inputs.password }}
+        DAV_URL: ${{ inputs.url }}
+        TAG: ${{ inputs.tag }}
+        DIR: ${{ inputs.dir }}
+        PREFIX: ${{ inputs.prefix }}
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        set -euo pipefail
+        if [ -z "$DAV_USER" ] || [ -z "$DAV_PASSWORD" ]; then
+          echo "⚠️  PAN123_WEBDAV_USER / PAN123_WEBDAV_PASSWORD not configured, skipping 123pan upload"
+          exit 0
+        fi
+        case "$TAG" in *[!A-Za-z0-9._-]*|"") echo "::error::invalid tag '$TAG'"; exit 1 ;; esac
+        case "$TAG" in
+          v*)   COMPONENT=app; VERSION=$TAG ;;
+          *-v*) COMPONENT=${TAG%%-v*}; VERSION=v${TAG#*-v} ;;
+          *)    echo "::error::invalid tag '$TAG'"; exit 1 ;;
+        esac
+        BASE=${DAV_URL%/}
+        REL="$PREFIX/$VERSION/$COMPONENT"
+
+        # 凭据只进 0600 的 netrc，不出现在进程参数里
+        NETRC=$(mktemp)
+        trap 'rm -f "$NETRC"' EXIT
+        chmod 600 "$NETRC"
+        HOST=${BASE#*://}; HOST=${HOST%%/*}
+        printf 'machine %s login %s password %s\n' "$HOST" "$DAV_USER" "$DAV_PASSWORD" > "$NETRC"
+        dav() { curl -sS --netrc-file "$NETRC" --connect-timeout 20 "$@"; }
+        remote_size() {
+          dav -m 60 -X PROPFIND -H 'Depth: 0' "$1" \
+            | grep -o '<[A-Za-z:]*getcontentlength>[0-9]*' | sed 's/.*>//' || true
+        }
+
+        ROOT_CODE=$(dav -m 60 -o /dev/null -w '%{http_code}' -X PROPFIND -H 'Depth: 0' "$BASE/") || ROOT_CODE=000
+        if [ "$ROOT_CODE" != 207 ]; then
+          echo "::error::123pan WebDAV PROPFIND $BASE/ returned HTTP $ROOT_CODE（账号 / 应用密码 / 授权目录有误？）"
+          exit 1
+        fi
+        LOCAL_COUNT=$(find "$DIR" -maxdepth 1 -type f | wc -l)
+        if [ "$DRY_RUN" != "false" ]; then
+          echo "🧪 dry-run: ${LOCAL_COUNT} file(s) from ${DIR}/ → 123pan:/${REL}/（未上传）；WebDAV 凭据有效"
+          exit 0
+        fi
+
+        # 逐级建目录（PUT 不会自动建父目录）；已存在时 123 返回 201，标准 WebDAV 返回 405
+        DIR_PATH=""
+        IFS=/ read -ra SEGMENTS <<< "$REL"
+        for seg in "${SEGMENTS[@]}"; do
+          DIR_PATH="$DIR_PATH/$(printf '%s' "$seg" | jq -sRr @uri)"
+          CODE=$(dav -m 60 -o /dev/null -w '%{http_code}' -X MKCOL "$BASE$DIR_PATH/") || CODE=000
+          case "$CODE" in
+            201|405) ;;
+            *) echo "::error::MKCOL $DIR_PATH/ returned HTTP $CODE"; exit 1 ;;
+          esac
+        done
+
+        echo "Uploading ${LOCAL_COUNT} file(s) from ${DIR}/ → 123pan:/${REL}/"
+        FAILED=0
+        while IFS= read -r -d '' f; do
+          name=$(basename "$f")
+          url="$BASE$DIR_PATH/$(printf '%s' "$name" | jq -sRr @uri)"
+          size=$(stat -c %s "$f")
+          ok=false
+          # 覆盖同名文件：补传同 tag 时以新产物为准；PUT 后以 PROPFIND 大小为准，不信任状态码
+          for i in 1 2 3; do
+            CODE=$(dav -X PUT -T "$f" --speed-limit 10240 --speed-time 120 \
+              -o /dev/null -w '%{http_code}' "$url") || CODE=000
+            if [ "$CODE" = 201 ] || [ "$CODE" = 204 ] || [ "$CODE" = 200 ]; then
+              if [ "$(remote_size "$url")" = "$size" ]; then ok=true; break; fi
+              echo "⚠️  $name: size mismatch after upload (attempt $i)"
+            else
+              echo "⚠️  $name: PUT returned HTTP $CODE (attempt $i)"
+            fi
+            [ "$i" = 3 ] || sleep 15
+          done
+          if $ok; then
+            echo "✓ $name ($size bytes)"
+          else
+            echo "::error::123pan upload failed after 3 attempts: $name"
+            FAILED=$((FAILED + 1))
+          fi
+        done < <(find "$DIR" -maxdepth 1 -type f -print0 | sort -z)
+
+        if [ "$FAILED" -gt 0 ]; then
+          echo "::error::${FAILED} file(s) failed to upload to 123pan"
+          exit 1
+        fi
+        echo "✅ 123pan upload complete: /${REL}/"
