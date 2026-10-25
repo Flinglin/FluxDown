@@ -176,6 +176,7 @@ public struct CustomCategoryDto: Sendable, Hashable, Identifiable, Codable {
     /// `all` 完全锁定；`other` 用排除逻辑匹配——两者都不展示匹配规则区。
     public var hasMatchRules: Bool { !(isAll || isOther) }
     public var isRegex: Bool { matchMode == "regex" }
+    public var isUrl: Bool { matchMode == "url" }
 
     /// 内置分类基线（与 `CustomCategoryDto::builtin_defaults` 同序同扩展名）。
     public static var builtinDefaults: [CustomCategoryDto] {
@@ -233,12 +234,14 @@ public enum CategoryValidationError: Error, Sendable, Hashable {
     case nameRequired
     case extensionsRequired
     case regexInvalid
+    case urlPatternRequired
 
     public var i18nKey: String {
         switch self {
         case .nameRequired: "categoryNameRequired"
         case .extensionsRequired: "extensionsRequired"
         case .regexInvalid: "regexInvalid"
+        case .urlPatternRequired: "urlPatternRequired"
         }
     }
 }
@@ -249,10 +252,11 @@ public struct CategoryDraft: Sendable, Hashable {
     public var existing: CustomCategoryDto?
     public var name: String
     public var icon: String
-    /// `extension` | `regex` | `url`（编辑器暂无网址输入，`url` 仅用于保留既有模式）。
+    /// `extension` | `regex` | `url`。
     public var matchMode: String
     public var extensionsText: String
     public var regexText: String
+    public var urlText: String
     public var saveDir: String
 
     public init(existing: CustomCategoryDto?) {
@@ -262,6 +266,7 @@ public struct CategoryDraft: Sendable, Hashable {
         matchMode = existing?.matchMode == "regex" ? "regex" : (existing?.matchMode == "url" ? "url" : "extension")
         extensionsText = existing?.extensions.joined(separator: ", ") ?? ""
         regexText = existing?.regexPattern ?? ""
+        urlText = existing?.urlPattern ?? ""
         saveDir = existing?.saveDir ?? ""
     }
 }
@@ -448,9 +453,9 @@ public enum CategoryRules {
                 if !regex.isEmpty, !regexLooksValid(regex) { return .failure(.regexInvalid) }
                 extensions = []
                 urlPattern = ""
-            // 编辑器暂无网址输入：保留既有模式与字段（清空扩展名 / 正则，防止回写成混合形状）。
             default:
-                urlPattern = draft.existing?.urlPattern ?? ""
+                urlPattern = draft.urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if urlPattern.isEmpty, !isBuiltin { return .failure(.urlPatternRequired) }
                 extensions = []
                 regex = ""
             }

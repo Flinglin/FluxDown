@@ -309,21 +309,55 @@ class CategoriesTest {
         assertEquals("", sparse[0].urlPattern)
     }
 
-    @Test fun editingPreservesUrlModeAndPattern() {
+    @Test fun draftOfUrlCategoryCarriesPatternAndEditedTextIsWritten() {
         val existing = CustomCategoryDto(
             id = "u1", name = "Site", matchMode = "url",
             urlPattern = "https://*.gamebanana.com/mods*", saveDir = "/mod",
         )
-        val draft = CategoryDraft(existing).copy(name = "Site2", saveDir = "/mod2")
-        val built = success(CategoryRules.build(draft, nowMs = 42L))
-        assertEquals("url", built.matchMode)
-        assertEquals("https://*.gamebanana.com/mods*", built.urlPattern)
-        assertTrue(built.extensions.isEmpty())
-        // 切回扩展名模式时清空网址字段，不留下混合形状。
-        val switched = CategoryDraft(existing).copy(matchMode = "extension", extensionsText = "zip")
-        val rebuilt = success(CategoryRules.build(switched, nowMs = 43L))
-        assertEquals("extension", rebuilt.matchMode)
-        assertEquals("", rebuilt.urlPattern)
+        // 编辑器打开既有网址分类：草稿带出模式与模式文本，未改动直接保存不丢规则。
+        val draft = CategoryDraft(existing)
+        assertEquals("url", draft.matchMode)
+        assertEquals("https://*.gamebanana.com/mods*", draft.urlText)
+        val untouched = success(CategoryRules.build(draft.copy(name = "Site2", saveDir = "/mod2"), nowMs = 42L))
+        assertEquals("url", untouched.matchMode)
+        assertEquals("https://*.gamebanana.com/mods*", untouched.urlPattern)
+        assertTrue(untouched.extensions.isEmpty() && untouched.regexPattern.isEmpty())
+        // 用户改了输入框：写入新的（去空白）模式。
+        val edited = success(CategoryRules.build(draft.copy(urlText = "  https://mirror.test/*  "), nowMs = 42L))
+        assertEquals("https://mirror.test/*", edited.urlPattern)
+        assertEquals("/mod", edited.saveDir)
+    }
+
+    @Test fun urlModeRequiresPatternAndNewCategoryUsesUrlText() {
+        val blank = CategoryDraft().copy(name = "Site", matchMode = "url", urlText = "   ", extensionsText = "zip")
+        assertEquals(CategoryValidationError.UrlPatternRequired, failure(CategoryRules.build(blank, nowMs = 1L)))
+        val entry = success(CategoryRules.build(blank.copy(urlText = "https://example.com/*", saveDir = "/x"), nowMs = 1L))
+        assertEquals("url", entry.matchMode)
+        assertEquals("https://example.com/*", entry.urlPattern)
+        // 另一模式的残留输入不进入条目。
+        assertTrue(entry.extensions.isEmpty())
+        assertEquals("", entry.regexPattern)
+        assertEquals("urlPatternRequired", CategoryValidationError.UrlPatternRequired.i18nKey)
+    }
+
+    @Test fun switchingModeAwayFromUrlClearsPattern() {
+        val existing = CustomCategoryDto(
+            id = "u1", name = "Site", matchMode = "url",
+            urlPattern = "https://*.gamebanana.com/mods*", saveDir = "/mod",
+        )
+        val toExtension = success(CategoryRules.build(CategoryDraft(existing).copy(matchMode = "extension", extensionsText = "zip"), nowMs = 43L))
+        assertEquals("extension", toExtension.matchMode)
+        assertEquals("", toExtension.urlPattern)
+        assertEquals(listOf("zip"), toExtension.extensions)
+        val toRegex = success(CategoryRules.build(CategoryDraft(existing).copy(matchMode = "regex", regexText = ".*\\.zip$"), nowMs = 44L))
+        assertEquals("regex", toRegex.matchMode)
+        assertEquals("", toRegex.urlPattern)
+        // 扩展名 / 正则分类切到网址模式：清空扩展名与正则。
+        val ext = CustomCategoryDto(id = "e1", name = "Zip", extensions = listOf("zip"))
+        val toUrl = success(CategoryRules.build(CategoryDraft(ext).copy(matchMode = "url", urlText = "https://a.test/*"), nowMs = 45L))
+        assertEquals("url", toUrl.matchMode)
+        assertTrue(toUrl.extensions.isEmpty())
+        assertEquals("https://a.test/*", toUrl.urlPattern)
     }
 
     @Test fun saveDirForPutsUrlRulesAheadOfExtensionRules() {

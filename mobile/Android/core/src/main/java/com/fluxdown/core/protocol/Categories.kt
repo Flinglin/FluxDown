@@ -1,6 +1,7 @@
 package com.fluxdown.core.protocol
 
 import com.fluxdown.core.format.UrlText
+import com.fluxdown.core.model.UrlWildcard
 
 /**
  * 自定义分类（偏好键 `custom_categories`，与 `native/protocol/src/agent.rs::CustomCategoryDto`、
@@ -31,6 +32,7 @@ data class CustomCategoryDto(
     /** `all` 完全锁定；`other` 用排除逻辑匹配——两者都不展示匹配规则区。 */
     val hasMatchRules: Boolean get() = !(isAll || isOther)
     val isRegex: Boolean get() = matchMode == "regex"
+    val isUrl: Boolean get() = matchMode == "url"
 
     /** 与 Web 同形：`builtinType` 为空时写显式 `null`。 */
     fun toJson(): JsonValue = jsonObject(
@@ -114,6 +116,7 @@ enum class CategoryValidationError(val i18nKey: String) {
     NameRequired("categoryNameRequired"),
     ExtensionsRequired("extensionsRequired"),
     RegexInvalid("regexInvalid"),
+    UrlPatternRequired("urlPatternRequired"),
 }
 
 /** 分类编辑器的草稿（表单）；[existing] = null 为新建。 */
@@ -121,7 +124,7 @@ data class CategoryDraft(
     val existing: CustomCategoryDto? = null,
     val name: String = existing?.name.orEmpty(),
     val icon: String = existing?.icon ?: "file",
-    /** `extension` | `regex` | `url`（移动端编辑器暂无网址输入，`url` 仅用于保留既有模式）。 */
+    /** `extension` | `regex` | `url`。 */
     val matchMode: String = when (existing?.matchMode) {
         "regex" -> "regex"
         "url" -> "url"
@@ -129,6 +132,7 @@ data class CategoryDraft(
     },
     val extensionsText: String = existing?.extensions?.joinToString(", ").orEmpty(),
     val regexText: String = existing?.regexPattern.orEmpty(),
+    val urlText: String = existing?.urlPattern.orEmpty(),
     val saveDir: String = existing?.saveDir.orEmpty(),
 )
 
@@ -297,9 +301,9 @@ object CategoryRules {
                     extensions = emptyList()
                     urlPattern = ""
                 }
-                // 编辑器暂无网址输入：保留既有模式与字段（清空扩展名 / 正则，防止回写成混合形状）。
                 "url" -> {
-                    urlPattern = existing?.urlPattern.orEmpty()
+                    urlPattern = draft.urlText.trim()
+                    if (urlPattern.isEmpty() && !isBuiltin) return CategoryBuild.Failure(CategoryValidationError.UrlPatternRequired)
                     extensions = emptyList()
                     regex = ""
                 }
@@ -353,24 +357,9 @@ object CategoryRules {
         return other.saveDir
     }
 
-    /** 网址通配符（`*` 任意串、`?` 单字符，其余字面；不分大小写；锚定完整匹配）；空 / 非法模式不命中。 */
-    private fun matchesUrl(pattern: String, url: String): Boolean {
-        val trimmed = pattern.trim()
-        if (trimmed.isEmpty()) return false
-        val source = buildString {
-            append('^')
-            for (ch in trimmed) {
-                when (ch) {
-                    '*' -> append(".*")
-                    '?' -> append('.')
-                    else -> append(Regex.escape(ch.toString()))
-                }
-            }
-            append('$')
-        }
-        val regex = runCatching { Regex(source, RegexOption.IGNORE_CASE) }.getOrNull() ?: return false
-        return regex.containsMatchIn(url)
-    }
+    /** 网址通配符匹配（见 [UrlWildcard]）；空 / 非法模式不命中。 */
+    private fun matchesUrl(pattern: String, url: String): Boolean =
+        UrlWildcard.compile(pattern)?.matches(url) == true
 
     /** 正则不区分大小写、任意位置命中，非法正则视为不命中；扩展名比较不区分大小写（同 `category_dir.rs::matches`）。 */
     private fun matchesName(category: CustomCategoryDto, name: String): Boolean {
