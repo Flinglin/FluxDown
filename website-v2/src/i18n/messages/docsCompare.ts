@@ -24,7 +24,13 @@ export const docsCompare = defineMessages({
     sourceGdDocs: "Ghost Downloader docs",
     sourceGdRepo: "Ghost Downloader on GitHub",
     sourceFluxDown: "FluxDown source code",
+    method:
+      "Measured rows: one MacBook (Apple M5, 32 GB, macOS 27.0.1) on one home connection, 2026-10-26, FluxDown 0.6.3 vs Ghost Downloader 4.4.5, fresh data directories and default settings, two runs per app. Downloads were added through each app's aria2 RPC; time runs from the RPC call to the last write of the finished file. Background memory is the summed physical footprint of all the app's processes (the “Memory” column in Activity Monitor) with no window open: FluxDown after closing its window, Ghost Downloader started with its own --silence background mode. Results depend on network and time of day.",
+    methodLabel: "How we measured",
+    better: "Better",
     groups: {
+      measured: "Measured",
+      architecture: "Architecture",
       protocols: "Protocols",
       platforms: "Platforms",
       browser: "Browser",
@@ -34,6 +40,41 @@ export const docsCompare = defineMessages({
       basics: "Project",
     },
     rows: {
+      size: {
+        label: "Installer size",
+        fd: "macOS arm64 56.0 MB · Windows x64 37.0 MB",
+        gd: "macOS arm64 69.8 MB · Windows x64 45.9 MB",
+      },
+      idleMem: {
+        label: "Background memory (no window, idle)",
+        fd: "48 MB (agent + download daemon)",
+        gd: "144 MB",
+      },
+      speedLarge: {
+        label: "Download 1.07 GB (GitHub release asset)",
+        fd: "15.3 s / 16.0 s (≈ 65 MB/s)",
+        gd: "26.2 s / 22.3 s (≈ 39–46 MB/s)",
+      },
+      speedSmall: {
+        label: "Download 100 MB (Electron, GitHub)",
+        fd: "3.9 s / 3.1 s",
+        gd: "6.2 s / 4.8 s",
+      },
+      cpu: {
+        label: "CPU time for the 1.07 GB download",
+        fd: "4.1 s / 5.0 s",
+        gd: "5.4 s / 5.2 s",
+      },
+      process: {
+        label: "Process model",
+        fd: "Download core runs as its own daemon; closing the window keeps downloads going",
+        gd: "UI and downloads in one process; quitting pauses every task",
+      },
+      storage: {
+        label: "Task storage",
+        fd: "SQLite with WAL, transactional writes",
+        gd: "JSONL file with 200 ms debounced writes; a crash can lose the last change (per its docs)",
+      },
       http: {
         label: "HTTP / HTTPS segmented download",
         fd: "Adaptive segmentation, slow-segment rescue, resume",
@@ -170,9 +211,9 @@ export const docsCompare = defineMessages({
         gd: "GPL-3.0",
       },
       stack: {
-        label: "Tech stack",
-        fd: "Rust engine, native GPUI desktop",
-        gd: "Python, PySide6 (Qt)",
+        label: "Language & runtime",
+        fd: "Rust compiled to native code, GPUI desktop UI",
+        gd: "Python with PySide6 (Qt), packaged with Nuitka",
       },
       languages: {
         label: "UI languages",
@@ -198,7 +239,13 @@ export const docsCompare = defineMessages({
     sourceGdDocs: "Ghost Downloader 文档",
     sourceGdRepo: "Ghost Downloader GitHub 仓库",
     sourceFluxDown: "FluxDown 源码",
+    method:
+      "实测行:同一台 MacBook(Apple M5、32 GB、macOS 27.0.1)、同一条家用宽带,2026-10-26,FluxDown 0.6.3 对 Ghost Downloader 4.4.5,两边均为全新数据目录与默认设置,各跑两轮。任务经各自的 aria2 RPC 添加,计时从 RPC 调用到成品文件最后一次写入。后台内存为不开窗口时该应用全部进程的物理内存占用之和(即「活动监视器」的「内存」列):FluxDown 为关闭窗口后的常驻状态,Ghost Downloader 为其自带的 --silence 后台启动。结果受网络与时段影响。",
+    methodLabel: "测试方法",
+    better: "更优",
     groups: {
+      measured: "实测",
+      architecture: "架构",
       protocols: "下载协议",
       platforms: "平台",
       browser: "浏览器",
@@ -208,6 +255,41 @@ export const docsCompare = defineMessages({
       basics: "项目",
     },
     rows: {
+      size: {
+        label: "安装包体积",
+        fd: "macOS arm64 56.0 MB · Windows x64 37.0 MB",
+        gd: "macOS arm64 69.8 MB · Windows x64 45.9 MB",
+      },
+      idleMem: {
+        label: "后台常驻内存(无窗口、空闲)",
+        fd: "48 MB(agent + 下载守护进程合计)",
+        gd: "144 MB",
+      },
+      speedLarge: {
+        label: "下载 1.07 GB(GitHub Release 文件)",
+        fd: "15.3 秒 / 16.0 秒(约 65 MB/s)",
+        gd: "26.2 秒 / 22.3 秒(约 39–46 MB/s)",
+      },
+      speedSmall: {
+        label: "下载 100 MB(Electron,GitHub)",
+        fd: "3.9 秒 / 3.1 秒",
+        gd: "6.2 秒 / 4.8 秒",
+      },
+      cpu: {
+        label: "下载 1.07 GB 的 CPU 时间",
+        fd: "4.1 秒 / 5.0 秒",
+        gd: "5.4 秒 / 5.2 秒",
+      },
+      process: {
+        label: "进程模型",
+        fd: "下载核心为独立守护进程,关闭窗口下载照常进行",
+        gd: "界面与下载同一进程,退出即暂停全部任务",
+      },
+      storage: {
+        label: "任务存储",
+        fd: "SQLite(WAL)事务写入",
+        gd: "JSONL 文件,200 ms 防抖写入;崩溃可能丢失最近一次变更(其文档自述)",
+      },
       http: {
         label: "HTTP / HTTPS 分段下载",
         fd: "自适应分段、慢段救援、断点续传",
@@ -344,9 +426,9 @@ export const docsCompare = defineMessages({
         gd: "GPL-3.0",
       },
       stack: {
-        label: "技术栈",
-        fd: "Rust 引擎、GPUI 原生桌面",
-        gd: "Python、PySide6(Qt)",
+        label: "语言与运行时",
+        fd: "Rust 原生编译,GPUI 桌面界面",
+        gd: "Python + PySide6(Qt),Nuitka 打包",
       },
       languages: {
         label: "界面语言",

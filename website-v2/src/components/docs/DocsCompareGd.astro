@@ -17,7 +17,7 @@ interface Props {
 const { lang } = Astro.props;
 const t = docsCompare[lang];
 
-type Level = "yes" | "partial" | "no" | "info";
+type Level = "yes" | "better" | "partial" | "no" | "info";
 type RowId = keyof typeof t.rows;
 type GroupId = keyof typeof t.groups;
 type Source = { docs: string } | { repo: string } | null;
@@ -30,6 +30,24 @@ const GROUPS: readonly {
   id: GroupId;
   rows: readonly { id: RowId; fd: Level; gd: Level; src: Source }[];
 }[] = [
+  {
+    id: "measured",
+    rows: [
+      { id: "size", fd: "better", gd: "info", src: { repo: "/releases/tag/v4.4.5" } },
+      { id: "idleMem", fd: "better", gd: "info", src: null },
+      { id: "speedLarge", fd: "better", gd: "info", src: null },
+      { id: "speedSmall", fd: "better", gd: "info", src: null },
+      { id: "cpu", fd: "info", gd: "info", src: null },
+    ],
+  },
+  {
+    id: "architecture",
+    rows: [
+      { id: "process", fd: "yes", gd: "partial", src: { docs: "dev/overview/" } },
+      { id: "storage", fd: "yes", gd: "partial", src: { docs: "dev/overview/" } },
+      { id: "stack", fd: "info", gd: "info", src: { repo: "#readme" } },
+    ],
+  },
   {
     id: "protocols",
     rows: [
@@ -90,14 +108,19 @@ const GROUPS: readonly {
     id: "basics",
     rows: [
       { id: "license", fd: "info", gd: "info", src: { repo: "/blob/main/LICENSE" } },
-      { id: "stack", fd: "info", gd: "info", src: { docs: "dev/setup/" } },
       { id: "languages", fd: "partial", gd: "yes", src: { repo: "/blob/main/app/config/cfg.py" } },
     ],
   },
 ];
 
-const ICONS = { yes: Check, partial: CircleDashed, no: X, info: Info } as const;
-const LEVEL_TEXT: Record<Level, string> = { yes: t.yes, partial: t.partial, no: t.no, info: "" };
+const ICONS = { yes: Check, better: Check, partial: CircleDashed, no: X, info: Info } as const;
+const LEVEL_TEXT: Record<Level, string> = {
+  yes: t.yes,
+  better: t.better,
+  partial: t.partial,
+  no: t.no,
+  info: "",
+};
 
 function sourceHref(src: Source): string | null {
   if (src === null) return null;
@@ -180,6 +203,7 @@ function sourceHref(src: Source): string | null {
         })
       }
     </ul>
+    <p><strong class="cmp-method">{t.methodLabel}:</strong> {t.method}</p>
     <p>{t.footnote}</p>
     <p>
       {t.sources}:
@@ -257,8 +281,17 @@ function sourceHref(src: Source): string | null {
     display: inline;
   }
   .cmp-yes .cmp-icon,
+  .cmp-better .cmp-icon,
   .cmp-legend .cmp-yes {
     color: var(--ok);
+  }
+  .cmp-better .cmp-text {
+    font-weight: 560;
+    color: var(--fg);
+  }
+  .cmp-method {
+    font-weight: 560;
+    color: var(--fg-muted);
   }
   .cmp-partial .cmp-icon,
   .cmp-legend .cmp-partial {
