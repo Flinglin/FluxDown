@@ -1071,7 +1071,12 @@ impl DaemonService {
                 self.plugin_manager()?
                     .clear_task_resolver(&params.task_id)
                     .await
-                    .map_err(|error| internal_error(format!("{error:#}")))?;
+                    .map_err(|error| match error {
+                        fluxdown_engine::plugin::PluginError::InvalidSetting { key, message } => {
+                            invalid_argument(&key, &message)
+                        }
+                        other => internal_error(format!("{other:#}")),
+                    })?;
                 self.execute_unit(ActorOperation::ResumeTask {
                     task_id: params.task_id,
                 })

@@ -183,8 +183,6 @@ pub struct LoadedPlugin {
     view_icons: Vec<(String, String)>,
     /// 熔断计数（连续 Timeout/MemoryLimit）。
     timeout_streak: Arc<AtomicU32>,
-    /// 创建本条目时的包修订号；`load_all` 仅在修订号未变时沿用旧计数。
-    streak_revision: u64,
 }
 
 impl LoadedPlugin {
@@ -404,6 +402,21 @@ impl PluginManager {
         self.sink.emit(EngineEvent::PluginsChanged(plugins));
     }
 
+    /// 插件生效代码被替换（安装 / 升级 / dev 重载成功）：递增包修订号，并把熔断计数
+    /// 清零——新代码不继承旧代码的连续超时，而之后无关的 `load_all` 继续沿用同一计数。
+    async fn mark_code_replaced(&self, identity: &str) {
+        self.package_revisions.bump(identity);
+        if let Some(plugin) = self
+            .plugins
+            .read()
+            .await
+            .iter()
+            .find(|p| p.manifest.identity == identity)
+        {
+            plugin.timeout_streak.store(0, Ordering::SeqCst);
+        }
+    }
+
     /// 专用运行时 handle，供 off-actor worker spawn（禁止裸 tokio::spawn）。
     pub fn runtime_handle(&self) -> tokio::runtime::Handle {
         self.runtime.spawn_handle()
@@ -453,9 +466,9 @@ impl PluginManager {
 
         let mut deduped = dedup_plugins_by_identity(loaded, &mut failed);
 
-        // 熔断计数跨 `load_all` 沿用：同一包修订、同版本、前后都启用时共用旧 Arc，
-        // 否则无关插件的启停 / 设置变更都会把别人的连续超时清零。
-        // 重新启用、升级 / 重载（修订号变化）则得到全新计数。
+        // 熔断计数跨 `load_all` 沿用：同版本、前后都启用时共用旧 Arc，否则无关插件的
+        // 启停 / 设置变更都会把别人的连续超时清零。重新启用得到全新计数；代码被替换
+        // （安装 / 升级 / dev 重载）时由 [`Self::mark_code_replaced`] 清零。
         {
             let previous = self.plugins.read().await.clone();
             for plugin in &mut deduped {
@@ -467,7 +480,6 @@ impl PluginManager {
                         && old.manifest.identity == plugin.manifest.identity
                         && old.manifest.version == plugin.manifest.version
                         && old.dev == plugin.dev
-                        && old.streak_revision == plugin.streak_revision
                 }) {
                     plugin.timeout_streak = old.timeout_streak.clone();
                 }
@@ -753,7 +765,6 @@ impl PluginManager {
             main_cache,
             view_icons,
             timeout_streak: Arc::new(AtomicU32::new(0)),
-            streak_revision: self.package_revisions.get(&identity),
         })
     }
 
@@ -768,19 +779,26 @@ impl PluginManager {
         identity: &str,
         mut req: ResolveRequest,
     ) -> Result<Option<ResolveResult>, PluginError> {
+        // 二段解析任务（任务组成员 / 插件订阅条目）的原始链接是分享页，「忽略插件重试」
+        // 会被拒绝（见 `clear_task_resolver`），提示里不能再推荐它。
+        let escape = if req.resolver_item.is_empty() {
+            "，或选择「忽略插件重试」按原始链接下载"
+        } else {
+            ""
+        };
         // 从快照克隆所需（避免跨 await 持锁）。
         let (manifest, streak, source, dev_ver, dev_mode) = {
             let snapshot = self.plugins.read().await.clone();
             let Some(p) = snapshot.iter().find(|p| p.manifest.identity == identity) else {
                 return Err(PluginError::Runtime(format!(
-                    "插件 {identity} 已卸载或加载失败；可在任务菜单选择「忽略插件重试」按原始链接下载"
+                    "插件 {identity} 已卸载或加载失败；重新安装插件后重试{escape}"
                 )));
             };
             if !p.enabled {
                 let reason = p.disabled_reason.describe();
                 let remedy = p.disabled_reason.remedy();
                 return Err(PluginError::Runtime(format!(
-                    "插件 {identity} {reason}；{remedy}，或选择「忽略插件重试」按原始链接下载"
+                    "插件 {identity} {reason}；{remedy}{escape}"
                 )));
             }
             let source = p.resolver_source().await;
@@ -794,7 +812,7 @@ impl PluginManager {
         };
         let Some(source) = source else {
             return Err(PluginError::Runtime(format!(
-                "插件 {identity} 当前版本未提供 resolver（或源码读取失败）；可选择「忽略插件重试」按原始链接下载"
+                "插件 {identity} 当前版本未提供 resolver（或源码读取失败）；升级或更换插件后重试{escape}"
             )));
         };
 
@@ -1325,14 +1343,18 @@ impl PluginManager {
             .await
             .map_err(|e| PluginError::Runtime(e.to_string()))?;
         let prior = self.capture_install_state(&identity).await?;
-        self.db
-            .set_config(&dev_key, &abs.to_string_lossy())
-            .await
-            .map_err(|e| PluginError::Runtime(e.to_string()))?;
-        if let Err(error) = self
-            .activate_dev_install(&identity, &manifest.version, &prior)
+        // 启停规则先于 dev 登记落盘：dev 副本加载时已带着最终启停状态。
+        let activated = match self
+            .apply_install_enable_rule(&identity, &manifest.version, &prior)
             .await
         {
+            Ok(()) => match self.db.set_config(&dev_key, &abs.to_string_lossy()).await {
+                Ok(()) => self.activate_dev_install(&identity).await,
+                Err(e) => Err(PluginError::Runtime(e.to_string())),
+            },
+            Err(error) => Err(error),
+        };
+        if let Err(error) = activated {
             let rollback = match previous {
                 Some(old) => self.db.set_config(&dev_key, &old).await,
                 None => self.db.delete_config(&dev_key).await,
@@ -1344,24 +1366,19 @@ impl PluginManager {
             self.load_all().await;
             return Err(error);
         }
-        self.package_revisions.bump(&identity);
+        self.mark_code_replaced(&identity).await;
         self.audit_event(&identity, "install", manifest.version.clone(), "dev");
         Ok(identity)
     }
 
     /// dev 安装的加载 + 校验：dev 副本必须真正加载成功（否则同 identity 的已安装
     /// 副本会被顶替/保留，而 dev 版未生效却报成功）。
-    async fn activate_dev_install(
-        &self,
-        identity: &str,
-        new_version: &str,
-        prior: &InstallState,
-    ) -> Result<(), PluginError> {
+    async fn activate_dev_install(&self, identity: &str) -> Result<(), PluginError> {
         self.load_all().await;
         if let Some(error) = self.dev_load_failure(identity).await {
             return Err(error);
         }
-        self.finish_install(identity, new_version, prior).await
+        self.validate_loaded(identity).await
     }
 
     /// 本 identity 的 dev 登记对应的加载失败（忽略被 dev 顶替的已安装副本那条
@@ -1405,7 +1422,7 @@ impl PluginManager {
         }
         self.validate_loaded(identity).await?;
         // 仅成功的重载替换了生效代码，失败不递增修订号。
-        self.package_revisions.bump(identity);
+        self.mark_code_replaced(identity).await;
         Ok(())
     }
 
@@ -1450,7 +1467,7 @@ impl PluginManager {
             self.rollback_install_outcome(&outcome).await;
             return Err(error);
         }
-        self.package_revisions.bump(&identity);
+        self.mark_code_replaced(&identity).await;
         let new_version = self.installed_version(&identity).await.unwrap_or_default();
         match previous_version {
             Some(previous) if previous != new_version => self.audit_event(
@@ -1518,15 +1535,28 @@ impl PluginManager {
         new_version: &str,
         prior: &InstallState,
     ) -> Result<(), PluginError> {
+        self.apply_install_enable_rule(identity, new_version, prior)
+            .await?;
+        // 整表重载后做 compile / pattern 校验；失败由调用方回滚。
+        self.load_all().await;
+        self.validate_loaded(identity).await
+    }
+
+    /// 安装（含 dev 安装）的启停写入规则，必须在加载新代码之前调用：
+    /// - 新装（无 enabled 键）或熔断 → enabled=1, reason=None（升级即解熔断）
+    /// - 撤回且新版本不同于被撤回版本 → 同上并清除 revoked_version
+    /// - Manual → 维持 disabled 不动（不覆盖用户主动关闭）
+    async fn apply_install_enable_rule(
+        &self,
+        identity: &str,
+        new_version: &str,
+        prior: &InstallState,
+    ) -> Result<(), PluginError> {
         let reason = prior
             .disabled_reason
             .as_deref()
             .map(DisabledReason::parse)
             .unwrap_or(DisabledReason::None);
-        // enabled 写入规则：
-        // - 新装（无 enabled 键）或熔断 → enabled=1, reason=None（升级即解熔断）
-        // - 撤回且新版本不同于被撤回版本 → 同上并清除 revoked_version
-        // - Manual → 维持 disabled 不动（不覆盖用户主动关闭）
         let revoked_stale = reason == DisabledReason::Revoked
             && prior.revoked_version.as_deref() != Some(new_version);
         if prior.enabled.is_none() || reason == DisabledReason::CircuitBreaker || revoked_stale {
@@ -1537,9 +1567,7 @@ impl PluginManager {
                 .await
                 .map_err(|e| PluginError::Runtime(e.to_string()))?;
         }
-        // 整表重载后做 compile / pattern 校验；失败由调用方回滚。
-        self.load_all().await;
-        self.validate_loaded(identity).await
+        Ok(())
     }
 
     /// 对当前快照中的插件做 compile / pattern 校验（不改任何状态）。
@@ -2146,7 +2174,24 @@ impl PluginManager {
     }
 
     /// 逃生舱窄接口：清该任务 resolver_plugin_id（不改插件全局状态）。
+    ///
+    /// 二段解析任务（`resolver_item` 非空，任务组成员）的下载地址是分享页 / 清单页，
+    /// 忽略插件直接下载只会把网页存成文件，故拒绝（[`PluginError::InvalidSetting`]，
+    /// 宿主按参数错误展示）。
     pub async fn clear_task_resolver(&self, task_id: &str) -> Result<(), PluginError> {
+        let item = self
+            .db
+            .get_task_resolver_item(task_id)
+            .await
+            .map_err(|e| PluginError::Runtime(e.to_string()))?;
+        if !item.is_empty() {
+            return Err(PluginError::InvalidSetting {
+                key: "taskId".to_owned(),
+                message:
+                    "该任务（任务组成员或插件订阅条目）必须由解析插件取得真实下载地址，无法忽略插件重试"
+                        .to_owned(),
+            });
+        }
         self.db
             .set_task_resolver(task_id, "")
             .await
@@ -2895,7 +2940,6 @@ mod tests {
             main_cache: None,
             view_icons: Vec::new(),
             timeout_streak: Arc::new(AtomicU32::new(0)),
-            streak_revision: 0,
         }
     }
 
@@ -3513,6 +3557,33 @@ mod tests {
         assert_eq!(
             streak_arc(&manager, REVOKE_ID).await.load(Ordering::SeqCst),
             0
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn timeout_streak_resets_on_code_replacement_then_survives_unrelated_reloads() {
+        const OTHER: &str = "other@demo";
+        let (manager, _sink, root) = revoke_fixture().await;
+        write_plugin(&root, OTHER, OTHER, "1.0.0");
+        manager.load_all().await;
+        streak_arc(&manager, REVOKE_ID)
+            .await
+            .store(2, Ordering::SeqCst);
+
+        // 同版本重装 = 代码被替换：新代码不继承旧计数。
+        let src = root.join(".reinstall-src");
+        write_plugin(&root, ".reinstall-src", REVOKE_ID, "1.0.0");
+        manager.install_from_dir(&src).await.unwrap();
+        let streak = streak_arc(&manager, REVOKE_ID).await;
+        assert_eq!(streak.load(Ordering::SeqCst), 0);
+
+        // 替换之后，无关插件的启停不再清零。
+        streak.store(1, Ordering::SeqCst);
+        manager.set_enabled(OTHER, false).await.unwrap();
+        manager.set_enabled(OTHER, true).await.unwrap();
+        assert_eq!(
+            streak_arc(&manager, REVOKE_ID).await.load(Ordering::SeqCst),
+            1
         );
     }
 

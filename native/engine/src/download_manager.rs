@@ -2839,6 +2839,8 @@ struct PreparedTask {
     resolver_plugin_id: String,
     /// 多插件同时匹配且站点无确认过的默认插件（见 `plugin::routing`）。
     resolver_choice_pending: bool,
+    /// 显式绑定的插件建档时不可用（见 [`DownloadManager::plugin_bind_resolver`]）。
+    resolver_fail_closed: bool,
     is_bt: bool,
     /// `tasks.category_route` 列值（空串 = 不路由）。
     category_route: String,
@@ -2851,9 +2853,10 @@ impl PreparedTask {
         !self.resolver_plugin_id.is_empty()
     }
 
-    /// `resolver_item` 非空但未命中插件：fail-closed，任务直接以 error 落库。
+    /// fail-closed 建档：`resolver_item` 非空但未命中插件，或显式绑定的插件当前不可用。
+    /// 任务直接以 error 落库（显式绑定的插件 ID 仍保留，插件恢复后手动恢复即可解析）。
     fn resolver_unavailable(&self) -> bool {
-        !self.resolver_item.is_empty() && !self.has_resolver()
+        self.resolver_fail_closed || (!self.resolver_item.is_empty() && !self.has_resolver())
     }
 
     /// 稍后下载以 paused(2) 落库；正常创建 pending(0)。
@@ -4109,14 +4112,13 @@ impl DownloadManager {
         self.plugin_retry_rx.take()
     }
 
-    /// 建任务时的 resolver 绑定：`(插件 ID, 是否待多插件选择)`；无命中为空串。
+    /// 建任务时的 resolver 绑定：`(插件 ID, 是否待多插件选择, 是否 fail-closed 建档)`。
     ///
-    /// - `explicit` 非空（任务组成员：预览时产出清单的插件）：只绑定该插件，它当前不可用
-    ///   （未启用 / 无 resolver）时返回空串——成员带着 `resolver_item` 落库即 fail-closed，
-    ///   绝不回退到其它插件；
-    /// - `explicit` 为空且是任务组成员（`group_id` 与 `resolver_item` 均非空，旧客户端）：
-    ///   按预览同款规则 `match_multi_resolver` 选插件，保证成员与清单同源；
-    /// - 其余任务（含 RSS 二段解析条目）按 `route_resolver`。
+    /// - `explicit` 非空（任务组成员：预览时产出清单的插件）：**无论该插件当前是否可用都绑定
+    ///   它**，绝不回退到其它插件。不可用（未启用 / 待授权 / 已卸载 / 无 resolver）时第三项为
+    ///   `true`：任务带着绑定以 status=4 落库，等插件恢复后手动恢复即经该插件正常解析，
+    ///   期间恢复则由 resolve 的常规错误 fail-closed；
+    /// - 其余情形见 [`Self::plugin_auto_resolver`]。
     #[cfg(feature = "plugins")]
     async fn plugin_bind_resolver(
         &self,
@@ -4124,22 +4126,42 @@ impl DownloadManager {
         explicit: &str,
         group_id: &str,
         resolver_item: &str,
-    ) -> (String, bool) {
+    ) -> (String, bool, bool) {
         let Some(pm) = &self.plugin_manager else {
-            return (String::new(), false);
+            return (String::new(), false, false);
         };
         if !explicit.is_empty() {
-            let identity = if pm.resolver_available(explicit).await {
-                explicit.to_owned()
-            } else {
+            let available = pm.resolver_available(explicit).await;
+            if !available {
                 log_info!(
                     "[manager] group resolver {explicit} is not available, members fail closed"
                 );
-                String::new()
-            };
-            return (identity, false);
+            }
+            return (explicit.to_owned(), false, !available);
         }
-        if !group_id.is_empty() && !resolver_item.is_empty() {
+        let group_member = !group_id.is_empty() && !resolver_item.is_empty();
+        let (identity, pending) = self.plugin_auto_resolver(url, group_member).await;
+        (identity, pending, false)
+    }
+    #[cfg(not(feature = "plugins"))]
+    async fn plugin_bind_resolver(
+        &self,
+        _url: &str,
+        _explicit: &str,
+        _group_id: &str,
+        _resolver_item: &str,
+    ) -> (String, bool, bool) {
+        (String::new(), false, false)
+    }
+
+    /// 没有显式绑定时的自动路由：任务组成员按预览同款规则 `match_multi_resolver`（保证
+    /// 成员与清单同源），其余任务（含 RSS 二段解析条目）按 `route_resolver`。无命中为空串。
+    #[cfg(feature = "plugins")]
+    async fn plugin_auto_resolver(&self, url: &str, group_member: bool) -> (String, bool) {
+        let Some(pm) = &self.plugin_manager else {
+            return (String::new(), false);
+        };
+        if group_member {
             return (
                 pm.match_multi_resolver(url).await.unwrap_or_default(),
                 false,
@@ -4150,15 +4172,49 @@ impl DownloadManager {
             |route| (route.identity, route.choice_pending),
         )
     }
-    #[cfg(not(feature = "plugins"))]
-    async fn plugin_bind_resolver(
-        &self,
-        _url: &str,
-        _explicit: &str,
-        _group_id: &str,
-        _resolver_item: &str,
-    ) -> (String, bool) {
-        (String::new(), false)
+
+    /// 二段解析任务（`resolver_item` 非空）的绑定为空（旧版 fail-closed 建档、卸载清绑定、
+    /// 忽略插件重试遗留）：按创建时同一规则重新绑定并写库。返回绑定的插件；`None` = 没有
+    /// 任何插件可用，调用方必须 fail-closed——二段任务的链接是分享页，绝不能直接下载。
+    #[cfg(feature = "plugins")]
+    async fn rebind_second_stage(&self, task_id: &str) -> Option<String> {
+        let task = match self.db.load_task_by_id(task_id).await {
+            Ok(Some(task)) => task,
+            Ok(None) => return None,
+            Err(error) => {
+                crate::logger::report_error(
+                    "download-manager",
+                    "load task for second-stage rebind",
+                    &error,
+                );
+                return None;
+            }
+        };
+        let (identity, _) = self
+            .plugin_auto_resolver(&task.url, !task.group_id.is_empty())
+            .await;
+        if identity.is_empty() {
+            return None;
+        }
+        if let Err(error) = self.db.set_task_resolver(task_id, &identity).await {
+            crate::logger::report_error("download-manager", "persist second-stage rebind", &error);
+            return None;
+        }
+        log_info!("[manager] second-stage task {task_id} rebound to {identity}");
+        Some(identity)
+    }
+
+    /// 二段解析任务无可用 resolver：以 status=4 + 「解析插件不可用」收尾，不发起下载。
+    #[cfg(feature = "plugins")]
+    async fn fail_second_stage_unavailable(&self, task_id: &str) {
+        log_info!("[manager] second-stage task {task_id} has no usable resolver, failing closed");
+        persist_task_failure(
+            task_id,
+            RESOLVER_UNAVAILABLE_MESSAGE.to_string(),
+            &self.db,
+            &self.progress_tx,
+        )
+        .await;
     }
 
     /// 前置预解析（多文件清单，B2 契约）：off-actor、只读，不建任务、不写库。
@@ -4506,8 +4562,9 @@ impl DownloadManager {
                         {
                             // 以实际解析的插件为准（起跑前重选可能已改绑），请求补丁归属它。
                             queued.resolver_plugin_id = out.identity.clone();
-                            // 解析窗口内插件被卸载会清掉 DB 绑定：与 do_start_task 对称，
-                            // 丢弃结果、按原始链接继续（卸载语义），不应用已失效插件的改写。
+                            // 解析窗口内插件被卸载会清掉 DB 绑定。普通任务：丢弃结果、按原始
+                            // 链接继续（卸载语义）。二段解析任务的链接是分享页，绝不能直接下载：
+                            // 交回 do_start_task 的守卫重新绑定（无可用插件则 fail-closed）。
                             let unbound = self
                                 .db
                                 .get_task_resolver(&task_id)
@@ -4515,10 +4572,17 @@ impl DownloadManager {
                                 .is_ok_and(|bound| bound.is_empty());
                             if unbound {
                                 queued.resolver_plugin_id.clear();
-                            } else if let Some(res) = applied {
-                                apply_resolve_to_queued(&mut queued, res);
+                                if queued.resolver_item.is_empty() {
+                                    queued.resolved = true;
+                                } else {
+                                    self.active_tasks.remove(&task_id);
+                                }
+                            } else {
+                                if let Some(res) = applied {
+                                    apply_resolve_to_queued(&mut queued, res);
+                                }
+                                queued.resolved = true;
                             }
-                            queued.resolved = true;
                             self.do_start_task(*queued).await;
                             self.drain_queue().await;
                         }
@@ -4537,7 +4601,25 @@ impl DownloadManager {
                 }
             }
             Err(e) => {
-                let msg = format!("[插件] {}: {}", out.identity, e);
+                // 「[插件]」前缀 = 客户端可提供「忽略插件重试」；二段解析任务（任务组成员 /
+                // 插件订阅条目）的原始链接是分享页，忽略插件会被拒绝，换用不同前缀。
+                let second_stage = match self.db.get_task_resolver_item(&task_id).await {
+                    Ok(item) => !item.is_empty(),
+                    Err(error) => {
+                        crate::logger::report_error(
+                            "download-manager",
+                            "read resolver item",
+                            &error,
+                        );
+                        false
+                    }
+                };
+                let prefix = if second_stage {
+                    "[解析插件]"
+                } else {
+                    "[插件]"
+                };
+                let msg = format!("{prefix} {}: {}", out.identity, e);
                 if let Err(error) = self.db.update_task_status(&task_id, 4, &msg).await {
                     crate::logger::report_error("download-manager", "persist task state", &error);
                 }
@@ -8843,7 +8925,7 @@ impl DownloadManager {
                 }
             }
         };
-        let (resolver_plugin_id, choice_pending) = self
+        let (resolver_plugin_id, choice_pending, resolver_fail_closed) = self
             .plugin_bind_resolver(&url, &explicit_resolver, &group_id, &resolver_item)
             .await;
         // 二段解析任务（resolver_item 非空）不进入多插件选择：组成员由预览同款规则 / 显式
@@ -8938,6 +9020,7 @@ impl DownloadManager {
             unattended_selection,
             resolver_plugin_id,
             resolver_choice_pending,
+            resolver_fail_closed,
             is_bt,
             category_route,
             request_method,
@@ -8975,6 +9058,7 @@ impl DownloadManager {
     /// 单个已落库任务的后续发布：webhook、解析失败进度、稍后下载探测、入队。
     async fn publish_created_task(&mut self, task: PreparedTask) {
         let has_resolver = task.has_resolver();
+        let resolver_unavailable = task.resolver_unavailable();
         let initial_status = task.initial_status();
         let PreparedTask {
             task_id,
@@ -9025,7 +9109,7 @@ impl DownloadManager {
         // fail-closed：resolver_item 非空但未命中插件（或 plugins feature 关，
         // has_resolver 恒空）→ 任务已以 error 落库，绝不发起对 source_url 的下载
         // （那会把网页 HTML/分享页当直链保存）。
-        if !resolver_item.is_empty() && !has_resolver {
+        if resolver_unavailable {
             self.sink.emit(EngineEvent::TaskProgress {
                 task_id,
                 status: 4,
@@ -9756,19 +9840,48 @@ impl DownloadManager {
         #[cfg(feature = "plugins")]
         let mut queued = queued;
         #[cfg(feature = "plugins")]
-        if !queued.resolver_plugin_id.is_empty() && !queued.resolved {
+        if !queued.resolved
+            && (!queued.resolver_plugin_id.is_empty() || !queued.resolver_item.is_empty())
+        {
             // 绑定以 DB 为准（与 do_resume_task 对称）：排队期间插件被卸载会清掉 DB 绑定，
-            // 内存里的 QueuedTask 仍带着失效的 resolver，此时按原始链接下载。
-            let unbound = self
-                .db
-                .get_task_resolver(&queued.task_id)
-                .await
-                .is_ok_and(|bound| bound.is_empty());
-            if unbound {
-                queued.resolver_plugin_id.clear();
-            } else {
-                self.begin_resolve_start(queued).await;
-                return;
+            // 内存里的 QueuedTask 仍带着失效的 resolver。读库失败按「仍绑定」处理。
+            let second_stage = !queued.resolver_item.is_empty();
+            match self.db.get_task_resolver(&queued.task_id).await {
+                Ok(bound) if bound.is_empty() => {
+                    queued.resolver_plugin_id.clear();
+                    if second_stage {
+                        // 二段解析任务的链接是分享页，绝不按原始链接下载：重新绑定，
+                        // 仍无可用插件则 fail-closed。
+                        match self.rebind_second_stage(&queued.task_id).await {
+                            Some(identity) => {
+                                queued.resolver_plugin_id = identity;
+                                self.begin_resolve_start(queued).await;
+                            }
+                            None => self.fail_second_stage_unavailable(&queued.task_id).await,
+                        }
+                        return;
+                    }
+                }
+                Ok(bound) => {
+                    if queued.resolver_plugin_id.is_empty() {
+                        queued.resolver_plugin_id = bound;
+                    }
+                    self.begin_resolve_start(queued).await;
+                    return;
+                }
+                Err(error) => {
+                    crate::logger::report_error(
+                        "download-manager",
+                        "load task resolver for start guard",
+                        &error,
+                    );
+                    if queued.resolver_plugin_id.is_empty() {
+                        self.fail_second_stage_unavailable(&queued.task_id).await;
+                    } else {
+                        self.begin_resolve_start(queued).await;
+                    }
+                    return;
+                }
             }
         }
         let QueuedTask {
@@ -11087,12 +11200,35 @@ impl DownloadManager {
         let mut resolver_identity = String::new();
         #[cfg(feature = "plugins")]
         let plugin_applied: Option<crate::plugin::ResolveResult> = {
-            let resolver = self.db.get_task_resolver(task_id).await.unwrap_or_default();
+            let mut resolver = self.db.get_task_resolver(task_id).await.unwrap_or_default();
             let reentered = self.resume_applied.remove(task_id);
             if resolver.is_empty() {
+                // 二段解析任务（任务组成员）的链接是分享页，绝不能按原始链接下载：绑定为空
+                // （旧版 fail-closed 建档 / 卸载清绑定 / 忽略插件重试）时按创建规则重新绑定，
+                // 仍无可用插件则 fail-closed。再入结果属于已失效的绑定，一并丢弃。
+                let second_stage = match self.db.get_task_resolver_item(task_id).await {
+                    Ok(item) => !item.is_empty(),
+                    Err(error) => {
+                        crate::logger::report_error(
+                            "download-manager",
+                            "load resolver item for resume guard",
+                            &error,
+                        );
+                        true
+                    }
+                };
+                if second_stage {
+                    match self.rebind_second_stage(task_id).await {
+                        Some(identity) => {
+                            self.begin_resolve_resume(task_id, identity).await;
+                        }
+                        None => self.fail_second_stage_unavailable(task_id).await,
+                    }
+                    return;
+                }
                 None
             } else if let Some(res) = reentered {
-                resolver_identity = resolver;
+                resolver_identity = std::mem::take(&mut resolver);
                 Some(res) // 再入
             } else {
                 self.begin_resolve_resume(task_id, resolver).await;
