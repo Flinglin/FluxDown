@@ -93,6 +93,8 @@ fn task_tabs(contributions: &Contributions) -> Vec<PluginTaskTab> {
         .task_tabs
         .iter()
         .map(|view| PluginTaskTab {
+            identity: view.identity.clone(),
+            view: view.view.id.clone(),
             title: SharedString::from(view.view.title.clone()),
             revision: view.package_revision,
         })
@@ -399,12 +401,20 @@ pub(crate) fn command_runner() -> PluginCommandRunner {
     })
 }
 
-/// 下载页 / 任务详情窗口的插件 tab 视图工厂：按下标取当前贡献。
+/// 下载页 / 任务详情窗口的插件 tab 视图工厂：按 tab 的 `(identity, 视图 id)` 取当前贡献，
+/// 贡献已消失时给占位空视图。
 pub(crate) fn tab_view_factory() -> PluginTabViewFactory {
-    Rc::new(|index, task_id, window, cx| {
+    Rc::new(|tab, task_id, window, cx| {
         let view = cx
             .try_global::<PluginContributionState>()
-            .and_then(|state| state.current.task_tabs.get(usize::from(index)).cloned());
+            .and_then(|state| {
+                state
+                    .current
+                    .task_tabs
+                    .iter()
+                    .find(|view| view.identity == tab.identity && view.view.id == tab.view)
+                    .cloned()
+            });
         match view {
             Some(view) => view_for(&view, Some(task_id), ViewContainer::default(), window, cx),
             None => cx.new(|_| Blank).into(),
@@ -608,6 +618,22 @@ mod tests {
         assert!(same("plugin:e@x:a"));
         // 详情 tab 列表随之不等，详情面板据此丢弃旧视图缓存。
         assert_ne!(task_tabs(&current), task_tabs(&next));
+    }
+
+    #[test]
+    fn task_tabs_from_different_plugins_never_compare_equal() {
+        // 同标题、同修订号的 tab 换了插件：详情面板必须作废缓存，不能把旧插件的视图当新的用。
+        let first = task_tabs(&Contributions::from_plugins(&[plugin("d@x", json!({}))]));
+        let second = task_tabs(&Contributions::from_plugins(&[plugin("e@x", json!({}))]));
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 1);
+        assert_eq!(first[0].title, second[0].title);
+        assert_eq!(first[0].revision, second[0].revision);
+        assert_ne!(first, second);
+        assert_eq!(
+            (first[0].identity.as_str(), first[0].view.as_str()),
+            ("d@x", "t")
+        );
     }
 
     #[test]

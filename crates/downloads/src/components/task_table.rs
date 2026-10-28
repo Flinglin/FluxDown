@@ -2902,13 +2902,17 @@ impl DownloadTableDelegate {
             .filter(|key| key.is_local())
             .map(|key| key.task_id().to_owned())
             .collect();
+        // 按菜单构建时的稳定键（插件 identity + 命令 id）分派：菜单打开期间插件列表可能变化，
+        // 下标会指向别的命令。
+        let identity = command.identity.clone();
+        let command_id = command.command.clone();
         menu.item(
             PopupMenuItem::new(command.title.clone())
                 .icon(FluxIcon::Sparkles)
                 .on_click(move |_, window, cx| {
                     let task_ids = task_ids.clone();
                     let Ok(()) = host.update(cx, |view, cx| {
-                        view.run_plugin_command(index, task_ids, window, cx);
+                        view.run_plugin_command(&identity, &command_id, task_ids, window, cx);
                     }) else {
                         // 视图已释放，结束这次回调。
                         return;

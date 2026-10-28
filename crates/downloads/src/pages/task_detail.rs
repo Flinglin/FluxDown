@@ -970,11 +970,14 @@ impl TaskDetailView {
         let Some(factory) = self.host.plugin_tab_view.clone() else {
             return div().into_any_element();
         };
+        let Some(tab) = self.plugin_tabs.get(usize::from(index)).cloned() else {
+            return div().into_any_element();
+        };
         let key = (index, self.task_id.clone());
         let view = match self.plugin_views.get(&key) {
             Some(view) => view.clone(),
             None => {
-                let view = factory(index, self.task_id.clone(), window, cx);
+                let view = factory(&tab, self.task_id.clone(), window, cx);
                 self.plugin_views.insert(key, view.clone());
                 view
             }
