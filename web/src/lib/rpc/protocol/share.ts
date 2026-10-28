@@ -70,6 +70,8 @@ export interface ShareDto {
   cloudBytes: number;
   /** 只在上传中 / 暂停 / 失败时出现，经 `shareChanged` 整体下发（约 2 次 / 秒）。 */
   upload?: ShareUploadDto;
+  /** 本机源文件已缺失或已被修改，分享无法继续 / 重新开始，只能删除；为 false 时 agent 不下发。 */
+  sourceMissing?: boolean;
 }
 
 /** 云端暂存上传进度。 */

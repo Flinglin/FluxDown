@@ -216,6 +216,8 @@ object HostMethod {
     const val agentShareList = "agent.share.list"
     const val agentShareUpdate = "agent.share.update"
     const val agentShareStop = "agent.share.stop"
+    const val agentShareResume = "agent.share.resume"
+    const val agentShareDelete = "agent.share.delete"
     const val agentShareResolve = "agent.share.resolve"
     const val agentShareReceive = "agent.share.receive"
     const val agentShareReceiveRecords = "agent.share.receiveRecords"

@@ -659,6 +659,8 @@ impl GatewayService {
             | method::AGENT_SHARE_LIST
             | method::AGENT_SHARE_UPDATE
             | method::AGENT_SHARE_STOP
+            | method::AGENT_SHARE_RESUME
+            | method::AGENT_SHARE_DELETE
             | method::AGENT_SHARE_RESOLVE
             | method::AGENT_SHARE_RECEIVE
             | method::AGENT_SHARE_DISMISS_PENDING

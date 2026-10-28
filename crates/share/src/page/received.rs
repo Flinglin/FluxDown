@@ -177,6 +177,7 @@ impl ShareView {
                     (text(translator, "shareColStatus"), Some(cols.status)),
                 ],
                 tokens.spacing.xxs,
+                None,
                 cx,
             ))
             .child(

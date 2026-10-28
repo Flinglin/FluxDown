@@ -207,6 +207,10 @@ pub enum ErrorReason {
     ShareTrafficExhausted,
     /// 快传：云端暂存不可用（存储未配置或服务暂不可用）。
     ShareCloudUnavailable,
+    /// 快传：取件码指向本机自己发起的分享（iroh 端点不能连接自身）。
+    ShareOwnShare,
+    /// 快传：本机源文件已缺失或已被修改，分享无法继续 / 重新开始，只能删除。
+    ShareSourceMissing,
     /// 对端发送了本端不认识的原因。
     #[serde(other)]
     Unknown,

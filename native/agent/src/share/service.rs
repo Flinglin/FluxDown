@@ -272,7 +272,15 @@ impl ShareService {
             self.weak.clone(),
             cancel.child_token(),
         ));
-        self.initial_sync().await;
+        // 启动检查只针对上次运行留下的分享：之后新建的分享不属于「重启恢复」。
+        let persisted: Vec<String> = self.with(|i| {
+            i.shares
+                .iter()
+                .filter(|s| s.dto.status == fluxdown_protocol::ShareStatus::Active)
+                .map(|s| s.dto.id.clone())
+                .collect()
+        });
+        self.initial_sync(&persisted).await;
         loop {
             let deadline = self.next_expiry_delay();
             tokio::select! {
@@ -311,7 +319,7 @@ impl ShareService {
     }
 
     /// 启动时的一次性同步：载入云端策略、重新登记仍有效的分享。没有本机分享时不做任何网络请求之外的事。
-    async fn initial_sync(self: &Arc<Self>) {
+    async fn initial_sync(self: &Arc<Self>, persisted_active: &[String]) {
         if let Err(error) = self.config(false).await {
             tracing::debug!(reason = ?error.reason, "share policy unavailable at startup");
         }
@@ -321,7 +329,7 @@ impl ShareService {
                 .any(|s| s.dto.status == fluxdown_protocol::ShareStatus::Active)
         });
         if has_active {
-            self.restore_shares().await;
+            self.restore_shares(persisted_active).await;
         }
         self.publish().await;
     }
@@ -489,6 +497,7 @@ impl ShareService {
                 });
                 self.publish().await;
             }
+            SessionEvent::SourceChanged { share_id } => self.on_source_changed(&share_id).await,
         }
     }
 

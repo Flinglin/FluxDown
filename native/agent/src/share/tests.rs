@@ -41,6 +41,8 @@ struct MockShare {
     owner: String,
     /// 已领取次数（每次 resolve +1，与真实服务端「新接收方才计数」不同，这里只需要有变化）。
     claims: u64,
+    /// 已恢复分享的次数（用于生成新的取件码）。
+    resumes: u32,
 }
 
 struct Mock {
@@ -173,6 +175,7 @@ async fn create_share(
         status: "active".to_owned(),
         owner,
         claims: 0,
+        resumes: 0,
     };
     let out = share_json(&share);
     shares.push(share);
@@ -223,6 +226,48 @@ async fn stop_share(
             StatusCode::NO_CONTENT.into_response()
         }
         None => error(StatusCode::NOT_FOUND, "not_found"),
+    }
+}
+
+/// `POST /share/shares/{id}/resume`：stopped / expired → active，同 id 同 slug，重新分配取件码。
+async fn resume_share(
+    State(mock): State<MockState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let caller = bearer(&headers).unwrap_or_default();
+    let mut shares = mock.shares.lock().unwrap();
+    match shares
+        .iter_mut()
+        .find(|s| s.id == id && same_owner(&s.owner, &caller))
+    {
+        Some(share) => {
+            if share.status == "active" {
+                return error(StatusCode::CONFLICT, "share_ended");
+            }
+            share.resumes += 1;
+            share.status = "active".to_owned();
+            share.code = format!("98765{}", share.resumes);
+            Json(share_json(share)).into_response()
+        }
+        None => error(StatusCode::NOT_FOUND, "not_found"),
+    }
+}
+
+/// `DELETE /share/shares/{id}/record`：记录整条删除（分享中的先按停止处理），204。
+async fn delete_share_record(
+    State(mock): State<MockState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let caller = bearer(&headers).unwrap_or_default();
+    let mut shares = mock.shares.lock().unwrap();
+    let before = shares.len();
+    shares.retain(|s| !(s.id == id && same_owner(&s.owner, &caller)));
+    if shares.len() == before {
+        error(StatusCode::NOT_FOUND, "not_found")
+    } else {
+        StatusCode::NO_CONTENT.into_response()
     }
 }
 
@@ -307,6 +352,11 @@ async fn start_mock() -> (String, MockState) {
         .route("/api/v1/share/endpoint", put(register_endpoint))
         .route("/api/v1/share/shares", post(create_share).get(list_shares))
         .route("/api/v1/share/shares/{id}", delete(stop_share))
+        .route("/api/v1/share/shares/{id}/resume", post(resume_share))
+        .route(
+            "/api/v1/share/shares/{id}/record",
+            delete(delete_share_record),
+        )
         .route("/api/v1/share/resolve", post(resolve))
         .route("/api/v1/share/telemetry/net", post(telemetry_net))
         .route("/api/v1/share/telemetry/sessions", post(telemetry_sessions))
@@ -360,7 +410,31 @@ async fn node(base: &str, label: &str, logged_in: bool, tasks: Vec<TaskDto>) -> 
         std::process::id(),
         now_unix_secs()
     ));
-    let store = Arc::new(StateStore::open(dir).await.unwrap());
+    node_at(base, dir, label, logged_in, tasks).await
+}
+
+/// 指定数据目录的节点：同一目录再起一个节点即「重启」。
+async fn node_at(
+    base: &str,
+    dir: std::path::PathBuf,
+    label: &str,
+    logged_in: bool,
+    tasks: Vec<TaskDto>,
+) -> Node {
+    // 旧服务的收尾任务可能还没放开状态目录锁。
+    let store = {
+        let mut opened = None;
+        for _ in 0..100 {
+            match StateStore::open(dir.clone()).await {
+                Ok(store) => {
+                    opened = Some(Arc::new(store));
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+            }
+        }
+        opened.expect("state dir stayed locked")
+    };
     let mut state = AgentState {
         device_name: format!("{label}-device"),
         ..AgentState::default()
@@ -664,6 +738,45 @@ async fn logged_in_receiver_registers_its_endpoint_before_resolve() {
     receiver.cancel.cancel();
 }
 
+/// 回归：本机输入自己分享的取件码。iroh 端点不能连接自身，此前会建出指向回环适配器的任务，
+/// 首次探测就得到 503「分享方离线」。现在 resolve 就以 `shareOwnShare` 拒绝，也不留待接收项。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn resolving_own_share_is_rejected() {
+    let (base, _mock) = start_mock().await;
+    let files_dir =
+        std::env::temp_dir().join(format!("fluxdown_share_files_own_{}", std::process::id()));
+    std::fs::create_dir_all(&files_dir).unwrap();
+    std::fs::write(files_dir.join("payload.bin"), pseudo_random(64 * 1024)).unwrap();
+    let node = node(
+        &base,
+        "own_share",
+        true,
+        vec![task("t1", 3, &files_dir, "payload.bin")],
+    )
+    .await;
+    let share: ShareDto = call(
+        &node,
+        method::AGENT_SHARE_CREATE,
+        json!({ "taskIds": ["t1"] }),
+    )
+    .await
+    .unwrap();
+
+    let resolved: Result<ShareResolveDto, _> = call(
+        &node,
+        method::AGENT_SHARE_RESOLVE,
+        json!({ "codeOrLink": share.pickup_code }),
+    )
+    .await;
+    assert_eq!(
+        resolved.unwrap_err().reason,
+        Some(fluxdown_protocol::ErrorReason::ShareOwnShare)
+    );
+    assert!(node.service.with(|i| i.resolves.is_empty()));
+
+    node.cancel.cancel();
+}
+
 /// 游客发送方：未登录时凭 endpoint 签名换游客令牌创建分享；令牌缓存复用；登录后游客分享仍用游客令牌
 /// 停止，且账号对账不会把账号列表里没有的游客分享误判为已停止。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -908,4 +1021,390 @@ async fn stale_share_list_never_overrides_local_changes() {
     assert!(sender.service.registry.contains(&second.id));
 
     sender.cancel.cancel();
+}
+
+// ───────────── 我的分享：停止 / 开始 / 删除 ─────────────
+
+/// 登录的分享方，磁盘上有一个已完成任务 `t1`（`payload.bin`）；返回节点、文件目录与内容。
+async fn sender_with_file(
+    base: &str,
+    label: &str,
+    len: usize,
+) -> (Node, std::path::PathBuf, Vec<u8>) {
+    let files_dir = std::env::temp_dir().join(format!(
+        "fluxdown_share_files_{label}_{}_{}",
+        std::process::id(),
+        now_unix_secs()
+    ));
+    std::fs::create_dir_all(&files_dir).unwrap();
+    let payload = pseudo_random(len);
+    std::fs::write(files_dir.join("payload.bin"), &payload).unwrap();
+    let sender = node(
+        base,
+        label,
+        true,
+        vec![task("t1", 3, &files_dir, "payload.bin")],
+    )
+    .await;
+    (sender, files_dir, payload)
+}
+
+/// 测试钩子：接收方通过分享方当前绑定的回环端口连接它（云端契约没有地址提示）。
+fn point_receiver_at(receiver: &Node, sender: &Node) {
+    let sender_service = sender.service.clone();
+    *receiver.service.addr_hint.lock().unwrap() = Some(Arc::new(move |z32: &str| {
+        let endpoint = sender_service.with(|i| i.endpoint.clone())?;
+        let port = endpoint
+            .bound_endpoint()?
+            .bound_sockets()
+            .iter()
+            .find(|a| a.is_ipv4())?
+            .port();
+        let id = EndpointId::from_z32(z32).ok()?;
+        Some(EndpointAddr::new(id).with_ip_addr(([127, 0, 0, 1], port).into()))
+    }));
+}
+
+/// resolve → receive，返回接收方建出的回环下载地址。
+async fn receive_url(receiver: &Node, code: &str, save_dir: &std::path::Path) -> String {
+    let preview: ShareResolveDto = call(
+        receiver,
+        method::AGENT_SHARE_RESOLVE,
+        json!({ "codeOrLink": code }),
+    )
+    .await
+    .unwrap();
+    let _: ShareReceiveResultDto = call(
+        receiver,
+        method::AGENT_SHARE_RECEIVE,
+        json!({ "resolveId": preview.resolve_id, "saveDir": save_dir.to_string_lossy() }),
+    )
+    .await
+    .unwrap();
+    let requests = receiver.tasks.requests.lock().unwrap();
+    requests.last().unwrap().url.clone()
+}
+
+fn local_share(node: &Node, id: &str) -> Option<ShareDto> {
+    node.service.with(|i| {
+        i.shares
+            .iter()
+            .find(|s| s.dto.id == id)
+            .map(|s| s.dto.clone())
+    })
+}
+
+/// 停止后再开始是同一个分享（同 id、同链接），只换取件码；新取件码接收方能成功下载，旧码失效。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stopped_share_resumes_with_same_link_and_a_new_pickup_code() {
+    let (base, _mock) = start_mock().await;
+    let (sender, _dir, payload) = sender_with_file(&base, "resume_sender", 512 * 1024).await;
+    let receiver = node(&base, "resume_receiver", false, Vec::new()).await;
+    point_receiver_at(&receiver, &sender);
+
+    let share: ShareDto = call(
+        &sender,
+        method::AGENT_SHARE_CREATE,
+        json!({ "taskIds": ["t1"] }),
+    )
+    .await
+    .unwrap();
+    let old_code = share.pickup_code.clone();
+    assert_eq!(old_code, "123451");
+
+    let stopped: ShareDto = call(&sender, method::AGENT_SHARE_STOP, json!({ "id": share.id }))
+        .await
+        .unwrap();
+    assert_eq!(stopped.status, ShareStatus::Stopped);
+    assert!(stopped.pickup_code.is_empty());
+    assert_eq!(sender.service.registry.active_count(), 0);
+
+    let resumed: ShareDto = call(
+        &sender,
+        method::AGENT_SHARE_RESUME,
+        json!({ "id": share.id }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(resumed.id, share.id);
+    assert_eq!(resumed.slug, share.slug);
+    assert_eq!(resumed.url, share.url);
+    assert_eq!(resumed.status, ShareStatus::Active);
+    assert_eq!(resumed.pickup_code, "987651");
+    assert!(!resumed.source_missing);
+    assert_eq!(sender.service.registry.active_count(), 1);
+    assert_eq!(local_share(&sender, &share.id), Some(resumed.clone()));
+
+    // 已在分享中再开始：幂等，原样返回。
+    let again: ShareDto = call(
+        &sender,
+        method::AGENT_SHARE_RESUME,
+        json!({ "id": share.id }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(again, resumed);
+
+    // 旧取件码已释放；新取件码可以接收并取到完整内容。
+    let stale: Result<ShareResolveDto, _> = call(
+        &receiver,
+        method::AGENT_SHARE_RESOLVE,
+        json!({ "codeOrLink": old_code }),
+    )
+    .await;
+    assert!(stale.is_err());
+    let save_dir = std::env::temp_dir().join("fluxdown_share_resume_recv");
+    let url = receive_url(&receiver, &resumed.pickup_code, &save_dir).await;
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = http.get(&url).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.bytes().await.unwrap().as_ref(), payload.as_slice());
+
+    // 不存在的分享：ShareNotFound。
+    let missing: Result<ShareDto, _> =
+        call(&sender, method::AGENT_SHARE_RESUME, json!({ "id": "nope" })).await;
+    assert_eq!(
+        missing.unwrap_err().reason,
+        Some(fluxdown_protocol::ErrorReason::ShareNotFound)
+    );
+
+    sender.cancel.cancel();
+    receiver.cancel.cancel();
+}
+
+/// 源文件被删除 / 被改后不能再开始：返回 `shareSourceMissing`，DTO 带 `sourceMissing`，云端分享仍是停止状态。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn resume_is_refused_when_the_source_file_is_gone_or_modified() {
+    let (base, mock) = start_mock().await;
+    let (sender, dir, _payload) = sender_with_file(&base, "resume_missing", 64 * 1024).await;
+    let share: ShareDto = call(
+        &sender,
+        method::AGENT_SHARE_CREATE,
+        json!({ "taskIds": ["t1"] }),
+    )
+    .await
+    .unwrap();
+    let _: ShareDto = call(&sender, method::AGENT_SHARE_STOP, json!({ "id": share.id }))
+        .await
+        .unwrap();
+
+    // 被改：大小与修改时间都变了。
+    let path = dir.join("payload.bin");
+    std::fs::write(&path, pseudo_random(64 * 1024 + 1)).unwrap();
+    let modified: Result<ShareDto, _> = call(
+        &sender,
+        method::AGENT_SHARE_RESUME,
+        json!({ "id": share.id }),
+    )
+    .await;
+    assert_eq!(
+        modified.unwrap_err().reason,
+        Some(fluxdown_protocol::ErrorReason::ShareSourceMissing)
+    );
+    assert!(local_share(&sender, &share.id).unwrap().source_missing);
+
+    // 被删除。
+    std::fs::remove_file(&path).unwrap();
+    let deleted: Result<ShareDto, _> = call(
+        &sender,
+        method::AGENT_SHARE_RESUME,
+        json!({ "id": share.id }),
+    )
+    .await;
+    let err = deleted.unwrap_err();
+    assert_eq!(
+        err.reason,
+        Some(fluxdown_protocol::ErrorReason::ShareSourceMissing)
+    );
+    assert!(!err.retryable);
+
+    // 列表（含云端对账）里该分享仍是已停止 + 文件缺失，云端没有被恢复。
+    let listed: Vec<ShareDto> = call(&sender, method::AGENT_SHARE_LIST, json!({}))
+        .await
+        .unwrap();
+    let entry = listed.iter().find(|s| s.id == share.id).unwrap();
+    assert_eq!(entry.status, ShareStatus::Stopped);
+    assert!(entry.source_missing);
+    assert_eq!(mock.shares.lock().unwrap()[0].status, "stopped");
+    assert_eq!(sender.service.registry.active_count(), 0);
+
+    sender.cancel.cancel();
+}
+
+/// 删除：云端记录与本机记录都没了，之后再对账也不会加回来；云端已不认识（404）视为成功。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deleted_share_is_gone_and_never_comes_back_on_sync() {
+    let (base, mock) = start_mock().await;
+    let (sender, _dir, _payload) = sender_with_file(&base, "delete_sender", 64 * 1024).await;
+    let first: ShareDto = call(
+        &sender,
+        method::AGENT_SHARE_CREATE,
+        json!({ "taskIds": ["t1"] }),
+    )
+    .await
+    .unwrap();
+    let second: ShareDto = call(
+        &sender,
+        method::AGENT_SHARE_CREATE,
+        json!({ "taskIds": ["t1"] }),
+    )
+    .await
+    .unwrap();
+
+    // 分享中的直接删除（云端先按停止处理）。
+    let result: Value = call(
+        &sender,
+        method::AGENT_SHARE_DELETE,
+        json!({ "id": first.id }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, json!({ "ok": true }));
+    assert!(local_share(&sender, &first.id).is_none());
+    assert!(!sender.service.registry.contains(&first.id));
+    assert!(mock.shares.lock().unwrap().iter().all(|s| s.id != first.id));
+
+    let listed: Vec<ShareDto> = call(&sender, method::AGENT_SHARE_LIST, json!({}))
+        .await
+        .unwrap();
+    assert_eq!(
+        listed.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        [second.id.as_str()]
+    );
+    sender.service.sync_shares().await;
+    assert!(local_share(&sender, &first.id).is_none());
+
+    // 删除已停止的分享；云端先一步丢了记录（404）也算成功。
+    let _: ShareDto = call(
+        &sender,
+        method::AGENT_SHARE_STOP,
+        json!({ "id": second.id }),
+    )
+    .await
+    .unwrap();
+    mock.shares.lock().unwrap().clear();
+    let _: Value = call(
+        &sender,
+        method::AGENT_SHARE_DELETE,
+        json!({ "id": second.id }),
+    )
+    .await
+    .unwrap();
+    let listed: Vec<ShareDto> = call(&sender, method::AGENT_SHARE_LIST, json!({}))
+        .await
+        .unwrap();
+    assert!(listed.is_empty());
+
+    // 本机没有的分享：ShareNotFound。
+    let unknown: Result<Value, _> = call(
+        &sender,
+        method::AGENT_SHARE_DELETE,
+        json!({ "id": first.id }),
+    )
+    .await;
+    assert_eq!(
+        unknown.unwrap_err().reason,
+        Some(fluxdown_protocol::ErrorReason::ShareNotFound)
+    );
+
+    sender.cancel.cancel();
+}
+
+/// 分享进行中源文件被删除：接收方取数得到 changed → 分享方把分享停掉并标记 `sourceMissing`。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn source_deleted_while_sharing_stops_the_share() {
+    let (base, mock) = start_mock().await;
+    let (sender, dir, _payload) = sender_with_file(&base, "gone_sender", 256 * 1024).await;
+    let receiver = node(&base, "gone_receiver", false, Vec::new()).await;
+    point_receiver_at(&receiver, &sender);
+    let share: ShareDto = call(
+        &sender,
+        method::AGENT_SHARE_CREATE,
+        json!({ "taskIds": ["t1"] }),
+    )
+    .await
+    .unwrap();
+
+    let save_dir = std::env::temp_dir().join("fluxdown_share_gone_recv");
+    let url = receive_url(&receiver, &share.pickup_code, &save_dir).await;
+    std::fs::remove_file(dir.join("payload.bin")).unwrap();
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = http.get(&url).send().await.unwrap();
+    assert_eq!(response.status(), 409);
+
+    wait_until("share stopped for missing source", || {
+        local_share(&sender, &share.id)
+            .is_some_and(|s| s.status == ShareStatus::Stopped && s.source_missing)
+    })
+    .await;
+    let dto = local_share(&sender, &share.id).unwrap();
+    assert!(dto.pickup_code.is_empty());
+    assert_eq!(mock.shares.lock().unwrap()[0].status, "stopped");
+    assert_eq!(sender.service.registry.active_count(), 0);
+
+    // 已停止 + 文件缺失：不能再开始，只能删除。
+    let resumed: Result<ShareDto, _> = call(
+        &sender,
+        method::AGENT_SHARE_RESUME,
+        json!({ "id": share.id }),
+    )
+    .await;
+    assert_eq!(
+        resumed.unwrap_err().reason,
+        Some(fluxdown_protocol::ErrorReason::ShareSourceMissing)
+    );
+    let _: Value = call(
+        &sender,
+        method::AGENT_SHARE_DELETE,
+        json!({ "id": share.id }),
+    )
+    .await
+    .unwrap();
+    assert!(local_share(&sender, &share.id).is_none());
+
+    sender.cancel.cancel();
+    receiver.cancel.cancel();
+}
+
+/// 重启时对仍在分享中的分享做一次源文件检查：文件在停机期间被删，启动后即停止并标记 `sourceMissing`。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn restart_stops_active_shares_whose_source_vanished() {
+    let (base, mock) = start_mock().await;
+    let files_dir = std::env::temp_dir().join(format!(
+        "fluxdown_share_files_restart_{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&files_dir).unwrap();
+    std::fs::write(files_dir.join("payload.bin"), pseudo_random(64 * 1024)).unwrap();
+    let data_dir = std::env::temp_dir().join(format!(
+        "fluxdown_share_restart_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let tasks = || vec![task("t1", 3, &files_dir, "payload.bin")];
+    let first = node_at(&base, data_dir.clone(), "restart", true, tasks()).await;
+    let share: ShareDto = call(
+        &first,
+        method::AGENT_SHARE_CREATE,
+        json!({ "taskIds": ["t1"] }),
+    )
+    .await
+    .unwrap();
+    first.cancel.cancel();
+    drop(first);
+
+    std::fs::remove_file(files_dir.join("payload.bin")).unwrap();
+    let second = node_at(&base, data_dir, "restart", true, tasks()).await;
+    wait_until("restart check stops the share", || {
+        local_share(&second, &share.id)
+            .is_some_and(|s| s.status == ShareStatus::Stopped && s.source_missing)
+    })
+    .await;
+    assert_eq!(mock.shares.lock().unwrap()[0].status, "stopped");
+    assert_eq!(second.service.registry.active_count(), 0);
+
+    second.cancel.cancel();
 }

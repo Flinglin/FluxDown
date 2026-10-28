@@ -142,6 +142,53 @@ export const SHARE_STATUS_KEYS: Readonly<Record<ShareDisplayStatus, string>> = {
   unknown: 'shareStatusUnknown',
 }
 
+/** 可以「开始分享」：已停止 / 已过期（以服务端状态为准，不含仅显示过期的有效分享）且源文件未缺失（恢复会清掉云端副本，回到实时分享）。 */
+export function canStartShare(share: Pick<ShareDto, 'status' | 'sourceMissing'>): boolean {
+  return (share.status === 'stopped' || share.status === 'expired') && share.sourceMissing !== true
+}
+
+/** 可以「停止分享」：正在分享（含显示已过期但服务端尚未标记的有效分享）。 */
+export function canStopShare(share: Pick<ShareDto, 'status'>): boolean {
+  return share.status === 'active'
+}
+
+/**
+ * 「文件缺失」徽标：已停止 / 已过期的分享只要 `sourceMissing` 就显示；
+ * 有效分享还在云端副本就绪时仍能提供下载，不显示。
+ */
+export function isSourceMissing(share: Pick<ShareDto, 'status' | 'sourceMissing' | 'cloudState'>): boolean {
+  if (share.sourceMissing !== true) return false
+  return share.status !== 'active' || share.cloudState !== 'ready'
+}
+
+/** 批量操作条的按钮可用性与各操作的适用子集（只对适用的项逐个调用单项 RPC）。 */
+export interface ShareBatchPlan {
+  start: ShareDto[]
+  stop: ShareDto[]
+  /** 删除对所有选中项适用。 */
+  remove: ShareDto[]
+}
+
+export function planShareBatch(selected: readonly ShareDto[]): ShareBatchPlan {
+  return {
+    start: selected.filter(canStartShare),
+    stop: selected.filter(canStopShare),
+    remove: [...selected],
+  }
+}
+
+/** 全选框状态：全部选中为 `true`，部分为 `'indeterminate'`，其余 `false`。 */
+export function selectAllState(selectedCount: number, total: number): boolean | 'indeterminate' {
+  if (total > 0 && selectedCount >= total) return true
+  return selectedCount > 0 ? 'indeterminate' : false
+}
+
+/** 选中集合只保留仍在列表里的分享（列表经 `shareChanged` 刷新后，已删除的不再占着选中状态）。 */
+export function pruneSelection(selected: ReadonlySet<string>, shares: readonly Pick<ShareDto, 'id'>[]): Set<string> {
+  const alive = new Set(shares.map((share) => share.id))
+  return new Set([...selected].filter((id) => alive.has(id)))
+}
+
 /** 接收记录状态 → 文案键。 */
 export const RECEIVE_STATUS_KEYS: Readonly<Record<ShareReceiveRecordDto['status'], string>> = {
   active: 'shareReceiveStatusActive',

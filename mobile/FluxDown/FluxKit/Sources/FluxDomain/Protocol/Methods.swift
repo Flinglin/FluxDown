@@ -220,6 +220,8 @@ public enum HostMethod {
     public static let agentShareList = "agent.share.list"
     public static let agentShareUpdate = "agent.share.update"
     public static let agentShareStop = "agent.share.stop"
+    public static let agentShareResume = "agent.share.resume"
+    public static let agentShareDelete = "agent.share.delete"
     public static let agentShareResolve = "agent.share.resolve"
     public static let agentShareReceive = "agent.share.receive"
     public static let agentShareReceiveRecords = "agent.share.receiveRecords"

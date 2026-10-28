@@ -260,6 +260,11 @@ pub const AGENT_SHARE_LIST: &str = "agent.share.list";
 pub const AGENT_SHARE_UPDATE: &str = "agent.share.update";
 /// `ShareIdParams` → `ShareDto`：停止分享（取件码释放），返回停止后的状态。
 pub const AGENT_SHARE_STOP: &str = "agent.share.stop";
+/// `ShareIdParams` → `ShareDto`：重新开始已停止 / 已过期的分享（同 id、同链接，重新分配取件码）。
+/// 已在分享中则原样返回；本机源文件缺失或已被修改 → `ShareSourceMissing`（只能删除）。
+pub const AGENT_SHARE_RESUME: &str = "agent.share.resume";
+/// `ShareIdParams` → `{ "ok": true }`：删除分享记录（分享中的先停止，云端记录一并删除）。
+pub const AGENT_SHARE_DELETE: &str = "agent.share.delete";
 /// `ShareResolveParams` → `ShareResolveDto`：解析取件码 / 链接，返回接收确认框预览。
 pub const AGENT_SHARE_RESOLVE: &str = "agent.share.resolve";
 /// `ShareReceiveParams` → `ShareReceiveResultDto`：接收分享，建出普通下载任务。
@@ -570,6 +575,8 @@ pub const ALL_METHODS: &[&str] = &[
     AGENT_SHARE_LIST,
     AGENT_SHARE_UPDATE,
     AGENT_SHARE_STOP,
+    AGENT_SHARE_RESUME,
+    AGENT_SHARE_DELETE,
     AGENT_SHARE_RESOLVE,
     AGENT_SHARE_RECEIVE,
     AGENT_SHARE_DISMISS_PENDING,

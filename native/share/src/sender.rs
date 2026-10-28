@@ -618,6 +618,14 @@ impl ShareSender {
         }
     }
 
+    /// 源文件已变化：通知宿主（事件通道无界，只入队），并以 `changed` 拒绝本次请求。
+    fn source_changed(&self, auth: &Authorized) -> Prepared {
+        self.inner.observers.emit(SessionEvent::SourceChanged {
+            share_id: auth.share_id.clone(),
+        });
+        Prepared::Reject(reject(Status::Changed))
+    }
+
     async fn prepare(&self, auth: &Authorized, request: Request) -> Prepared {
         if request.len > MAX_REQUEST_LEN {
             return Prepared::Reject(reject(Status::BadRequest));
@@ -654,10 +662,10 @@ impl ShareSender {
         .await;
         let file = match opened {
             Ok(Ok(Some(file))) => file,
-            // 大小或修改时间与登记不符，或文件已被删除：统一报 changed。
-            Ok(Ok(None)) => return Prepared::Reject(reject(Status::Changed)),
+            // 大小或修改时间与登记不符，或文件已被删除：统一报 changed，并通知宿主（只入队，不阻塞）。
+            Ok(Ok(None)) => return self.source_changed(auth),
             Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Prepared::Reject(reject(Status::Changed));
+                return self.source_changed(auth);
             }
             Ok(Err(e)) => {
                 tracing::warn!(error = %e, "cannot open a shared file");

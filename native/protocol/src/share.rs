@@ -285,6 +285,9 @@ pub struct ShareDto {
     /// 云端暂存上传进度；没有进行中的上传时为 `None`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upload: Option<ShareUploadDto>,
+    /// 本机源文件已缺失或已被修改，实时分享无法提供，也无法重新开始；此时只能删除该分享。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub source_missing: bool,
 }
 
 /// 一个有效期档位。

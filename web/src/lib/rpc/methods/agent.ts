@@ -359,6 +359,10 @@ const share = {
   /** 改有效期 / 次数 / 领取通知；链接与取件码不变。 */
   update: (params: ShareUpdateParams) => call<ShareDto>(METHOD.AGENT_SHARE_UPDATE, params),
   stop: (params: ShareIdParams) => call<ShareDto>(METHOD.AGENT_SHARE_STOP, params),
+  /** 重新开始已停止 / 已过期的分享：同 id、同链接，重新分配取件码。源文件缺失或已被修改 → `shareSourceMissing`。 */
+  resume: (params: ShareIdParams) => call<ShareDto>(METHOD.AGENT_SHARE_RESUME, params),
+  /** 删除分享记录（分享中的先停止；云端记录一并删除）；本机文件不受影响。 */
+  delete: (params: ShareIdParams) => call<OkResult>(METHOD.AGENT_SHARE_DELETE, params),
   /** 解析取件码 / 链接，返回接收确认框预览。 */
   resolve: (params: ShareResolveParams) => call<ShareResolveDto>(METHOD.AGENT_SHARE_RESOLVE, params),
   /** `resolveId` 与 `codeOrLink` 二选一。 */

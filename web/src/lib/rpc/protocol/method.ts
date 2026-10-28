@@ -254,6 +254,10 @@ export const METHOD = {
   AGENT_SHARE_LIST: 'agent.share.list',
   AGENT_SHARE_UPDATE: 'agent.share.update',
   AGENT_SHARE_STOP: 'agent.share.stop',
+  /** 重新开始已停止 / 已过期的分享（同 id、同链接，重新分配取件码）。 */
+  AGENT_SHARE_RESUME: 'agent.share.resume',
+  /** 删除分享记录（分享中的先停止）。 */
+  AGENT_SHARE_DELETE: 'agent.share.delete',
   AGENT_SHARE_RESOLVE: 'agent.share.resolve',
   AGENT_SHARE_RECEIVE: 'agent.share.receive',
   AGENT_SHARE_DISMISS_PENDING: 'agent.share.dismissPending',

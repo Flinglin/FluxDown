@@ -17,6 +17,7 @@ use super::convert;
 use super::service::{CONFIG_TTL, CachedConfig, Inner, ShareService, unavailable};
 use super::store::StoredShare;
 use super::time::parse_rfc3339_secs;
+use super::upload_job::sources_intact;
 
 /// 接收方连上来后到对账之间的合并窗口。
 const SHARE_SYNC_COALESCE: Duration = Duration::from_secs(1);
@@ -494,7 +495,7 @@ impl ShareService {
     }
 
     /// 重启后：把仍有效的分享重新登记进发送方（文件仍在才登记），再与云端对账。
-    pub(super) async fn restore_shares(&self) {
+    pub(super) async fn restore_shares(&self, persisted_active: &[String]) {
         let shares = self.with(|i| i.shares.clone());
         for stored in &shares {
             if let Err(error) = self.register_local(stored) {
@@ -502,14 +503,106 @@ impl ShareService {
             }
         }
         self.sync_shares().await;
+        self.check_active_sources(persisted_active).await;
         self.resume_uploads().await;
         self.refresh_endpoint().await;
+    }
+
+    /// 启动时对上次运行留下、对账后仍在分享中的分享做一次源文件检查（一次性；之后只在接收方取数失败时再发现）。
+    async fn check_active_sources(&self, persisted_active: &[String]) {
+        let candidates: Vec<StoredShare> = self.with(|i| {
+            i.shares
+                .iter()
+                .filter(|s| {
+                    s.dto.status == ShareStatus::Active && persisted_active.contains(&s.dto.id)
+                })
+                .cloned()
+                .collect()
+        });
+        for stored in candidates {
+            if !sources_intact(&stored.manifest.files, &stored.paths).await {
+                self.source_lost(&stored.dto.id).await;
+            }
+        }
+    }
+
+    /// 发送方读源文件时发现文件被删除 / 被改（`SessionEvent::SourceChanged`）：重新核对磁盘后按丢失处理。
+    pub(super) async fn on_source_changed(&self, share_id: &str) {
+        let Some(stored) = self.with(|i| i.shares.iter().find(|s| s.dto.id == share_id).cloned())
+        else {
+            return;
+        };
+        if stored.dto.status != ShareStatus::Active {
+            return;
+        }
+        if sources_intact(&stored.manifest.files, &stored.paths).await {
+            return;
+        }
+        self.source_lost(share_id).await;
+    }
+
+    /// 分享中的源文件已丢失：标记 `sourceMissing`；没有就绪的云端副本（接收方只能走本机）就按停止流程结束分享。
+    /// 云端停止失败只记录警告，分享保持分享中 + `sourceMissing`，下一次云端对账时重试。
+    async fn source_lost(&self, id: &str) {
+        self.flag_source_missing(id);
+        let has_cloud_copy = self.with(|i| {
+            i.shares
+                .iter()
+                .find(|s| s.dto.id == id)
+                .is_some_and(|s| s.dto.cloud_state == ShareCloudState::Ready)
+        });
+        if !has_cloud_copy {
+            match self.stop(id).await {
+                // 停止流程自己已落盘并发布。
+                Ok(_) => return,
+                Err(error) => tracing::warn!(
+                    share = id,
+                    reason = ?error.reason,
+                    "could not stop a share whose source file is gone; retrying on the next sync"
+                ),
+            }
+        }
+        self.persist_shares().await;
+        self.publish().await;
+    }
+
+    /// 把分享标记为源文件缺失；返回是否有变化。
+    pub(super) fn flag_source_missing(&self, id: &str) -> bool {
+        self.with(|i| {
+            let Some(stored) = i.shares.iter_mut().find(|s| s.dto.id == id) else {
+                return false;
+            };
+            !std::mem::replace(&mut stored.dto.source_missing, true)
+        })
+    }
+
+    /// 上次因云端失败没能停掉的「源文件缺失」分享，在对账后再试一次。
+    async fn retry_source_loss_stops(&self) {
+        let ids: Vec<String> = self.with(|i| {
+            i.shares
+                .iter()
+                .filter(|s| {
+                    s.dto.source_missing
+                        && s.dto.status == ShareStatus::Active
+                        && s.dto.cloud_state != ShareCloudState::Ready
+                })
+                .map(|s| s.dto.id.clone())
+                .collect()
+        });
+        for id in ids {
+            self.source_lost(&id).await;
+        }
     }
 
     /// `GET /share/shares` 对账：状态 / 到期 / 领取次数以云端为准；云端已不认识的本机分享视为已停止。
     /// 账号分享与游客分享分属不同归属方，各自用对应身份列出、只对账自己那一类。
     /// 请求期间本机改过分享表（`share_epoch` 变了）就作废这次列表重新请求，最多 [`SYNC_ATTEMPTS`] 次。
     pub(super) async fn sync_shares(&self) {
+        self.reconcile_shares().await;
+        self.retry_source_loss_stops().await;
+    }
+
+    async fn reconcile_shares(&self) {
         for _ in 0..SYNC_ATTEMPTS {
             let epoch = self.with(|i| i.share_epoch);
             let lists = self.fetch_share_lists().await;

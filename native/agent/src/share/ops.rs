@@ -32,6 +32,7 @@ use super::service::{
 };
 use super::source::{BridgeSource, CloudCopySource, bridge_switch_error};
 use super::store::StoredShare;
+use super::upload_job::sources_intact;
 use super::{convert, logs};
 use crate::share_link::ShareLinkSink;
 
@@ -86,6 +87,15 @@ impl ShareService {
             method::AGENT_SHARE_STOP => {
                 let ShareIdParams { id } = parse(params)?;
                 to_value(&self.stop(&id).await?)
+            }
+            method::AGENT_SHARE_RESUME => {
+                let ShareIdParams { id } = parse(params)?;
+                to_value(&self.resume(&id).await?)
+            }
+            method::AGENT_SHARE_DELETE => {
+                let ShareIdParams { id } = parse(params)?;
+                self.delete(&id).await?;
+                Ok(json!({ "ok": true }))
             }
             method::AGENT_SHARE_RESOLVE => {
                 let params: ShareResolveParams = parse(params)?;
@@ -453,7 +463,8 @@ impl ShareService {
         Ok(dto)
     }
 
-    async fn stop(&self, id: &str) -> Result<ShareDto, RpcErrorData> {
+    /// 停止分享：云端停止（取件码释放）后本机置为已停止。云端失败时本机状态不变。
+    pub(super) async fn stop(&self, id: &str) -> Result<ShareDto, RpcErrorData> {
         let stored = self.find_share(id)?;
         let guest_token = self.owner_token(stored.guest_owned).await?;
         match self.cloud.share_stop(id, guest_token.as_deref()).await {
@@ -488,6 +499,87 @@ impl ShareService {
         self.refresh_endpoint_later();
         self.publish().await;
         Ok(dto)
+    }
+
+    /// `agent.share.resume`：重新开始已停止 / 已过期的分享，同 id、同链接，只重新分配取件码；
+    /// 云端会清掉旧的云端副本，恢复后一律是实时分享。
+    ///
+    /// 已在分享中则原样返回。开始前检查源文件（大小 + 修改时间与清单一致）：不一致则标记
+    /// `sourceMissing` 并以 `ShareSourceMissing` 拒绝。
+    async fn resume(&self, id: &str) -> Result<ShareDto, RpcErrorData> {
+        let stored = self.find_share(id)?;
+        if stored.dto.status == ShareStatus::Active {
+            return Ok(stored.dto);
+        }
+        if !sources_intact(&stored.manifest.files, &stored.paths).await {
+            if self.flag_source_missing(id) {
+                self.persist_shares().await;
+                self.publish().await;
+            }
+            return Err(reason(
+                ApplicationErrorCode::Conflict,
+                false,
+                ErrorReason::ShareSourceMissing,
+            ));
+        }
+        let guest_token = self.owner_token(stored.guest_owned).await?;
+        let cloud: CloudShare = self
+            .cloud
+            .share_resume(id, guest_token.as_deref())
+            .await
+            .map_err(|error| share_error(&error))?;
+        let resumed = self.with(|i| {
+            i.share_epoch += 1;
+            i.shares.iter_mut().find(|s| s.dto.id == id).map(|s| {
+                apply_cloud(&mut s.dto, &cloud);
+                s.dto.source_missing = false;
+                s.clone()
+            })
+        });
+        let resumed = resumed.ok_or_else(|| {
+            reason(
+                ApplicationErrorCode::NotFound,
+                false,
+                ErrorReason::ShareNotFound,
+            )
+        })?;
+        self.register_local(&resumed)
+            .map_err(|error| internal(&error))?;
+        self.persist_shares().await;
+        self.wake.notify_one();
+        self.refresh_endpoint().await;
+        self.publish().await;
+        Ok(resumed.dto)
+    }
+
+    /// `agent.share.delete`：删除分享记录。云端记录先删（分享中的由云端按停止处理；已不存在视为成功），
+    /// 云端失败则保留本机记录；成功后取消上传、中断会话、移出发送方登记表并删除本机记录。
+    async fn delete(&self, id: &str) -> Result<(), RpcErrorData> {
+        let stored = self.find_share(id)?;
+        let guest_token = self.owner_token(stored.guest_owned).await?;
+        match self
+            .cloud
+            .share_delete_record(id, guest_token.as_deref())
+            .await
+        {
+            Ok(_) => {}
+            Err(error) if error.status == Some(404) => {}
+            Err(error) => return Err(share_error(&error)),
+        }
+        self.registry.remove(id);
+        self.cancel_upload(id).await;
+        if let Some(endpoint) = self.with(|i| i.endpoint.clone()) {
+            endpoint.sender().kill_share_sessions(id);
+        }
+        self.with(|i| {
+            i.share_epoch += 1;
+            i.shares.retain(|s| s.dto.id != id);
+        });
+        self.persist_shares().await;
+        self.wake.notify_one();
+        self.refresh_endpoint_later();
+        self.publish().await;
+        Ok(())
     }
 
     // ───────────── 接收 ─────────────
@@ -540,6 +632,14 @@ impl ShareService {
                 ),
                 _ => share_error(&error),
             })?;
+        // iroh 端点不能连接自身：本机发起的分享在这里就拒绝，而不是建出注定 503 的下载任务。
+        if resp.share.sender_endpoint_id == endpoint.id_z32() {
+            return Err(reason(
+                ApplicationErrorCode::InvalidArgument,
+                false,
+                ErrorReason::ShareOwnShare,
+            ));
+        }
         if let Some(token) = &resp.guest_token {
             self.telemetry
                 .guests

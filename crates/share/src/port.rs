@@ -93,6 +93,22 @@ impl ShareApi {
         )
     }
 
+    /// 恢复已停止 / 已过期的分享（同一分享，重新分配取件码）。
+    pub fn resume(&self, id: &str) -> PortFuture<ShareDto> {
+        self.invoke(
+            method::AGENT_SHARE_RESUME,
+            &ShareIdParams { id: id.to_owned() },
+        )
+    }
+
+    /// 删除分享记录；分享中的先停止。
+    pub fn delete(&self, id: &str) -> PortFuture<serde_json::Value> {
+        self.invoke(
+            method::AGENT_SHARE_DELETE,
+            &ShareIdParams { id: id.to_owned() },
+        )
+    }
+
     pub fn resolve(&self, params: &ShareResolveParams) -> PortFuture<ShareResolveDto> {
         self.invoke(method::AGENT_SHARE_RESOLVE, params)
     }

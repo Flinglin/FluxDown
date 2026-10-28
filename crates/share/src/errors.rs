@@ -31,6 +31,8 @@ pub fn reason_key(reason: Option<ErrorReason>) -> &'static str {
         Some(ErrorReason::ShareCloudNotReady) => "errReasonShareCloudNotReady",
         Some(ErrorReason::ShareTrafficExhausted) => "errReasonShareTrafficExhausted",
         Some(ErrorReason::ShareCloudUnavailable) => "errReasonShareCloudUnavailable",
+        Some(ErrorReason::ShareOwnShare) => "errReasonShareOwnShare",
+        Some(ErrorReason::ShareSourceMissing) => "errReasonShareSourceMissing",
         _ => GENERIC_ERROR_KEY,
     }
 }

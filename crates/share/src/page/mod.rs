@@ -43,8 +43,10 @@ pub struct ShareView {
     input_invalid: bool,
     tab: ManageTab,
     network: Entity<NetworkTab>,
-    /// 正在提交停止的分享 ID。
-    stopping: HashSet<String>,
+    /// 正在提交操作（停止 / 开始 / 删除）的分享 ID，防重入。
+    busy: HashSet<String>,
+    /// 「我的分享」多选集合（分享 ID）；分享从列表消失时在 `absorb_hub` 里剔除。
+    selected: HashSet<String>,
     // 接收记录
     feed: ReceivedFeed,
     last_records: Vec<ShareReceiveRecordDto>,
@@ -86,7 +88,8 @@ impl ShareView {
             input_invalid: false,
             tab: ManageTab::Mine,
             network,
-            stopping: HashSet::new(),
+            busy: HashSet::new(),
+            selected: HashSet::new(),
             feed: ReceivedFeed::default(),
             last_records: Vec::new(),
             epoch: Instant::now(),
@@ -109,6 +112,11 @@ impl ShareView {
         let request = self.hub.update(cx, |hub, _| hub.take_manage_request());
         if let Some(request) = request {
             self.apply_manage_request(request, cx);
+        }
+        if !self.selected.is_empty() {
+            let state = self.hub.read(cx).state();
+            self.selected
+                .retain(|id| state.shares.iter().any(|share| &share.id == id));
         }
         let changed = self.hub.read(cx).state().receive_records != self.last_records;
         if changed {

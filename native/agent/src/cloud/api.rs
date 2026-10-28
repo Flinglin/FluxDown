@@ -675,6 +675,36 @@ impl CloudApi {
         .await
     }
 
+    /// `POST /share/shares/{id}/resume`：重新开始已停止 / 已过期的分享（同 id、同链接，重新分配取件码）。
+    pub async fn share_resume<R: serde::de::DeserializeOwned>(
+        &self,
+        id: &str,
+        guest_token: Option<&str>,
+    ) -> Result<R, CloudError> {
+        self.share_owner_call(
+            Method::POST,
+            &format!("/api/v1/share/shares/{}/resume", encode(id)),
+            None::<&Value>,
+            guest_token,
+        )
+        .await
+    }
+
+    /// `DELETE /share/shares/{id}/record`：删除分享记录（分享中的云端先按停止处理）。
+    pub async fn share_delete_record(
+        &self,
+        id: &str,
+        guest_token: Option<&str>,
+    ) -> Result<Value, CloudError> {
+        self.share_owner_call(
+            Method::DELETE,
+            &format!("/api/v1/share/shares/{}/record", encode(id)),
+            None::<&Value>,
+            guest_token,
+        )
+        .await
+    }
+
     /// `POST /share/shares/{id}/upload`：登记要上传的文件，返回每个文件的上传方案（分片预签名地址，只含缺失分片，可重复调用续传）。
     pub async fn share_upload_plan<P: Serialize, R: serde::de::DeserializeOwned>(
         &self,
