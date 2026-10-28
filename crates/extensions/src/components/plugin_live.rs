@@ -30,9 +30,11 @@ impl LivePlugins {
 }
 
 /// 透明包装：内容原样渲染；所属插件从列表消失（被卸载）时关闭当前最上层对话框
-/// （与插件视图 `PluginViewSlot::Dialog` 的「最上层对话框」约定一致）。
+/// （与插件视图 `PluginViewSlot::Dialog` 的「最上层对话框」约定一致）。只关一次：
+/// 卸载后的后续列表更新不会再关掉别的对话框。
 pub struct CloseWhenRemoved {
     child: AnyView,
+    closed: bool,
     _subscription: Subscription,
 }
 
@@ -46,13 +48,16 @@ impl CloseWhenRemoved {
     ) -> Entity<Self> {
         let child = child.into();
         cx.new(|cx| {
-            let subscription = cx.observe_in(live, window, move |_, live, window, cx| {
-                if live.read(cx).plugin(&identity).is_none() {
-                    window.close_dialog(cx);
-                }
-            });
+            let subscription =
+                cx.observe_in(live, window, move |this: &mut Self, live, window, cx| {
+                    if !this.closed && live.read(cx).plugin(&identity).is_none() {
+                        this.closed = true;
+                        window.close_dialog(cx);
+                    }
+                });
             Self {
                 child,
+                closed: false,
                 _subscription: subscription,
             }
         })

@@ -18,7 +18,7 @@ use super::plugin_live::LivePlugins;
 use crate::{pages::Frame, ui};
 
 /// 详情对话框的数据；调用侧从各自 DTO 拆字段。
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PluginDetail {
     pub name: String,
     pub version: String,
@@ -145,6 +145,8 @@ pub type OpenAudit = Rc<dyn Fn(&mut Window, &mut App)>;
 struct DetailBody {
     detail: PluginDetail,
     translator: Translator,
+    /// 插件被卸载后已关过一次对话框：之后的列表更新不得再关掉别的对话框。
+    closed: bool,
     _live: Option<Subscription>,
 }
 
@@ -167,17 +169,28 @@ pub fn open_plugin_detail(
     let body = cx.new(|_| DetailBody {
         detail,
         translator,
+        closed: false,
         _live: None,
     });
     if let Some(live) = live {
         body.update(cx, |this, cx| {
             this._live = Some(cx.observe_in(&live, window, |this, live, window, cx| {
-                match live.read(cx).plugin(&this.detail.identity) {
-                    Some(plugin) => this.detail = PluginDetail::from_plugin(plugin),
-                    None => window.close_dialog(cx),
+                let Some(plugin) = live.read(cx).plugin(&this.detail.identity) else {
+                    if !this.closed {
+                        this.closed = true;
+                        window.close_dialog(cx);
+                    }
+                    return;
+                };
+                let next = PluginDetail::from_plugin(plugin);
+                if next == this.detail {
+                    return;
                 }
-                // 标题在对话框构造器里每帧重建：整窗重绘才能带上改名。
-                window.refresh();
+                // 标题在对话框构造器里每帧重建：改名时整窗重绘才能带上新标题。
+                if next.name != this.detail.name {
+                    window.refresh();
+                }
+                this.detail = next;
                 cx.notify();
             }));
         });
