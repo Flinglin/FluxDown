@@ -115,6 +115,7 @@
 - **列表行的滑动删除不得用 `role: .destructive`，用红色 tint**：`List` 会立即动画移除该行而数据源仍有这一行，`UICollectionView` 行数不一致崩溃 → `mobile/FluxDown/FluxDown/Features/Devices/RemoteTaskRow.swift`（`swipeActions` 注释；本地任务行同）。
 - **`.searchable` 的 `placement` 必须恒定**：动态切换会在输入中丢焦点 → `mobile/FluxDown/FluxDown/Features/Downloads/DownloadsListScreen.swift`。
 - **本机主机是进程级单例，多个会话共享**：测试里两个场景必须串行（`@Suite(.serialized)`）；仅用于发 RPC 的会话要把 `signals` 流读干净，否则快照 / 事件在会话存活期间无限堆积 → `mobile/FluxDown/FluxKit/Tests/FluxBridgeTests/LocalHostSmokeTests.swift`、`mobile/FluxDown/FluxDown/Features/Devices/HostPairingFlow.swift`。
+- **build-core.sh 失败时旧的 xcframework / Swift 绑定原样留着，Xcode 报的是绑定陈旧（如 `Mapping.swift` 找不到新 DTO 字段 `urlPattern`），根因在 Rust 交叉编译**：先看 build-core.sh 的输出。iOS full flavor 的 iroh → netwatch / netdev 依赖 libc ≤ 0.2.189 的 Apple 符号，`libc` 钉在 `native/engine/Cargo.toml`；CI `ios-core` 按两种 flavor 做 `aarch64-apple-ios` check，`cargo update` 抬版本会在合入前失败 → `native/engine/Cargo.toml`（libc 注释）、`.github/workflows/ci.yml::ios-core`。
 
 ## 构建与发布
 
