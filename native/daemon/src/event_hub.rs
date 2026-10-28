@@ -949,7 +949,7 @@ impl fluxdown_engine::events::EventSink for DaemonEngineEventSink {
             EngineEvent::PluginsChanged(plugins) => {
                 self.0.publish(DaemonEvent::PluginsChanged(
                     plugins
-                        .iter()
+                        .into_iter()
                         .map(fluxdown_engine_protocol::plugin_info_to_dto)
                         .collect(),
                 ));

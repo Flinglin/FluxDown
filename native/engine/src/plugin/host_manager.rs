@@ -406,7 +406,10 @@ impl PluginManager {
                 .find(|p| p.manifest.identity == identity)
                 .ok_or_else(|| PluginError::Runtime(format!("plugin not found: {identity}")))?;
             if !plugin.enabled {
-                return Err(PluginError::Runtime(format!("plugin disabled: {identity}")));
+                return Err(PluginError::Runtime(format!(
+                    "plugin disabled: {identity} ({})",
+                    plugin.disabled_reason.describe()
+                )));
             }
             plugin.manifest.clone()
         };
@@ -474,7 +477,10 @@ impl PluginManager {
                 .find(|p| p.manifest.identity == identity)
                 .ok_or_else(|| PluginError::Runtime(format!("plugin not found: {identity}")))?;
             if !plugin.enabled {
-                return Err(PluginError::Runtime(format!("plugin disabled: {identity}")));
+                return Err(PluginError::Runtime(format!(
+                    "plugin disabled: {identity} ({})",
+                    plugin.disabled_reason.describe()
+                )));
             }
             if plugin.manifest.main.is_none() {
                 return Err(PluginError::Runtime(format!(
@@ -631,7 +637,10 @@ impl PluginManager {
             .find(|p| p.manifest.identity == identity)
             .ok_or_else(|| PluginError::Runtime(format!("plugin not found: {identity}")))?;
         if !plugin.enabled {
-            return Err(PluginError::Runtime(format!("plugin disabled: {identity}")));
+            return Err(PluginError::Runtime(format!(
+                "plugin disabled: {identity} ({})",
+                plugin.disabled_reason.describe()
+            )));
         }
         let Some(main) = &plugin.manifest.main else {
             return Err(PluginError::Runtime(format!(
@@ -1146,7 +1155,7 @@ impl PluginManager {
     }
 
     /// `flux.settings.update`：与 UI 路径同一校验，额外写审计。
-    async fn host_settings_update(
+    pub(super) async fn host_settings_update(
         &self,
         identity: &str,
         entries: Vec<(String, String)>,
