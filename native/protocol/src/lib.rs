@@ -154,11 +154,12 @@ pub use share::{
     ShareHomeRelayDto, ShareIdParams, ShareLocalConfigDto, ShareLogLevel, ShareLogLineDto,
     ShareLogsDto, ShareLogsParams, ShareMode, ShareNatType, ShareNetReportDto, ShareNetSnapshotDto,
     ShareNetStatusDto, SharePathEventDto, SharePathKind, SharePathSummaryDto,
-    SharePolicySummaryDto, ShareProgressDto, ShareReceiveParams, ShareReceiveRecordDto,
-    ShareReceiveRecordsPage, ShareReceiveRecordsParams, ShareReceiveResultDto, ShareReceiveStatus,
-    ShareReceiverDto, ShareRelayDto, ShareResolveDto, ShareResolveParams, ShareSessionBytesDto,
-    ShareSessionDetailDto, ShareSessionKillParams, ShareSessionRole, ShareSessionSampleDto,
-    ShareSessionSummaryDto, ShareSourcesDto, ShareStateDto, ShareStatus, ShareSwitchToBridgeParams,
+    SharePolicySummaryDto, ShareProgressDto, ShareProvideState, ShareReceiveParams,
+    ShareReceiveRecordDto, ShareReceiveRecordsPage, ShareReceiveRecordsParams,
+    ShareReceiveResultDto, ShareReceiveStatus, ShareReceiverDto, ShareRelayDto, ShareResolveDto,
+    ShareResolveParams, ShareSessionBytesDto, ShareSessionDetailDto, ShareSessionKillParams,
+    ShareSessionRole, ShareSessionSampleDto, ShareSessionSummaryDto, ShareSourcesDto,
+    ShareStateDto, ShareStatus, ShareStopProvidingParams, ShareSwitchToBridgeParams,
     ShareTaskFactsDto, ShareTierDto, ShareUpdateParams, ShareUploadDto, ShareUploadStatus,
 };
 pub use table_sync::{

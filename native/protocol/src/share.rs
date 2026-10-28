@@ -35,6 +35,8 @@ pub enum SharePathKind {
     Cdn,
     /// 经 share-gateway 实时桥接（分享方在线、无副本）。
     Bridge,
+    /// 分享方未连接，块全部来自持有同一文件的其他设备（共享）。
+    Swarm,
     /// 尚未选定路径。
     #[default]
     #[serde(other)]
@@ -202,6 +204,23 @@ pub enum ShareReceiveStatus {
     Failed,
 }
 
+/// 一次接收的共享（共享提供）状态。
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub enum ShareProvideState {
+    /// 正在共享。
+    Providing,
+    /// 原分享已结束或文件已变动，共享自然结束。
+    Ended,
+    /// 用户停止了共享。
+    Stopped,
+    /// 未共享。
+    #[default]
+    #[serde(other)]
+    Off,
+}
+
 // ───────────────────────── 分享 ─────────────────────────
 
 /// 分享里的单个文件。
@@ -288,6 +307,9 @@ pub struct ShareDto {
     /// 本机源文件已缺失或已被修改，实时分享无法提供，也无法重新开始；此时只能删除该分享。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub source_missing: bool,
+    /// 该分享是否加入共享（其他持有同一文件的设备可互相取块）。
+    #[serde(default)]
+    pub swarm: bool,
 }
 
 /// 一个有效期档位。
@@ -381,6 +403,12 @@ pub struct ShareLocalConfigDto {
     /// 新建分享的默认「领取通知」。
     #[serde(default)]
     pub default_notify_on_claim: bool,
+    /// 新建分享默认加入共享；`None` = 开。
+    #[serde(default)]
+    pub default_swarm: Option<bool>,
+    /// 接收的文件参与共享（共享）；`None` = 开。
+    #[serde(default)]
+    pub auto_provide: Option<bool>,
 }
 
 /// 本机端点网络状态（展示与上报 FluxCloud 的快照的同源摘要；端点未绑定时多为空）。
@@ -444,6 +472,9 @@ pub struct ShareTaskFactsDto {
     /// 打洞超过 `policy.holePunchHintSecs` 仍走中继，UI 据此显示「切换桥接」提示。
     #[serde(default)]
     pub relay_stuck: bool,
+    /// 当前在线、可共享取块的其他设备数。
+    #[serde(default)]
+    pub swarm_peers: u32,
 }
 
 /// 创建分享时正在做块哈希的任务，`agent.share.create` 返回前出现，完成后移除。
@@ -479,6 +510,9 @@ pub struct ShareReceiveRecordDto {
     pub started_at: String,
     #[serde(default)]
     pub status: ShareReceiveStatus,
+    /// 共享（共享提供）状态；由 agent 在下发时叠加，旧载荷缺省为 `off`。
+    #[serde(default)]
+    pub provide_state: ShareProvideState,
 }
 
 /// FluxMesh分区的完整状态（`AgentSnapshot.share`，`AgentEvent::ShareChanged` 整体替换）。
@@ -584,6 +618,9 @@ pub struct ShareCreateParams {
     /// 缺省取 [`ShareLocalConfigDto::default_notify_on_claim`]。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify_on_claim: Option<bool>,
+    /// 缺省取 [`ShareLocalConfigDto::default_swarm`]。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swarm: Option<bool>,
 }
 
 /// `agent.share.update` 参数：改设置不新建分享，链接与取件码不变；缺省字段不改。
@@ -599,6 +636,9 @@ pub struct ShareUpdateParams {
     pub max_claims: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify_on_claim: Option<bool>,
+    /// 是否加入共享。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swarm: Option<bool>,
 }
 
 /// `agent.share.stop` 参数。
@@ -607,6 +647,14 @@ pub struct ShareUpdateParams {
 #[serde(rename_all = "camelCase")]
 pub struct ShareIdParams {
     pub id: String,
+}
+
+/// `agent.share.stopProviding` 参数。
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct ShareStopProvidingParams {
+    pub record_id: String,
 }
 
 /// `agent.share.convertToCloud` 参数：把一个实时分享转为云端暂存并开始上传。
@@ -646,6 +694,9 @@ pub struct ShareSourcesDto {
     /// 可经实时桥接取（云端允许该身份走桥接）。
     #[serde(default)]
     pub bridge: bool,
+    /// 当前在线、持有同一文件的其他设备数（共享）。
+    #[serde(default)]
+    pub swarm_peers: u32,
 }
 
 /// `agent.share.resolve` 结果：接收确认框的预览。
@@ -847,6 +898,9 @@ pub struct ShareSessionBytesDto {
     /// 经 share-gateway 桥接取得并通过校验的字节。
     #[serde(default)]
     pub bridge: u64,
+    /// 从共享对端取回并通过校验的字节。
+    #[serde(default)]
+    pub peer: u64,
 }
 
 /// 单条路径的统计（镜像 `fluxdown_share::PathSummary`）。

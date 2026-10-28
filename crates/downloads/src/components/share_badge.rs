@@ -31,6 +31,8 @@ pub(crate) enum SwitchBridge {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ShareBadge {
     pub(crate) kind: SharePathKind,
+    /// 共享对端数；`> 0` 时角标追加「+N 台设备」。
+    pub(crate) peers: u32,
     pub(crate) tone: ShareTone,
     /// 「切换桥接」入口：进行中的任务只要来源还不是桥接就提供。
     pub(crate) switch_bridge: Option<SwitchBridge>,
@@ -43,7 +45,10 @@ pub(crate) fn badge_for(facts: &ShareTaskFactsDto, active: bool) -> Option<Share
         return None;
     }
     let tone = match facts.path_kind {
-        SharePathKind::DirectLan | SharePathKind::DirectWan | SharePathKind::Cdn => ShareTone::Good,
+        SharePathKind::DirectLan
+        | SharePathKind::DirectWan
+        | SharePathKind::Cdn
+        | SharePathKind::Swarm => ShareTone::Good,
         SharePathKind::Relay | SharePathKind::Bridge => ShareTone::Warn,
         SharePathKind::Unknown => ShareTone::Neutral,
     };
@@ -55,6 +60,7 @@ pub(crate) fn badge_for(facts: &ShareTaskFactsDto, active: bool) -> Option<Share
         });
     Some(ShareBadge {
         kind: facts.path_kind,
+        peers: facts.swarm_peers,
         tone,
         switch_bridge,
     })
@@ -82,7 +88,13 @@ pub(crate) fn share_badge(
     let tokens = theme.tokens();
     let text = &tokens.typography.xs;
     let color = tone_color(badge.tone, cx);
-    let label = strings.share_path(badge.kind);
+    let mut label = strings.share_path(badge.kind);
+    if badge.peers > 0 {
+        label = SharedString::from(format!(
+            "{label} {}",
+            strings.format_share_peers(badge.peers)
+        ));
+    }
     let pill = h_flex()
         .id(SharedString::from(format!("share-badge-{task_id}")))
         .min_w_0()
@@ -162,6 +174,22 @@ mod tests {
     }
 
     #[test]
+    fn badge_carries_swarm_peers() {
+        let with_peers = ShareTaskFactsDto {
+            swarm_peers: 3,
+            ..facts(SharePathKind::DirectWan, false, true)
+        };
+        assert_eq!(
+            badge_for(&with_peers, true).map(|badge| badge.peers),
+            Some(3)
+        );
+        assert_eq!(
+            badge_for(&facts(SharePathKind::DirectWan, false, true), true).map(|badge| badge.peers),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn only_share_receive_tasks_get_a_badge() {
         assert_eq!(
             badge_for(&facts(SharePathKind::Relay, true, false), true),
@@ -179,6 +207,7 @@ mod tests {
         assert_eq!(tone(SharePathKind::Relay), Some(ShareTone::Warn));
         assert_eq!(tone(SharePathKind::Bridge), Some(ShareTone::Warn));
         assert_eq!(tone(SharePathKind::Unknown), Some(ShareTone::Neutral));
+        assert_eq!(tone(SharePathKind::Swarm), Some(ShareTone::Good));
     }
 
     #[test]

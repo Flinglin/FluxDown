@@ -273,6 +273,7 @@ export const METHOD = {
   AGENT_SHARE_CONVERT_TO_CLOUD: 'agent.share.convertToCloud',
   /** 删除云端副本（上传中则先取消）；分享回到实时模式。 */
   AGENT_SHARE_DELETE_CLOUD_COPY: 'agent.share.deleteCloudCopy',
+  AGENT_SHARE_STOP_PROVIDING: 'agent.share.stopProviding',
 
   /** 服务端推送通知，params 为 EventFrame。 */
   SERVICE_EVENT: 'service.event',

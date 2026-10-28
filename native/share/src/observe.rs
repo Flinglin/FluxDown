@@ -68,6 +68,11 @@ pub enum SessionEvent {
         /// 分享 ID。
         share_id: String,
     },
+    /// 共享提供的完整文件已被删除 / 修改（大小或修改时间不符）。宿主应停止提供该内容；可能重复发出。
+    ContentChanged {
+        /// 文件根哈希（64 位小写 hex）。
+        root_hash: String,
+    },
 }
 
 /// 事件通道类型：宿主持有接收端。

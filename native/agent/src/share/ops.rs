@@ -12,7 +12,8 @@ use fluxdown_protocol::{
     ShareLogsDto, ShareLogsParams, ShareReceiveParams, ShareReceiveRecordDto,
     ShareReceiveRecordsPage, ShareReceiveRecordsParams, ShareReceiveResultDto, ShareReceiveStatus,
     ShareResolveDto, ShareResolveParams, ShareSessionKillParams, ShareSourcesDto, ShareStatus,
-    ShareSwitchToBridgeParams, ShareTaskFactsDto, ShareUpdateParams, method,
+    ShareStopProvidingParams, ShareSwitchToBridgeParams, ShareTaskFactsDto, ShareUpdateParams,
+    method,
 };
 use fluxdown_share::{
     EndpointId, LocalAdapter, ReceiveParams, ReceiveSession, ShareFile, ShareManifest, SourceKind,
@@ -31,7 +32,8 @@ use super::service::{
     Pending, RESOLVE_CAP, RESOLVE_TTL, ReceiveTask, ShareService, internal, invalid, unavailable,
 };
 use super::source::{BridgeSource, CloudCopySource, bridge_switch_error};
-use super::store::StoredShare;
+use super::store::{StoredProvide, StoredShare};
+use super::swarm::{FIRST_LOOKUP_TIMEOUT, LOOKUP_RETRY, Lookup};
 use super::upload_job::sources_intact;
 use super::{convert, logs};
 use crate::share_link::ShareLinkSink;
@@ -45,7 +47,11 @@ fn to_value<T: serde::Serialize>(value: &T) -> Result<Value, RpcErrorData> {
     serde_json::to_value(value).map_err(|error| internal(&error))
 }
 
-fn reason(code: ApplicationErrorCode, retryable: bool, reason: ErrorReason) -> RpcErrorData {
+pub(super) fn reason(
+    code: ApplicationErrorCode,
+    retryable: bool,
+    reason: ErrorReason,
+) -> RpcErrorData {
     RpcErrorData::new(code, retryable).with_reason(reason)
 }
 
@@ -123,6 +129,10 @@ impl ShareService {
                 let ShareIdParams { id } = parse(params)?;
                 to_value(&self.delete_cloud_copy(&id).await?)
             }
+            method::AGENT_SHARE_STOP_PROVIDING => {
+                let ShareStopProvidingParams { record_id } = parse(params)?;
+                to_value(&self.stop_providing(&record_id).await?)
+            }
             method::AGENT_SHARE_DIAGNOSTICS => to_value(&self.diagnostics(&parse(params)?)),
             method::AGENT_SHARE_LOGS => to_value(&Self::logs(&parse(params)?)?),
             method::AGENT_SHARE_SESSION_KILL => {
@@ -147,6 +157,8 @@ impl ShareService {
         next.udp_port_v4 = next.udp_port_v4.filter(|p| *p != 0);
         next.udp_port_v6 = next.udp_port_v6.filter(|p| *p != 0);
         next.send_rate_limit_bytes_per_sec = next.send_rate_limit_bytes_per_sec.filter(|r| *r != 0);
+        next.default_swarm = next.default_swarm.filter(|v| !*v);
+        next.auto_provide = next.auto_provide.filter(|v| !*v);
         next.pinned_relay = next
             .pinned_relay
             .map(|r| r.trim().to_owned())
@@ -213,6 +225,10 @@ impl ShareService {
                 i.endpoint_dirty = true;
             }
         });
+        // 关闭「接收的文件参与共享」：立即停止全部共享。
+        if old.auto_provide.unwrap_or(true) && !next.auto_provide.unwrap_or(true) {
+            self.stop_all_provides().await;
+        }
         if rebuild {
             self.refresh_endpoint().await;
         }
@@ -358,6 +374,7 @@ impl ShareService {
             max_claims: (max_claims > 0).then_some(max_claims),
             notify_on_claim: notify,
             endpoint_id: &endpoint.id_z32(),
+            swarm: params.swarm.unwrap_or(local.default_swarm.unwrap_or(true)),
         };
         let cloud: CloudShare = self
             .cloud
@@ -428,6 +445,9 @@ impl ShareService {
         }
         if let Some(notify) = params.notify_on_claim {
             body.insert("notifyOnClaim".into(), json!(notify));
+        }
+        if let Some(swarm) = params.swarm {
+            body.insert("swarm".into(), json!(swarm));
         }
         if body.is_empty() {
             return Ok(stored.dto);
@@ -666,6 +686,7 @@ impl ShareService {
                 .sum(),
             expires_at: resp.share.expires_at.clone().unwrap_or_default(),
             sources: ShareSourcesDto {
+                swarm_peers: resp.share.swarm_peers.unwrap_or(0),
                 sender_online: resp.share.sender_online,
                 cloud_copy: resp.share.cloud_state.as_deref() == Some("ready"),
                 // 桥接需要分享方在线与可用的网关；这里只能按身份与已知的在线状态判断，
@@ -793,6 +814,14 @@ impl ShareService {
         let session = ReceiveSession::new(endpoint, receive_params);
         self.attach_sources(&session, &dto.share_id, &resp.ticket, &dto.sources);
         self.watch_sources(&session);
+        self.watch_swarm_peers(&session);
+        // 首次对端查询在建任务前同步做一次（限时）：任务一开始取块就能用上共享对端。
+        let first_lookup = tokio::time::timeout(
+            FIRST_LOOKUP_TIMEOUT,
+            self.swarm_lookup(&session, &dto.share_id, &resp.ticket, &indexes),
+        )
+        .await
+        .unwrap_or(Lookup::Refresh(LOOKUP_RETRY));
         if self.with(|i| i.adapter.is_none()) {
             let adapter = LocalAdapter::start()
                 .await
@@ -816,6 +845,15 @@ impl ShareService {
                 Some((token, urls))
             })
             .ok_or_else(unavailable)?;
+        if let Lookup::Refresh(delay) = first_lookup {
+            self.spawn_swarm_lookup(
+                token.clone(),
+                dto.share_id.clone(),
+                resp.ticket.clone(),
+                indexes.clone(),
+                delay,
+            );
+        }
         let record_id = uuid::Uuid::new_v4().to_string();
         let save_dir = params.save_dir.clone().unwrap_or_default();
         let mut task_ids = Vec::with_capacity(indexes.len());
@@ -844,6 +882,7 @@ impl ShareService {
                                 token: token.clone(),
                                 status: 0,
                                 created: Instant::now(),
+                                file_index: *index,
                             },
                         );
                     });
@@ -858,6 +897,7 @@ impl ShareService {
         }
         if !task_ids.is_empty() {
             let record = ShareReceiveRecordDto {
+                provide_state: fluxdown_protocol::ShareProvideState::Off,
                 id: record_id.clone(),
                 share_id: Some(dto.share_id.clone()),
                 title: dto.title.clone(),
@@ -872,14 +912,30 @@ impl ShareService {
                 started_at: fluxdown_share::timefmt::now_rfc3339(),
                 status: ShareReceiveStatus::Active,
             };
-            self.with(|i| {
+            let provideed = self.with(|i| {
+                let provideed = i.auto_provide();
+                if provideed {
+                    i.provides.push(StoredProvide {
+                        record_id: record_id.clone(),
+                        share_id: dto.share_id.clone(),
+                        ticket: resp.ticket.clone(),
+                        share_expires_at: resp.share.expires_at.clone(),
+                        files: Vec::new(),
+                        state: fluxdown_protocol::ShareProvideState::Providing,
+                    });
+                }
                 i.records.push(record);
                 i.resolves.remove(resolve_id);
                 if i.pending_receive.as_deref() == Some(resolve_id) {
                     i.pending_receive = None;
                 }
+                provideed
             });
             self.persist_records().await;
+            if provideed {
+                self.persist_provides().await;
+                self.announce_soon();
+            }
             self.reconcile_tasks().await;
             self.refresh_endpoint().await;
             self.publish().await;
@@ -894,7 +950,7 @@ impl ShareService {
     }
 
     #[cfg(test)]
-    fn addr_hint_for(&self, sender_z32: &str) -> Option<fluxdown_share::EndpointAddr> {
+    pub(super) fn addr_hint_for(&self, sender_z32: &str) -> Option<fluxdown_share::EndpointAddr> {
         let hook = self
             .addr_hint
             .lock()
@@ -905,7 +961,7 @@ impl ShareService {
 
     #[cfg(not(test))]
     #[allow(clippy::unused_self)]
-    fn addr_hint_for(&self, _sender_z32: &str) -> Option<fluxdown_share::EndpointAddr> {
+    pub(super) fn addr_hint_for(&self, _sender_z32: &str) -> Option<fluxdown_share::EndpointAddr> {
         None
     }
 
@@ -917,7 +973,8 @@ impl ShareService {
             .and_then(|c| c.parse::<usize>().ok())
             .unwrap_or(0);
         self.with(|i| {
-            let all: Vec<ShareReceiveRecordDto> = i.records.iter().rev().cloned().collect();
+            let all: Vec<ShareReceiveRecordDto> =
+                i.records.iter().rev().map(|r| i.record_dto(r)).collect();
             let page: Vec<ShareReceiveRecordDto> =
                 all.iter().skip(start).take(limit).cloned().collect();
             let next = start + page.len();

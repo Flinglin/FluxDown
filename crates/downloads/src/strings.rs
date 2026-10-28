@@ -181,6 +181,8 @@ pub(crate) struct DownloadStrings {
     share_path_relay: SharedString,
     share_path_cdn: SharedString,
     share_path_bridge: SharedString,
+    share_path_swarm: SharedString,
+    share_peers: SharedString,
     share_path_unknown: SharedString,
     share_disabled_incomplete: SharedString,
     share_disabled_missing: SharedString,
@@ -363,6 +365,8 @@ impl DownloadStrings {
             share_path_relay: shared(translator.text("sharePathRelay")),
             share_path_cdn: shared(translator.text("shareBadgeCloud")),
             share_path_bridge: shared(translator.text("shareBadgeBridge")),
+            share_path_swarm: shared(translator.text("sharePathSwarm")),
+            share_peers: shared(translator.text("shareBadgePeers")),
             share_path_unknown: shared(translator.text("sharePathUnknown")),
             share_disabled_incomplete: shared(translator.text("shareDisabledIncomplete")),
             share_disabled_missing: shared(translator.text("shareDisabledMissing")),
@@ -523,8 +527,14 @@ impl DownloadStrings {
             SharePathKind::Relay => self.share_path_relay.clone(),
             SharePathKind::Cdn => self.share_path_cdn.clone(),
             SharePathKind::Bridge => self.share_path_bridge.clone(),
+            SharePathKind::Swarm => self.share_path_swarm.clone(),
             SharePathKind::Unknown => self.share_path_unknown.clone(),
         }
+    }
+
+    /// `+{count} 台设备`。
+    pub(crate) fn format_share_peers(&self, count: u32) -> SharedString {
+        SharedString::from(self.share_peers.replace("{count}", &count.to_string()))
     }
 
     pub(crate) fn state_label(&self, state: crate::model::TaskState) -> SharedString {

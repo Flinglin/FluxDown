@@ -98,6 +98,8 @@ import type {
   ShareDiagnosticsParams,
   ShareDto,
   ShareIdParams,
+  ShareReceiveRecordDto,
+  ShareStopProvidingParams,
   ShareLocalConfigDto,
   ShareLogsDto,
   ShareLogsParams,
@@ -385,6 +387,8 @@ const share = {
     call<ShareDto>(METHOD.AGENT_SHARE_CONVERT_TO_CLOUD, params),
   /** 删除云端副本（上传中则取消）；需登录。 */
   deleteCloudCopy: (id: string) => call<ShareDto>(METHOD.AGENT_SHARE_DELETE_CLOUD_COPY, { id } satisfies ShareIdParams),
+  /** 停止该次接收的共享（共享提供）；幂等。 */
+  stopProviding: (params: ShareStopProvidingParams) => call<ShareReceiveRecordDto>(METHOD.AGENT_SHARE_STOP_PROVIDING, params),
 };
 
 // 桌面集成：在 agent 所在主机上打开 / 定位任务产物。仅当本连接的 hello 带

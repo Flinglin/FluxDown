@@ -1,8 +1,8 @@
 //! 状态派生：本机网络健康度与摘要行、路径 / NAT / 分享状态的文案键、分享列表排序。
 
 use fluxdown_protocol::{
-    ShareCloudState, ShareDto, ShareNatType, ShareNetStatusDto, SharePathKind, ShareReceiveStatus,
-    ShareStatus,
+    ShareCloudState, ShareDto, ShareNatType, ShareNetStatusDto, SharePathKind, ShareProvideState,
+    ShareReceiveStatus, ShareStatus,
 };
 
 /// 本机作为分享方「别人此刻能否找到并直连」的粗分级，驱动状态点颜色与文案。
@@ -114,7 +114,19 @@ pub const fn path_kind_key(kind: SharePathKind) -> &'static str {
         SharePathKind::Relay => "sharePathRelay",
         SharePathKind::Cdn => "shareBadgeCloud",
         SharePathKind::Bridge => "shareBadgeBridge",
+        SharePathKind::Swarm => "sharePathSwarm",
         SharePathKind::Unknown => "sharePathUnknown",
+    }
+}
+
+/// 共享状态文案键；未共享（`Off`）不显示。
+#[must_use]
+pub const fn provide_state_key(state: ShareProvideState) -> Option<&'static str> {
+    match state {
+        ShareProvideState::Off => None,
+        ShareProvideState::Providing => Some("shareProvideActive"),
+        ShareProvideState::Ended => Some("shareProvideEnded"),
+        ShareProvideState::Stopped => Some("shareProvideStopped"),
     }
 }
 

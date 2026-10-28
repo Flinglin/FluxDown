@@ -352,6 +352,8 @@ pub fn normalized(config: &ShareLocalConfigDto) -> ShareLocalConfigDto {
         .filter(|bytes| *bytes != 0);
     config.pinned_relay = config.pinned_relay.filter(|url| !url.is_empty());
     config.default_tier_id = config.default_tier_id.filter(|id| !id.is_empty());
+    config.default_swarm = config.default_swarm.filter(|v| !*v);
+    config.auto_provide = config.auto_provide.filter(|v| !*v);
     config
 }
 
@@ -732,6 +734,15 @@ mod tests {
         assert!(is_noop(&base(), &other));
         other.default_max_claims = 3;
         assert!(!is_noop(&base(), &other));
+        let mut swarm = base();
+        swarm.default_swarm = Some(true);
+        swarm.auto_provide = Some(true);
+        assert!(is_noop(&base(), &swarm));
+        swarm.default_swarm = Some(false);
+        assert!(!is_noop(&base(), &swarm));
+        swarm.default_swarm = None;
+        swarm.auto_provide = Some(false);
+        assert!(!is_noop(&base(), &swarm));
     }
 
     #[test]

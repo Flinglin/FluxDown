@@ -43,7 +43,9 @@ export function SourceBadge({ taskId, taskState }: { taskId: string; taskState: 
   if (!badge) return null
   return (
     <span className="flex shrink-0 items-center gap-1.5">
-      <Badge tone={badge.tone}>{t(badge.labelKey)}</Badge>
+      <Badge tone={badge.tone}>{t(badge.labelKey)}
+        {badge.peers > 0 ? ` ${t('shareBadgePeers', { count: badge.peers })}` : ''}
+      </Badge>
       {canSwitchBridge(facts, taskState) ? <SwitchBridgeButton taskId={taskId} emphasized={facts?.relayStuck === true} /> : null}
     </span>
   )

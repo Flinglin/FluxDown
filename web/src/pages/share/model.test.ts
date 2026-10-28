@@ -208,12 +208,15 @@ describe('source badge', () => {
   })
 
   test('badge label and tone follow the path', () => {
-    expect(shareSourceBadge(facts({}))).toEqual({ pathKind: 'directLan', labelKey: 'sharePathDirectLan', tone: 'success' })
+    expect(shareSourceBadge(facts({}))).toEqual({ pathKind: 'directLan', labelKey: 'sharePathDirectLan', tone: 'success', peers: 0 })
     expect(shareSourceBadge(facts({ pathKind: 'directWan' }))?.tone).toBe('success')
-    expect(shareSourceBadge(facts({ pathKind: 'relay' }))).toEqual({ pathKind: 'relay', labelKey: 'sharePathRelay', tone: 'warning' })
-    expect(shareSourceBadge(facts({ pathKind: 'cdn' }))).toEqual({ pathKind: 'cdn', labelKey: 'shareBadgeCloud', tone: 'success' })
-    expect(shareSourceBadge(facts({ pathKind: 'bridge' }))).toEqual({ pathKind: 'bridge', labelKey: 'shareBadgeBridge', tone: 'neutral' })
+    expect(shareSourceBadge(facts({ pathKind: 'relay' }))).toEqual({ pathKind: 'relay', labelKey: 'sharePathRelay', tone: 'warning', peers: 0 })
+    expect(shareSourceBadge(facts({ pathKind: 'cdn' }))).toEqual({ pathKind: 'cdn', labelKey: 'shareBadgeCloud', tone: 'success', peers: 0 })
+    expect(shareSourceBadge(facts({ pathKind: 'bridge' }))).toEqual({ pathKind: 'bridge', labelKey: 'shareBadgeBridge', tone: 'neutral', peers: 0 })
     expect(shareSourceBadge(facts({ pathKind: 'unknown' }))?.tone).toBe('neutral')
+    expect(shareSourceBadge(facts({ pathKind: 'swarm', swarmPeers: 3 }))).toEqual({ pathKind: 'swarm', labelKey: 'sharePathSwarm', tone: 'success', peers: 3 })
+    expect(sourceBytesRows({ direct: 0, relay: 0, cdn: 0, bridge: 0, peer: 9 }).map((row) => [row.kind, row.bytes]).at(-1)).toEqual(['peer', 9])
+    expect(bytesSplit({ direct: 1, relay: 0, cdn: 0, bridge: 0, peer: 3 }).percent).toBe(25)
   })
 
   test('bridge switch is offered on active share-receive tasks not already on the bridge', () => {

@@ -24,7 +24,7 @@ pub use pickup::{
 };
 pub use status::{
     NetHealth, NetSegment, ShareAction, batch_actions, home_relay_latency, is_editable, nat_key,
-    net_health, net_segments, ordered_shares, path_kind_key, receive_status_key, share_headline,
-    share_status_key, source_missing_badge,
+    net_health, net_segments, ordered_shares, path_kind_key, provide_state_key, receive_status_key,
+    share_headline, share_status_key, source_missing_badge,
 };
 pub use target::{ManageTab, PanelTarget, panel_key, tasks_key};

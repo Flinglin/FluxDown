@@ -670,7 +670,8 @@ impl GatewayService {
             | method::AGENT_SHARE_LOGS
             | method::AGENT_SHARE_SESSION_KILL
             | method::AGENT_SHARE_CONVERT_TO_CLOUD
-            | method::AGENT_SHARE_DELETE_CLOUD_COPY => {
+            | method::AGENT_SHARE_DELETE_CLOUD_COPY
+            | method::AGENT_SHARE_STOP_PROVIDING => {
                 self.share_rpc(&request.method, request.params).await
             }
             method::AGENT_CAPTURE_SUBMIT => {

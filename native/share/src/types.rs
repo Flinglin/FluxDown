@@ -215,8 +215,12 @@ pub struct TicketPayload {
     pub rep: String,
     /// 过期时间（Unix 秒）。
     pub exp: u64,
-    /// 作用域：`recv`（接收方直连取数）或 `bridge`（网关代接收方取数，`rep` 为网关 endpoint）。
+    /// 作用域：`recv`（接收方直连取数）、`bridge`（网关代接收方取数，`rep` 为网关 endpoint）
+    /// 或 `swarm`（共享：向持有同一内容的对端取块，需带 `root`）。
     pub scope: String,
+    /// 共享（`swarm`）票据绑定的内容：文件根哈希（64 位小写 hex）；其他作用域为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
 }
 
 /// 票据：`base64url(payloadJson) "." base64url(ed25519Sig)`，签名对象是 payload JSON 原始字节。
@@ -288,6 +292,9 @@ pub struct SessionBytes {
     /// 经网关桥接取得并通过校验的字节（接收方）。
     #[serde(default)]
     pub bridge: u64,
+    /// 从共享对端取回并通过校验的字节（接收方）。
+    #[serde(default)]
+    pub peer: u64,
 }
 
 /// 单条路径的统计。

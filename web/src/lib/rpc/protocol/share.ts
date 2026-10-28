@@ -9,7 +9,8 @@ import type { ErrorReason } from './error';
 export const SHARE_STATE_RECEIVE_RECORDS = 20;
 
 /** `cdn` = 云端暂存副本（任务行徽标「云端」）；`bridge` = share-gateway 实时桥接（「桥接」）。 */
-export type SharePathKind = 'directLan' | 'directWan' | 'relay' | 'cdn' | 'bridge' | 'unknown';
+export type SharePathKind = 'directLan' | 'directWan' | 'relay' | 'cdn' | 'bridge' | 'swarm' | 'unknown';
+export type ShareProvideState = 'off' | 'providing' | 'ended' | 'stopped';
 export type ShareNatType = 'cone' | 'symmetric' | 'unknown';
 export type ShareConnectionMode = 'auto' | 'relayOnly' | 'directOnly';
 export type ShareExitBehavior = 'prompt' | 'convertToCloud' | 'quit';
@@ -72,6 +73,8 @@ export interface ShareDto {
   upload?: ShareUploadDto;
   /** 本机源文件已缺失或已被修改，分享无法继续 / 重新开始，只能删除；为 false 时 agent 不下发。 */
   sourceMissing?: boolean;
+  /** 同一内容的其他设备可从本分享共享取块。 */
+  swarm?: boolean;
 }
 
 /** 云端暂存上传进度。 */
@@ -125,6 +128,10 @@ export interface ShareLocalConfigDto {
   /** 0 = 不限。 */
   defaultMaxClaims: number;
   defaultNotifyOnClaim: boolean;
+  /** null = 开（默认）；false = 新建分享默认不加入共享。 */
+  defaultSwarm?: boolean | null;
+  /** null = 开（默认）；false = 接收的文件不参与共享共享。 */
+  autoProvide?: boolean | null;
 }
 
 export interface ShareHomeRelayDto {
@@ -154,6 +161,8 @@ export interface ShareTaskFactsDto {
   sessionId: string | null;
   /** 打洞超过 `policy.holePunchHintSecs` 仍走中继；UI 据此显示「切换桥接」提示。 */
   relayStuck: boolean;
+  /** 当前可用的共享对端数。 */
+  swarmPeers?: number;
 }
 
 /** 创建分享时正在做块哈希的任务（`agent.share.create` 返回前出现，完成后移除）。 */
@@ -175,6 +184,7 @@ export interface ShareReceiveRecordDto {
   /** RFC 3339。 */
   startedAt: string;
   status: ShareReceiveStatus;
+  provideState?: ShareProvideState;
 }
 
 /** FluxMesh分区完整状态（`AgentSnapshot.share` / `shareChanged`）。 */
@@ -218,6 +228,7 @@ export interface ShareCreateParams {
   tierId?: string;
   maxClaims?: number;
   notifyOnClaim?: boolean;
+  swarm?: boolean;
 }
 
 export interface ShareUpdateParams {
@@ -225,10 +236,15 @@ export interface ShareUpdateParams {
   tierId?: string;
   maxClaims?: number;
   notifyOnClaim?: boolean;
+  swarm?: boolean;
 }
 
 export interface ShareIdParams {
   id: string;
+}
+
+export interface ShareStopProvidingParams {
+  recordId: string;
 }
 
 /** `agent.share.convertToCloud` 参数；`tierId` 取自 `SharePolicySummaryDto.retentionTiers`，缺省取云端默认档。 */
@@ -247,6 +263,7 @@ export interface ShareSourcesDto {
   senderOnline: boolean | null;
   cloudCopy: boolean;
   bridge: boolean;
+  swarmPeers?: number;
 }
 
 export interface ShareResolveDto {
@@ -351,6 +368,8 @@ export interface ShareSessionBytesDto {
   cdn: number;
   /** 经 share-gateway 桥接取得并通过校验的字节。 */
   bridge: number;
+  /** 从共享对端取回并通过校验的字节。 */
+  peer?: number;
 }
 
 export interface SharePathSummaryDto {

@@ -232,6 +232,7 @@ public enum HostMethod {
     public static let agentShareSessionKill = "agent.share.sessionKill"
     public static let agentShareConvertToCloud = "agent.share.convertToCloud"
     public static let agentShareDeleteCloudCopy = "agent.share.deleteCloudCopy"
+    public static let agentShareStopProviding = "agent.share.stopProviding"
     public static let agentPlanList = "agent.plan.list"
     public static let agentOrderCreate = "agent.order.create"
     public static let agentOrderGet = "agent.order.get"

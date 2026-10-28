@@ -95,6 +95,13 @@ export function ShareSettings() {
             onCheckedChange={(defaultNotifyOnClaim) => void saveLocalConfig({ defaultNotifyOnClaim })}
           />
         </SettingsRow>
+        <SettingsRow title={t('shareSetDefaultSwarm')} description={t('shareSetDefaultSwarmDesc')} compact>
+          <Switch
+            checked={config.defaultSwarm !== false}
+            aria-label={t('shareSetDefaultSwarm')}
+            onCheckedChange={(on) => void saveLocalConfig({ defaultSwarm: on ? null : false })}
+          />
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title={t('shareSetGroupNetwork')}>
@@ -156,6 +163,13 @@ export function ShareSettings() {
       </SettingsSection>
 
       <SettingsSection title={t('shareSetGroupTransfer')}>
+        <SettingsRow title={t('shareSetAutoProvide')} description={t('shareSetAutoProvideDesc')} compact>
+          <Switch
+            checked={config.autoProvide !== false}
+            aria-label={t('shareSetAutoProvide')}
+            onCheckedChange={(on) => void saveLocalConfig({ autoProvide: on ? null : false })}
+          />
+        </SettingsRow>
         <SettingsRow title={t('shareSetRateLimit')} description={t('shareSetRateLimitDesc')}>
           <NumberField
             value={rateFromWire(config.sendRateLimitBytesPerSec)}

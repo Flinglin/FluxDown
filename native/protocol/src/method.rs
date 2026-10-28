@@ -287,6 +287,8 @@ pub const AGENT_SHARE_SESSION_KILL: &str = "agent.share.sessionKill";
 pub const AGENT_SHARE_CONVERT_TO_CLOUD: &str = "agent.share.convertToCloud";
 /// `ShareIdParams` → `ShareDto`：删除云端副本（上传中则先取消）；分享回到实时模式。
 pub const AGENT_SHARE_DELETE_CLOUD_COPY: &str = "agent.share.deleteCloudCopy";
+/// `ShareStopProvidingParams` → `ShareReceiveRecordDto`：停止该次接收的共享（共享提供），记录 `provideState = stopped`；记录不存在 → `ShareNotFound`。
+pub const AGENT_SHARE_STOP_PROVIDING: &str = "agent.share.stopProviding";
 
 pub const AGENT_PLAN_LIST: &str = "agent.plan.list";
 pub const AGENT_ORDER_CREATE: &str = "agent.order.create";
@@ -595,6 +597,7 @@ pub const ALL_METHODS: &[&str] = &[
     AGENT_SHARE_SESSION_KILL,
     AGENT_SHARE_CONVERT_TO_CLOUD,
     AGENT_SHARE_DELETE_CLOUD_COPY,
+    AGENT_SHARE_STOP_PROVIDING,
     AGENT_PLAN_LIST,
     AGENT_ORDER_CREATE,
     AGENT_ORDER_GET,

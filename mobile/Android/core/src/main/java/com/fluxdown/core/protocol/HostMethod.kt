@@ -228,6 +228,7 @@ object HostMethod {
     const val agentShareSessionKill = "agent.share.sessionKill"
     const val agentShareConvertToCloud = "agent.share.convertToCloud"
     const val agentShareDeleteCloudCopy = "agent.share.deleteCloudCopy"
+    const val agentShareStopProviding = "agent.share.stopProviding"
     const val agentPlanList = "agent.plan.list"
     const val agentOrderCreate = "agent.order.create"
     const val agentOrderGet = "agent.order.get"

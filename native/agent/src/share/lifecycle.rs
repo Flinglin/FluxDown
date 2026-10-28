@@ -70,48 +70,58 @@ impl Inner {
                 dto
             })
             .collect();
-        let task_facts =
-            self.receive_tasks
-                .iter()
-                .map(|(task_id, task)| {
-                    // 同一分享最新的接收会话（按开始时间）承载该任务。
-                    let session = self
-                        .sessions
-                        .iter()
-                        .filter(|(_, m)| {
-                            m.role == fluxdown_share::SessionRole::Receiver
-                                && m.share_id == task.share_id
-                        })
-                        .max_by(|a, b| a.1.started_at.cmp(&b.1.started_at));
-                    // 最近交付块来自云端副本 / 桥接时，来源徽标以它为准（此时直连路径的状态与该任务无关）。
-                    let source = self
-                        .receive_sessions
-                        .get(&task.token)
-                        .and_then(fluxdown_share::ReceiveSession::active_source);
-                    let facts = ShareTaskFactsDto {
-                        is_share_receive: true,
-                        path_kind: match source {
-                            Some(fluxdown_share::SourceKind::Cdn) => SharePathKind::Cdn,
-                            Some(fluxdown_share::SourceKind::Bridge) => SharePathKind::Bridge,
-                            None => session
-                                .map_or(Default::default(), |(_, m)| convert::path_kind(m.path)),
+        let task_facts = self
+            .receive_tasks
+            .iter()
+            .map(|(task_id, task)| {
+                // 同一分享最新的接收会话（按开始时间）承载该任务。
+                let session = self
+                    .sessions
+                    .iter()
+                    .filter(|(_, m)| {
+                        m.role == fluxdown_share::SessionRole::Receiver
+                            && m.share_id == task.share_id
+                    })
+                    .max_by(|a, b| a.1.started_at.cmp(&b.1.started_at));
+                // 最近交付块来自云端副本 / 桥接时，来源徽标以它为准（此时直连路径的状态与该任务无关）。
+                let source = self
+                    .receive_sessions
+                    .get(&task.token)
+                    .and_then(fluxdown_share::ReceiveSession::active_source);
+                let swarm_peers = self
+                    .receive_sessions
+                    .get(&task.token)
+                    .map_or(0, fluxdown_share::ReceiveSession::swarm_peers);
+                let facts = ShareTaskFactsDto {
+                    is_share_receive: true,
+                    path_kind: match source {
+                        Some(fluxdown_share::SourceKind::Cdn) => SharePathKind::Cdn,
+                        Some(fluxdown_share::SourceKind::Bridge) => SharePathKind::Bridge,
+                        // 分享方的会话已结束 / 不存在，但仍有共享对端在供块。
+                        None => match session {
+                            Some((_, m)) if !m.ended => convert::path_kind(m.path),
+                            _ if swarm_peers > 0 => SharePathKind::Swarm,
+                            Some((_, m)) => convert::path_kind(m.path),
+                            None => Default::default(),
                         },
-                        peer_nat_type: ShareNatType::Unknown,
-                        peer_isp: None,
-                        share_id: Some(task.share_id.clone()),
-                        session_id: session.map(|(id, _)| id.clone()),
-                        relay_stuck: source.is_none()
-                            && session.is_some_and(|(_, m)| m.relay_stuck && !m.ended),
-                    };
-                    (task_id.clone(), facts)
-                })
-                .collect();
+                    },
+                    peer_nat_type: ShareNatType::Unknown,
+                    peer_isp: None,
+                    share_id: Some(task.share_id.clone()),
+                    session_id: session.map(|(id, _)| id.clone()),
+                    relay_stuck: source.is_none()
+                        && session.is_some_and(|(_, m)| m.relay_stuck && !m.ended),
+                    swarm_peers,
+                };
+                (task_id.clone(), facts)
+            })
+            .collect();
         let receive_records = self
             .records
             .iter()
             .rev()
             .take(fluxdown_protocol::SHARE_STATE_RECEIVE_RECORDS)
-            .cloned()
+            .map(|record| self.record_dto(record))
             .collect();
         ShareStateDto {
             enabled,
@@ -269,6 +279,7 @@ impl ShareService {
                 events: Some(self.session_tx.clone()),
                 telemetry: Some(self.telemetry.clone()),
             },
+            content: self.content.clone(),
         })
         .map_err(|error| {
             tracing::warn!(error = %format!("{error:#}"), "share endpoint rejected the policy");
@@ -294,6 +305,8 @@ impl ShareService {
     /// 分享被停止 / 过期后不立即关端点：留一段宽限让还连着的接收方拿到「分享已结束」而不是「分享方离线」，
     /// 之后再按空闲规则收尾。一次性计时，没有周期性工作。
     pub(super) fn refresh_endpoint_later(&self) {
+        // 停止 / 到期的内容立刻不再提供；端点本身留宽限期。
+        self.sync_content();
         let weak = self.weak.clone();
         tokio::spawn(async move {
             tokio::time::sleep(super::service::ENDED_GRACE).await;
@@ -342,13 +355,14 @@ impl ShareService {
     /// 空闲静默：有有效分享或进行中的接收任务才绑定端点，否则关闭。
     pub(super) async fn refresh_endpoint(&self) {
         let _guard = self.lifecycle.lock().await;
+        self.sync_content();
         let (needed, dirty_endpoint, receiving) = self.with(|i| {
             let receiving = i
                 .receive_tasks
                 .values()
                 .any(super::service::ReceiveTask::is_active);
             (
-                self.registry.active_count() > 0 || receiving,
+                self.registry.active_count() > 0 || receiving || !self.content.is_empty(),
                 i.endpoint_dirty.then(|| i.endpoint.clone()).flatten(),
                 receiving,
             )
@@ -827,4 +841,5 @@ pub(super) fn apply_cloud(dto: &mut ShareDto, cloud: &CloudShare) {
     dto.last_accessed_at.clone_from(&cloud.last_accessed_at);
     dto.cloud_state = cloud.cloud_state();
     dto.cloud_bytes = u64::try_from(cloud.cloud_bytes).unwrap_or(0);
+    dto.swarm = cloud.swarm;
 }

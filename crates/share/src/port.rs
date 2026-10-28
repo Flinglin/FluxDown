@@ -6,9 +6,10 @@ use fluxdown_protocol::{
     ApplicationErrorCode, RpcErrorData, ShareConfigDto, ShareConvertToCloudParams,
     ShareCreateParams, ShareDiagnosticsDto, ShareDiagnosticsParams, ShareDismissPendingParams,
     ShareDto, ShareIdParams, ShareLocalConfigDto, ShareLogsDto, ShareLogsParams,
-    ShareReceiveParams, ShareReceiveRecordsPage, ShareReceiveRecordsParams, ShareReceiveResultDto,
-    ShareResolveDto, ShareResolveParams, ShareSessionKillParams, ShareSwitchToBridgeParams,
-    ShareTaskFactsDto, ShareUpdateParams, method,
+    ShareReceiveParams, ShareReceiveRecordDto, ShareReceiveRecordsPage, ShareReceiveRecordsParams,
+    ShareReceiveResultDto, ShareResolveDto, ShareResolveParams, ShareSessionKillParams,
+    ShareStopProvidingParams, ShareSwitchToBridgeParams, ShareTaskFactsDto, ShareUpdateParams,
+    method,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -139,6 +140,16 @@ impl ShareApi {
             method::AGENT_SHARE_SWITCH_TO_BRIDGE,
             &ShareSwitchToBridgeParams {
                 task_id: task_id.to_owned(),
+            },
+        )
+    }
+
+    /// 停止该次接收的共享（共享提供）；幂等，返回带最新 `provideState` 的记录。
+    pub fn stop_providing(&self, record_id: &str) -> PortFuture<ShareReceiveRecordDto> {
+        self.invoke(
+            method::AGENT_SHARE_STOP_PROVIDING,
+            &ShareStopProvidingParams {
+                record_id: record_id.to_owned(),
             },
         )
     }

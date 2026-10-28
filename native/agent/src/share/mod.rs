@@ -8,6 +8,7 @@
 //! - `telemetry.rs`：上报出口（有界队列 + 退避后台发送）与会话诊断簿。
 //! - `logs.rs`：iroh tracing 内存环形缓冲（诊断页）。
 //! - `source.rs`：接收会话的 HTTP 区间来源（云端副本 CDN / 网关桥接），`switchToBridge` 的数据面。
+//! - `swarm.rs`：共享（多设备按内容互相取块）——内容表同步、共享生命周期、云端登记与对端查询。
 //! - `upload.rs` / `upload_job.rs` / `upload_state.rs`：云端暂存（`convertToCloud` / `deleteCloudCopy`）——
 //!   服务侧装配与启动续传、上传引擎（方案 → 秒传证明 → 分片 PUT → complete）、断点文件。
 
@@ -21,6 +22,7 @@ mod ops;
 mod service;
 mod source;
 mod store;
+mod swarm;
 mod telemetry;
 mod time;
 mod upload;
@@ -32,6 +34,8 @@ mod tests;
 
 #[cfg(test)]
 mod source_tests;
+#[cfg(test)]
+mod swarm_tests;
 #[cfg(test)]
 mod upload_tests;
 

@@ -20,6 +20,7 @@ pub(super) const COL_SENDER: f32 = 144.;
 pub(super) const COL_FILES: f32 = 80.;
 pub(super) const COL_SIZE: f32 = 88.;
 pub(super) const COL_STARTED: f32 = 128.;
+pub(super) const COL_PROVIDE: f32 = 136.;
 
 /// 列宽集合。
 pub(super) struct Columns {
@@ -32,6 +33,7 @@ pub(super) struct Columns {
     pub(super) files: Pixels,
     pub(super) size: Pixels,
     pub(super) started: Pixels,
+    pub(super) provide: Pixels,
     /// 「我的分享」行内按钮：复制 / 二维码 / 云端 / 开始·停止 / 删除，五个图标按钮 + 间距。
     pub(super) share_actions: Pixels,
     /// 行首复选框列。
@@ -51,6 +53,7 @@ pub(super) fn columns(cx: &App) -> Columns {
         files: theme.text_extent(COL_FILES),
         size: theme.text_extent(COL_SIZE),
         started: theme.text_extent(COL_STARTED),
+        provide: theme.text_extent(COL_PROVIDE),
         share_actions: theme.density().control * 5. + spacing.xxs * 4.,
         select: theme.density().control,
     }

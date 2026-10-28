@@ -2591,6 +2591,7 @@ impl Render for DownloadView {
             .on_action(cx.listener(Self::on_resume_all))
             .on_action(cx.listener(Self::on_open_selected))
             .on_action(cx.listener(Self::on_reveal_selected))
+            .on_action(cx.listener(Self::on_copy_selected_files))
             .on_action(cx.listener(Self::on_open_selected_in_window))
             .on_action(cx.listener(Self::on_show_selected_detail))
             .on_action(cx.listener(Self::on_copy_selected_url))

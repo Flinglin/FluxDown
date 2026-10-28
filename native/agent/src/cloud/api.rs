@@ -792,6 +792,25 @@ impl CloudApi {
             .await
     }
 
+    /// `POST /share/swarm/peers`：按内容查在线提供者并换取 swarm 票据（旧云端 404 = 不支持共享）。
+    pub async fn share_swarm_peers<P: Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        body: &P,
+    ) -> Result<R, CloudError> {
+        self.share_public_or_account("/api/v1/share/swarm/peers", body)
+            .await
+    }
+
+    /// `POST /share/swarm/announce`：登记 / 撤销共享提供者；靠 endpoint 签名鉴权，不带 Bearer。
+    pub async fn share_swarm_announce<P: Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        body: &P,
+    ) -> Result<R, CloudError> {
+        self.client
+            .public(Method::POST, "/api/v1/share/swarm/announce", Some(body))
+            .await
+    }
+
     /// 公开接口：已登录时带账号 Bearer，否则匿名（游客身份由票据承载）。
     async fn share_public_or_account<P: Serialize, R: serde::de::DeserializeOwned>(
         &self,

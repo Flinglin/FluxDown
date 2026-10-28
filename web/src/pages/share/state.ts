@@ -26,6 +26,8 @@ export const EMPTY_LOCAL_CONFIG: ShareLocalConfigDto = {
   defaultTierId: null,
   defaultMaxClaims: 0,
   defaultNotifyOnClaim: true,
+  defaultSwarm: null,
+  autoProvide: null,
 }
 
 const EMPTY_POLICY: SharePolicySummaryDto = {

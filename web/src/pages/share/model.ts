@@ -12,6 +12,7 @@ import type {
   SharePathKind,
   SharePolicySummaryDto,
   ShareReceiveRecordDto,
+  ShareProvideState,
   ShareSessionBytesDto,
   ShareStatus,
   ShareTaskFactsDto,
@@ -222,7 +223,16 @@ export const PATH_KIND_KEYS: Readonly<Record<SharePathKind, string>> = {
   relay: 'sharePathRelay',
   cdn: 'shareBadgeCloud',
   bridge: 'shareBadgeBridge',
+  swarm: 'sharePathSwarm',
   unknown: 'sharePathUnknown',
+}
+
+/** 接收记录共享状态 → 文案键；`off` 不显示。 */
+export const PROVIDE_STATE_KEYS: Readonly<Record<ShareProvideState, string | null>> = {
+  off: null,
+  providing: 'shareProvideActive',
+  ended: 'shareProvideEnded',
+  stopped: 'shareProvideStopped',
 }
 
 /** 路径事件 `kind`（wire 为 `opened` / `selected` / `closed` / `lagged`）→ 文案键；未知种类显示原文。 */
@@ -244,22 +254,23 @@ export function currentPathId(events: readonly Pick<SharePathEventDto, 'kind' | 
 }
 
 /** 一次会话各来源的字节（直连 / 中继 / 云端暂存 CDN / 桥接）。 */
-export type SourceBytes = Pick<ShareSessionBytesDto, 'direct' | 'relay' | 'cdn' | 'bridge'>
+export type SourceBytes = Pick<ShareSessionBytesDto, 'direct' | 'relay' | 'cdn' | 'bridge' | 'peer'>
 
 /** 直连字节占总传输（四种来源之和）的整数百分比；尚无传输为 `null`。 */
 export function bytesSplit(bytes: SourceBytes): { percent: number | null } {
-  const total = bytes.direct + bytes.relay + bytes.cdn + bytes.bridge
+  const total = bytes.direct + bytes.relay + bytes.cdn + bytes.bridge + (bytes.peer ?? 0)
   return { percent: total > 0 ? Math.round((bytes.direct / total) * 100) : null }
 }
 
 /** 来源字节明细：直连 / 中继恒有；云端 / 桥接仅在有字节时出现。 */
-export function sourceBytesRows(bytes: SourceBytes): { kind: 'direct' | 'relay' | 'cdn' | 'bridge'; labelKey: string; bytes: number }[] {
-  const rows: { kind: 'direct' | 'relay' | 'cdn' | 'bridge'; labelKey: string; bytes: number }[] = [
+export function sourceBytesRows(bytes: SourceBytes): { kind: 'direct' | 'relay' | 'cdn' | 'bridge' | 'peer'; labelKey: string; bytes: number }[] {
+  const rows: { kind: 'direct' | 'relay' | 'cdn' | 'bridge' | 'peer'; labelKey: string; bytes: number }[] = [
     { kind: 'direct', labelKey: 'shareDiagBytesDirect', bytes: bytes.direct },
     { kind: 'relay', labelKey: 'shareDiagBytesRelay', bytes: bytes.relay },
   ]
   if (bytes.cdn > 0) rows.push({ kind: 'cdn', labelKey: 'shareBadgeCloud', bytes: bytes.cdn })
   if (bytes.bridge > 0) rows.push({ kind: 'bridge', labelKey: 'shareBadgeBridge', bytes: bytes.bridge })
+  if ((bytes.peer ?? 0) > 0) rows.push({ kind: 'peer', labelKey: 'sharePathSwarm', bytes: bytes.peer ?? 0 })
   return rows
 }
 
@@ -268,6 +279,8 @@ export interface ShareSourceBadge {
   pathKind: SharePathKind
   labelKey: string
   tone: 'success' | 'warning' | 'neutral'
+  /** 共享对端数；0 不显示。 */
+  peers: number
 }
 
 const PATH_TONES: Readonly<Record<SharePathKind, ShareSourceBadge['tone']>> = {
@@ -276,12 +289,13 @@ const PATH_TONES: Readonly<Record<SharePathKind, ShareSourceBadge['tone']>> = {
   relay: 'warning',
   cdn: 'success',
   bridge: 'neutral',
+  swarm: 'success',
   unknown: 'neutral',
 }
 
 export function shareSourceBadge(facts: ShareTaskFactsDto | undefined): ShareSourceBadge | null {
   if (!facts || !facts.isShareReceive) return null
-  return { pathKind: facts.pathKind, labelKey: PATH_KIND_KEYS[facts.pathKind], tone: PATH_TONES[facts.pathKind] }
+  return { pathKind: facts.pathKind, labelKey: PATH_KIND_KEYS[facts.pathKind], tone: PATH_TONES[facts.pathKind], peers: facts.swarmPeers ?? 0 }
 }
 
 /** 「切换桥接」：进行中（等待 / 下载中）的FluxMesh接收任务、路径尚不是桥接时提供；`relayStuck` 时强调。 */
