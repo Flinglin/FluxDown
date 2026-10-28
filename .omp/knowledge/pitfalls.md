@@ -75,6 +75,7 @@
 - **不可缩放窗口不能用 gpui-component 的 `TitleBar` 自带窗口控件**：其 `WindowControls` 私有且在 Windows / Linux 总绘制最大化按钮，`is_resizable = false` 时最大化区域退化为拖动区、点了无效，因此自绘只含最小化 + 关闭的标题栏（Windows 靠 `WindowControlArea` 交原生非客户区命中测试）→ `crates/shell/src/window_controls.rs`。
 - **Windows 上最小化的窗口边界报告为 `Windowed`，最大化状态要与平台标志取或**：只看 bounds 会把「最小化的最大化窗口」存成普通窗口 → `crates/app/src/windows/bounds.rs::resolve_maximized`、回归 `minimized_maximized_window_keeps_maximized`。
 - **进度 / 完成窗口里「打开文件 / 文件夹」不等打开命令返回**：Windows 上它要等系统打开调用返回，可能比对方出现在前台还晚，窗口该关而不关；会关窗时点击即请宿主等对方接管前台 → `crates/downloads/src/pages/progress_window.rs::hand_off`。
+- **Windows / Linux 标题栏菜单（gpui-component `AppMenuBar`）以「打开菜单时的焦点」为派发目标**：焦点为空（启动后未点列表）、在标题栏搜索框或不在下载页时，挂在下载页元素上的动作只沿标题栏冒泡、点了无效，且菜单项从不置灰；下载页动作须有应用级兜底（切到下载页、聚焦后派发；焦点已在下载页内视为下载页主动让出，不接管）。兜底里 `update` 窗口必须用 `AnyWindowHandle`，`WindowHandle<V>` 会租借根视图，冒泡到根视图监听器即 panic → `crates/app/src/menus.rs::dispatch_in_downloads`。
 
 ## Web SPA
 
