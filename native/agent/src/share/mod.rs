@@ -1,4 +1,4 @@
-//! 快传（临时文件分享）：agent 侧的 `fluxdown_share` 宿主。设计见 `docs/temp-share-design.md`。
+//! FluxMesh（临时文件分享）：agent 侧的 `fluxdown_share` 宿主。设计见 `docs/temp-share-design.md`。
 //!
 //! - [`ShareService`]（`service.rs` / `lifecycle.rs` / `ops.rs`）：状态投影、端点生命周期、
 //!   发送（哈希 → 云端登记 → 发送方登记表）、接收（resolve → 回环适配器 → 普通 daemon 下载任务）、

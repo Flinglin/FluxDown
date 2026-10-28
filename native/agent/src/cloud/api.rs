@@ -562,9 +562,9 @@ impl CloudApi {
         self.client.set_endpoint(base_url).await
     }
 
-    // ───────────── 快传（`/api/v1/share/*`，契约见 docs/temp-share-design.md §9.2） ─────────────
+    // ───────────── FluxMesh（`/api/v1/share/*`，契约见 docs/temp-share-design.md §9.2） ─────────────
 
-    /// 是否持有登录凭据：快传在账号鉴权与游客鉴权之间据此选择。
+    /// 是否持有登录凭据：FluxMesh在账号鉴权与游客鉴权之间据此选择。
     pub async fn has_account(&self) -> bool {
         self.client.has_account().await
     }

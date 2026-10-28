@@ -1,5 +1,5 @@
 // 任务行来源徽标（直连·局域网 / 直连·公网 / 中继·限速 / 云端 / 桥接 / 连接中）+ 进行中接收任务的「切换桥接」。
-// 只有快传接收任务有；事实来自 `snapshot.share.taskFacts`。
+// 只有FluxMesh接收任务有；事实来自 `snapshot.share.taskFacts`。
 
 import { useState } from 'react'
 import { useT } from '../../i18n'

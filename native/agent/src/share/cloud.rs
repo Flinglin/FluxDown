@@ -373,7 +373,7 @@ pub(super) struct CompleteBody<'a> {
     pub parts: &'a [super::upload_state::DonePart],
 }
 
-/// 云端错误 → 稳定的 RPC 错误（快传专属原因优先，其余沿用通用映射）。
+/// 云端错误 → 稳定的 RPC 错误（FluxMesh专属原因优先，其余沿用通用映射）。
 pub(super) fn share_error(error: &CloudError) -> RpcErrorData {
     use ApplicationErrorCode as Code;
     let mapped = match (error.code.as_deref(), error.status) {

@@ -164,7 +164,7 @@ export function buildTaskMenu({ t, views, queues, queueName, showDetail, selecti
       onSelect: () => void revealTaskFile(only.taskId),
     })
   }
-  // 分享：未编入快传时不出现；未完成 / 文件丢失 / 远程任务 / 未登录时置灰并在说明行给出原因（多选合成一个分享）。
+  // 分享：未编入FluxMesh时不出现；未完成 / 文件丢失 / 远程任务 / 未登录时置灰并在说明行给出原因（多选合成一个分享）。
   const shareState = peekSendState(views)
   if (shareState !== 'hidden') {
     entries.push({

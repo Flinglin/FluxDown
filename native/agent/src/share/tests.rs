@@ -1,4 +1,4 @@
-//! 快传服务端到端测试：mock FluxCloud（axum）+ 两个 `ShareService`（分享方 / 游客接收方）。
+//! FluxMesh服务端到端测试：mock FluxCloud（axum）+ 两个 `ShareService`（分享方 / 游客接收方）。
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

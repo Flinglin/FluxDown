@@ -247,7 +247,7 @@ export const METHOD = {
   AGENT_CLOUD_NOTIFY_DELIVERIES: 'agent.cloudNotify.deliveries',
   AGENT_CLOUD_NOTIFY_SEND_EMAIL_CODE: 'agent.cloudNotify.sendEmailCode',
   AGENT_CLOUD_NOTIFY_VERIFY_EMAIL: 'agent.cloudNotify.verifyEmail',
-  /** 快传（临时文件分享）：仅当 hello 带 `agent.share` 能力时可用。 */
+  /** FluxMesh（临时文件分享）：仅当 hello 带 `agent.share` 能力时可用。 */
   AGENT_SHARE_CONFIG: 'agent.share.config',
   AGENT_SHARE_SET_LOCAL_CONFIG: 'agent.share.setLocalConfig',
   AGENT_SHARE_CREATE: 'agent.share.create',
@@ -298,7 +298,7 @@ export const CAPABILITY_AGENT_DEVICE_LINK = 'agent.deviceLink';
 export const CAPABILITY_AGENT_EXTERNAL_CAPTURE = 'agent.externalCapture';
 /** 按连接下发：本连接可在 agent 所在主机上打开 / 定位任务产物（`agent.platform.openTask` / `revealTask`）。 */
 export const CAPABILITY_AGENT_OPEN_TASK_FILES = 'agent.openTaskFiles';
-/** 本 agent 编入了快传服务（`agent.share.*`）；条件能力，未编入快传的构建不下发。 */
+/** 本 agent 编入了FluxMesh服务（`agent.share.*`）；条件能力，未编入FluxMesh的构建不下发。 */
 export const CAPABILITY_AGENT_SHARE = 'agent.share';
 /** 客户端能力：可处理交互选择（HLS/BT/变体），放入握手 capabilities。 */
 export const CAPABILITY_CLIENT_SELECTIONS = 'client.selections';

@@ -246,11 +246,11 @@ pub const AGENT_LINK_CONTROL_CREDENTIAL: &str = "agent.link.controlCredential";
 /// `LinkDispatchParams` → `LinkDispatchResult`：下发下载到已配对设备。
 pub const AGENT_LINK_DISPATCH: &str = "agent.link.dispatch";
 
-/// 快传（临时文件分享）。仅当 agent 编入快传服务时可用（否则 `Unsupported`，hello 不带
+/// FluxMesh（临时文件分享）。仅当 agent 编入FluxMesh服务时可用（否则 `Unsupported`，hello 不带
 /// `agent.share` 能力；已编入但被云端关闭时返回 `Unavailable` + `ShareUnavailable`）。
 /// 刷新云端策略并返回 → `ShareConfigDto`（云端策略摘要 + 本机设置）。
 pub const AGENT_SHARE_CONFIG: &str = "agent.share.config";
-/// `ShareLocalConfigDto` → `ShareLocalConfigDto`：整体替换本机快传设置，返回规范化后的值。
+/// `ShareLocalConfigDto` → `ShareLocalConfigDto`：整体替换本机FluxMesh设置，返回规范化后的值。
 pub const AGENT_SHARE_SET_LOCAL_CONFIG: &str = "agent.share.setLocalConfig";
 /// `ShareCreateParams` → `ShareDto`：从已完成的本机任务创建分享（多任务合成一个分享）。
 pub const AGENT_SHARE_CREATE: &str = "agent.share.create";
@@ -392,7 +392,7 @@ pub const CAPABILITY_AGENT_EXTERNAL_CAPTURE: &str = "agent.externalCapture";
 /// 产物。按连接下发：Windows / macOS / Linux 桌面宿主恒有，嵌入式移动宿主没有；headless
 /// server 只给本机来源（见 agent `server_mode::ServerHandle::local_platform_permitted`）。
 pub const CAPABILITY_AGENT_OPEN_TASK_FILES: &str = "agent.openTaskFiles";
-/// 本 agent 编入了快传服务（`agent.share.*`）。条件能力：未编入快传的构建（如 iOS 商店版）
+/// 本 agent 编入了FluxMesh服务（`agent.share.*`）。条件能力：未编入FluxMesh的构建（如 iOS 商店版）
 /// 不下发；因此不在服务级基线 hello 里无条件出现。
 pub const CAPABILITY_AGENT_SHARE: &str = "agent.share";
 pub const CAPABILITY_CLIENT_SELECTIONS: &str = "client.selections";

@@ -1,4 +1,4 @@
-//! 跨视图复用的快传动作：不属于某一个窗口，调用方只给 hub 与触发窗口。
+//! 跨视图复用的FluxMesh动作：不属于某一个窗口，调用方只给 hub 与触发窗口。
 
 use fluxdown_ui_i18n::Translator;
 use gpui::{AnyWindowHandle, App, AsyncApp, Entity, Window};

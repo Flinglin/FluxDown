@@ -187,7 +187,7 @@ impl GatewayService {
         self
     }
 
-    /// 装配快传服务（`agent.share.*`）。只有服务存在时才下发 `agent.share` 能力。
+    /// 装配FluxMesh服务（`agent.share.*`）。只有服务存在时才下发 `agent.share` 能力。
     #[cfg(feature = "share-p2p")]
     #[must_use]
     pub fn with_share(mut self, share: Option<Arc<crate::share::ShareService>>) -> Self {
@@ -213,7 +213,7 @@ impl GatewayService {
         }
     }
 
-    /// 未编入快传：明确报不可用，不做假成功。
+    /// 未编入FluxMesh：明确报不可用，不做假成功。
     #[cfg(not(feature = "share-p2p"))]
     async fn share_rpc(
         &self,
@@ -652,7 +652,7 @@ impl GatewayService {
                 // 互联服务未装配（如精简测试网关）：明确报不支持，不做假成功。
                 None => Err(RpcErrorData::new(ApplicationErrorCode::Unsupported, false)),
             },
-            // 快传（`agent.share.*`）：服务未编入 / 未装配时统一报 `ShareUnavailable`。
+            // FluxMesh（`agent.share.*`）：服务未编入 / 未装配时统一报 `ShareUnavailable`。
             method::AGENT_SHARE_CONFIG
             | method::AGENT_SHARE_SET_LOCAL_CONFIG
             | method::AGENT_SHARE_CREATE

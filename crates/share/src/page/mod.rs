@@ -1,4 +1,4 @@
-//! 快传管理页（活动栏路由内容）：顶部取件码 / 链接输入，下方「我的分享 / 接收记录 / 网络诊断」三个页签。
+//! FluxMesh管理页（活动栏路由内容）：顶部取件码 / 链接输入，下方「我的分享 / 接收记录 / 网络诊断」三个页签。
 //!
 //! 状态只读 [`ShareHub`]；接收记录的翻页与网络诊断的取数只在对应页签实际渲染（可见）时发起。
 //!
@@ -34,7 +34,7 @@ use crate::{
 /// 接收记录首页两次取数之间的最短间隔（毫秒）。
 const RECORDS_MIN_REFRESH_MS: u64 = 1_000;
 
-/// 快传管理页（活动栏路由内容）：取件码 / 链接输入 + 我的分享 / 接收记录 / 网络诊断三个页签。
+/// FluxMesh管理页（活动栏路由内容）：取件码 / 链接输入 + 我的分享 / 接收记录 / 网络诊断三个页签。
 pub struct ShareView {
     hub: Entity<ShareHub>,
     translator: Entity<Translator>,
@@ -58,7 +58,7 @@ pub struct ShareView {
 }
 
 impl ShareView {
-    /// 创建管理页：`hub` 是跨窗口共享的快传状态；输入框与列表只在本视图内持有 UI 状态。
+    /// 创建管理页：`hub` 是跨窗口共享的FluxMesh状态；输入框与列表只在本视图内持有 UI 状态。
     pub fn new(hub: Entity<ShareHub>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let translator = hub.read(cx).translator().clone();
         let placeholder = text(translator.read(cx), "sharePickupPlaceholder");

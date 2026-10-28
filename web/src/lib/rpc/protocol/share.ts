@@ -1,4 +1,4 @@
-// 快传（临时文件分享）DTO（native/protocol/src/share.rs）。
+// FluxMesh（临时文件分享）DTO（native/protocol/src/share.rs）。
 //
 // 时间一律 RFC 3339 字符串；字节数与速率用 number；`maxClaims === 0` 表示不限。
 // 进度密集的数据走 `shareProgress` 事件（同一 sessionId 的后帧完整取代前帧），不进整段替换。
@@ -110,7 +110,7 @@ export interface SharePolicySummaryDto {
   holePunchHintSecs: number;
 }
 
-/** 本机快传设置；`agent.share.setLocalConfig` 整体替换。 */
+/** 本机FluxMesh设置；`agent.share.setLocalConfig` 整体替换。 */
 export interface ShareLocalConfigDto {
   udpPortV4: number | null;
   udpPortV6: number | null;
@@ -144,7 +144,7 @@ export interface ShareNetStatusDto {
   relayLatencyMs: Record<string, number>;
 }
 
-/** 下载任务上的快传事实（只含快传接收任务，键为 daemon 任务 ID）。 */
+/** 下载任务上的FluxMesh事实（只含FluxMesh接收任务，键为 daemon 任务 ID）。 */
 export interface ShareTaskFactsDto {
   isShareReceive: boolean;
   pathKind: SharePathKind;
@@ -177,11 +177,11 @@ export interface ShareReceiveRecordDto {
   status: ShareReceiveStatus;
 }
 
-/** 快传分区完整状态（`AgentSnapshot.share` / `shareChanged`）。 */
+/** FluxMesh分区完整状态（`AgentSnapshot.share` / `shareChanged`）。 */
 export interface ShareStateDto {
-  /** 云端策略允许快传。 */
+  /** 云端策略允许FluxMesh。 */
   enabled: boolean;
-  /** 本构建编入快传、服务在运行且云端允许；`false` 时隐藏全部快传入口。 */
+  /** 本构建编入FluxMesh、服务在运行且云端允许；`false` 时隐藏全部FluxMesh入口。 */
   available: boolean;
   /** 本机当前可发起分享。 */
   canSend: boolean;

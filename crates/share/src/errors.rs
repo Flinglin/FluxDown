@@ -1,4 +1,4 @@
-//! RPC 错误 → 文案键：优先按 `reason`（`errReasonShare*`），缺失或非快传原因时给通用失败提示。
+//! RPC 错误 → 文案键：优先按 `reason`（`errReasonShare*`），缺失或非FluxMesh原因时给通用失败提示。
 
 use fluxdown_protocol::{ErrorReason, RpcErrorData};
 use fluxdown_ui_i18n::Translator;

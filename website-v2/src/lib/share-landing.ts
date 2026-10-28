@@ -1,5 +1,5 @@
 /**
- * 快传分享落地页（/s/<slug>）的纯函数：输入解析、清单校验、状态选择、格式化。
+ * FluxMesh分享落地页（/s/<slug>）的纯函数：输入解析、清单校验、状态选择、格式化。
  *
  * 不依赖 astro:*，页面、React 岛与 `src/lib/share-proxy.ts` 共用，tests/share-landing.test.ts 直接覆盖。
  * 契约：FluxCloud `GET /api/v1/share/public/{slug}` 与 `POST .../download`（见 share-proxy.ts）。

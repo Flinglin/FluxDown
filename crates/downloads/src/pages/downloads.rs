@@ -109,7 +109,7 @@ pub type PluginTabViewFactory =
     Rc<dyn Fn(&PluginTaskTab, String, &mut Window, &mut App) -> AnyView>;
 /// 分享任务：参数为任务 id 列表，由宿主打开分享面板。
 pub type ShareTasksOpener = Rc<dyn Fn(Vec<String>, &mut Window, &mut App)>;
-/// 构造某任务的快传「传输诊断」页签内容（宿主按任务缓存视图由详情面板负责）。
+/// 构造某任务的FluxMesh「传输诊断」页签内容（宿主按任务缓存视图由详情面板负责）。
 pub type ShareDiagnosticsViewFactory = Rc<dyn Fn(String, &mut Window, &mut App) -> AnyView>;
 
 /// 插件贡献的任务右键命令。
@@ -163,9 +163,9 @@ pub struct DownloadHostActions {
     /// 分享入口（右键菜单 / 选择条 / 详情面板 / `PageCommand::ShareSelected`）：参数为任务
     /// id 列表。`None` 时全部分享入口隐藏。
     pub share_tasks: Option<ShareTasksOpener>,
-    /// 快传接收任务角标上的「切换桥接」：参数为任务 id。`None` 时不显示该动作。
+    /// FluxMesh接收任务角标上的「切换桥接」：参数为任务 id。`None` 时不显示该动作。
     pub share_switch_to_bridge: Option<IdOpener>,
-    /// 快传接收任务详情「传输诊断」页签内容；`None` 时不显示该页签。
+    /// FluxMesh接收任务详情「传输诊断」页签内容；`None` 时不显示该页签。
     pub share_diagnostics_view: Option<ShareDiagnosticsViewFactory>,
     /// 新建下载对话框识别出分享链接后打开接收确认：参数为链接原文。
     /// 对话框是独立窗口，由 app 经 [`crate::NewDownloadView::set_open_share_receive`] 注入。

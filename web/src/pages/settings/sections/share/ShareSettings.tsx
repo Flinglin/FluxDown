@@ -1,4 +1,4 @@
-// 快传设置（GPUI `crates/share` 的设置页内容；分类位置 = `build_pages` 里 notify 之后、扩展之前）。
+// FluxMesh设置（GPUI `crates/share` 的设置页内容；分类位置 = `build_pages` 里 notify 之后、扩展之前）。
 // 全部字段来自 `ShareLocalConfigDto`，经 `agent.share.setLocalConfig` 整体替换写回（见 `localConfig.ts`）。
 // UDP 端口 / 连接模式 / portmapper / 额外公布地址变化会让 agent 重建端点。
 

@@ -1,4 +1,4 @@
-//! 快传（`agent.share.*`）的 wire 契约：方法名、事件、DTO 往返、错误 reason 字面量、版本。
+//! FluxMesh（`agent.share.*`）的 wire 契约：方法名、事件、DTO 往返、错误 reason 字面量、版本。
 
 use std::collections::HashSet;
 

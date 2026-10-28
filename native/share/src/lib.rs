@@ -1,4 +1,4 @@
-//! FluxDown 快传（临时文件分享）核心：宿主无关的 Rust 库，设计见 `docs/temp-share-design.md`。
+//! FluxDown FluxMesh（临时文件分享）核心：宿主无关的 Rust 库，设计见 `docs/temp-share-design.md`。
 //!
 //! 不依赖 agent / engine / daemon / GPUI / 数据库；宿主（agent）负责：持久化私钥、从 FluxCloud 拉取
 //! 网络策略与票据公钥、维护 [`ShareRegistry`]、把 [`ShareTelemetrySink`] 接到 FluxCloud、

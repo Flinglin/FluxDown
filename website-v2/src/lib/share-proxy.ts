@@ -1,5 +1,5 @@
 /**
- * 快传分享落地页的 FluxCloud 服务端代理核心：`/s/<slug>` 页面（SSR）与
+ * FluxMesh分享落地页的 FluxCloud 服务端代理核心：`/s/<slug>` 页面（SSR）与
  * `/api/cloud/share/public/**` 路由共用，浏览器只连本站。
  *
  * 上游契约（FluxCloud，公开、无鉴权、按访客 IP 限频）：

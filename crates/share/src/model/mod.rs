@@ -1,4 +1,4 @@
-//! 快传界面的纯模型：不依赖 GPUI，全部可单测。
+//! FluxMesh界面的纯模型：不依赖 GPUI，全部可单测。
 
 pub mod cloud;
 pub mod diagnostics;

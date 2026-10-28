@@ -511,7 +511,7 @@ impl DownloadStrings {
         }
     }
 
-    /// 快传接收任务的路径徽标文案。
+    /// FluxMesh接收任务的路径徽标文案。
     pub(crate) fn share_path(&self, kind: fluxdown_protocol::SharePathKind) -> SharedString {
         use fluxdown_protocol::SharePathKind;
         match kind {

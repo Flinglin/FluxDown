@@ -2459,7 +2459,7 @@ mod tests {
             Some(SharePathKind::Relay)
         );
 
-        // 快传不可用：入口门控随之关闭。
+        // FluxMesh不可用：入口门控随之关闭。
         controller.apply_event(&agent(AgentEvent::ShareChanged(
             fluxdown_protocol::ShareStateDto::default(),
         )));

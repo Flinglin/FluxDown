@@ -1,4 +1,4 @@
-//! 快传（临时文件分享）的 agent RPC / 事件 wire 契约（`agent.share.*`、
+//! FluxMesh（临时文件分享）的 agent RPC / 事件 wire 契约（`agent.share.*`、
 //! `AgentEvent::ShareChanged` / `ShareProgress`、`AgentSnapshot.share`）。
 //!
 //! 本模块只定义 UI 与 agent 之间的纯 serde DTO：不依赖 `fluxdown_share`（agent 侧负责转换），
@@ -342,7 +342,7 @@ pub struct ShareRelayDto {
     pub region: String,
 }
 
-/// 本机快传设置（客户端「快传」设置页；与 FluxCloud 策略无关）。`agent.share.setLocalConfig`
+/// 本机FluxMesh设置（客户端「FluxMesh」设置页；与 FluxCloud 策略无关）。`agent.share.setLocalConfig`
 /// 整体替换它，UI 以快照里的当前值为底稿修改后整体提交。
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -422,8 +422,8 @@ pub struct ShareHomeRelayDto {
     pub connected: bool,
 }
 
-/// 一个下载任务上的快传事实（任务行来源徽标 / 「切换桥接」 / 传输诊断页的入口）。
-/// 只有快传接收任务（`isShareReceive`）才有条目；键为 daemon 任务 ID。
+/// 一个下载任务上的FluxMesh事实（任务行来源徽标 / 「切换桥接」 / 传输诊断页的入口）。
+/// 只有FluxMesh接收任务（`isShareReceive`）才有条目；键为 daemon 任务 ID。
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
@@ -481,16 +481,16 @@ pub struct ShareReceiveRecordDto {
     pub status: ShareReceiveStatus,
 }
 
-/// 快传分区的完整状态（`AgentSnapshot.share`，`AgentEvent::ShareChanged` 整体替换）。
+/// FluxMesh分区的完整状态（`AgentSnapshot.share`，`AgentEvent::ShareChanged` 整体替换）。
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ShareStateDto {
-    /// 云端策略当前允许快传（`/share/config.enabled`）。
+    /// 云端策略当前允许FluxMesh（`/share/config.enabled`）。
     #[serde(default)]
     pub enabled: bool,
-    /// 本构建已编入快传、agent 的快传服务在运行，且云端允许使用（可接收）。
-    /// 为 `false` 时 UI 隐藏全部快传入口。
+    /// 本构建已编入FluxMesh、agent 的FluxMesh服务在运行，且云端允许使用（可接收）。
+    /// 为 `false` 时 UI 隐藏全部FluxMesh入口。
     #[serde(default)]
     pub available: bool,
     /// 本机当前可发起分享（已登录，或云端允许游客发起）。
@@ -505,7 +505,7 @@ pub struct ShareStateDto {
     pub shares: Vec<ShareDto>,
     #[serde(default)]
     pub net_status: ShareNetStatusDto,
-    /// daemon 任务 ID → 快传事实（只含快传接收任务）。
+    /// daemon 任务 ID → FluxMesh事实（只含FluxMesh接收任务）。
     #[serde(default)]
     pub task_facts: BTreeMap<String, ShareTaskFactsDto>,
     /// 最近的接收记录（新的在前，至多 [`SHARE_STATE_RECEIVE_RECORDS`] 条）。

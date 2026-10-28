@@ -1,5 +1,5 @@
 /**
- * 快传分享落地页的文件列表与浏览器下载（云端副本就绪时）。
+ * FluxMesh分享落地页的文件列表与浏览器下载（云端副本就绪时）。
  *
  * 点「下载」→ POST 同源代理 `/api/cloud/share/public/<slug>/download`（见 src/lib/share-proxy.ts）拿签名 CDN 链接，
  * 再用隐藏 <a> 导航触发浏览器下载。清单带 `turnstileSiteKey` 时先渲染 Cloudflare Turnstile 小部件，

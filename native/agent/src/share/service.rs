@@ -1,4 +1,4 @@
-//! 快传服务：装配 `fluxdown_share` 引擎、状态投影、端点生命周期与事件循环。
+//! FluxMesh服务：装配 `fluxdown_share` 引擎、状态投影、端点生命周期与事件循环。
 //!
 //! 宿主模式沿用 `LinkService`：`Arc::new_cyclic` 持自身 `Weak`；游离任务只持 `Weak`
 //! （否则状态目录锁永远不释放，嵌入式宿主无法同进程重启）；`run` 在宿主关停清单里，取消即结束。
@@ -71,7 +71,7 @@ pub struct ShareServiceParts {
     pub store: Arc<StateStore>,
     pub cloud: CloudApi,
     pub tasks: Arc<dyn LinkTaskCreator>,
-    /// 来自 `/tasks/events` SSE 的快传事件（`share.claimed` / `share.sessionKill` / `share.changed`）。
+    /// 来自 `/tasks/events` SSE 的FluxMesh事件（`share.claimed` / `share.sessionKill` / `share.changed`）。
     pub cloud_events: mpsc::UnboundedReceiver<Value>,
     /// 统一出口：云端暂存的分片上传、CDN 下载、桥接取块都经它取网络方案（`verified_payload = false`）。
     pub egress: crate::egress::Egress,
@@ -155,7 +155,7 @@ pub(super) struct Inner {
     pub share_epoch: u64,
 }
 
-/// 快传服务。
+/// FluxMesh服务。
 pub struct ShareService {
     pub(super) weak: Weak<Self>,
     pub(super) cloud: CloudApi,
@@ -244,7 +244,7 @@ impl ShareService {
 
     // ───────────── 事件循环 ─────────────
 
-    /// 事件循环：会话事件、daemon 任务事件、云端 SSE 快传事件、到期计时；取消即结束。
+    /// 事件循环：会话事件、daemon 任务事件、云端 SSE FluxMesh事件、到期计时；取消即结束。
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) {
         if self.started.swap(true, Ordering::SeqCst) {
             return;

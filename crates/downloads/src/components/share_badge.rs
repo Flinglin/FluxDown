@@ -1,4 +1,4 @@
-//! 任务表状态列的快传来源角标：快传接收任务显示当前承载数据的路径（直连局域网 / 直连公网 /
+//! 任务表状态列的FluxMesh来源角标：FluxMesh接收任务显示当前承载数据的路径（直连局域网 / 直连公网 /
 //! 中继 / 连接中），走中继时附「切换桥接」入口。角标与状态文案同字号档，单行省略，不改变行高。
 
 use fluxdown_protocol::{SharePathKind, ShareTaskFactsDto};
@@ -36,7 +36,7 @@ pub(crate) struct ShareBadge {
     pub(crate) switch_bridge: Option<SwitchBridge>,
 }
 
-/// 任务事实 → 角标；不是快传接收任务时没有角标。`active` = 任务仍在进行（等待 / 下载中 / 暂停）：
+/// 任务事实 → 角标；不是FluxMesh接收任务时没有角标。`active` = 任务仍在进行（等待 / 下载中 / 暂停）：
 /// 已完成或失败的任务保留来源角标，但不再提供切换。
 pub(crate) fn badge_for(facts: &ShareTaskFactsDto, active: bool) -> Option<ShareBadge> {
     if !facts.is_share_receive {

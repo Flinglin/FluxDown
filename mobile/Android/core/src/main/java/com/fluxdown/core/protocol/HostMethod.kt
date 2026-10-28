@@ -209,7 +209,7 @@ object HostMethod {
     const val agentLinkDispatch = "agent.link.dispatch"
     /** `LinkDeviceParams` → `LinkControlCredentialDto`：本机对已配对且可控制的主机签发设备专属控制凭据（仅发起方）。 */
     const val agentLinkControlCredential = "agent.link.controlCredential"
-    /** 快传（`agent.share.*`）：仅当主机 hello 带 `agent.share` 能力时可用；移动端暂不使用，常量只为与 `method.rs` 一一对应。 */
+    /** FluxMesh（`agent.share.*`）：仅当主机 hello 带 `agent.share` 能力时可用；移动端暂不使用，常量只为与 `method.rs` 一一对应。 */
     const val agentShareConfig = "agent.share.config"
     const val agentShareSetLocalConfig = "agent.share.setLocalConfig"
     const val agentShareCreate = "agent.share.create"
@@ -309,7 +309,7 @@ object HostCapability {
     const val agentExternalCapture = "agent.externalCapture"
     /** 按连接下发：本连接可在 agent 所在主机上打开 / 定位任务产物（`agent.platform.openTask` / `revealTask`）。 */
     const val agentOpenTaskFiles = "agent.openTaskFiles"
-    /** 本主机编入了快传服务（`agent.share.*`）；移动端暂不使用。 */
+    /** 本主机编入了FluxMesh服务（`agent.share.*`）；移动端暂不使用。 */
     const val agentShare = "agent.share"
     const val clientSelections = "client.selections"
 }

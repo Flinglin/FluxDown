@@ -1,4 +1,4 @@
-//! 快传能力的 agent 端口：宿主只需实现一个 `call`，类型化的 `agent.share.*` 封装在 [`ShareApi`]。
+//! FluxMesh能力的 agent 端口：宿主只需实现一个 `call`，类型化的 `agent.share.*` 封装在 [`ShareApi`]。
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
@@ -66,7 +66,7 @@ impl ShareApi {
         self.invoke_empty(method::AGENT_SHARE_CONFIG)
     }
 
-    /// 整体替换本机快传设置。
+    /// 整体替换本机FluxMesh设置。
     pub fn set_local_config(
         &self,
         config: &ShareLocalConfigDto,

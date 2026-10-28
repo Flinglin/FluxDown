@@ -1,4 +1,4 @@
-// 快传页面的纯展示逻辑：取件码 / 分享链接识别、状态与来源派生、网络状态摘要。
+// FluxMesh页面的纯展示逻辑：取件码 / 分享链接识别、状态与来源派生、网络状态摘要。
 // 与 `crates/share`（GPUI）的同名规则对齐；DTO 见 `lib/rpc/protocol/share.ts`。
 
 import type { TFunction } from '../../i18n'
@@ -96,7 +96,7 @@ export function removeShareLink(text: string, link: string): string {
 }
 
 /**
- * 新建下载框的分享链接提示（文案键）：没有分享链接返回 `null`；快传不可用时说明无法接收；
+ * 新建下载框的分享链接提示（文案键）：没有分享链接返回 `null`；FluxMesh不可用时说明无法接收；
  * 多条按顺序逐条接收；与普通链接混合时只有分享链接走接收确认。
  */
 export function shareNoticeKey(shareLinkCount: number, otherEntryCount: number, available: boolean): string | null {
@@ -263,7 +263,7 @@ export function sourceBytesRows(bytes: SourceBytes): { kind: 'direct' | 'relay' 
   return rows
 }
 
-/** 任务行来源徽标：仅快传接收任务有；`pathKind` 决定徽标文案与色调。 */
+/** 任务行来源徽标：仅FluxMesh接收任务有；`pathKind` 决定徽标文案与色调。 */
 export interface ShareSourceBadge {
   pathKind: SharePathKind
   labelKey: string
@@ -284,7 +284,7 @@ export function shareSourceBadge(facts: ShareTaskFactsDto | undefined): ShareSou
   return { pathKind: facts.pathKind, labelKey: PATH_KIND_KEYS[facts.pathKind], tone: PATH_TONES[facts.pathKind] }
 }
 
-/** 「切换桥接」：进行中（等待 / 下载中）的快传接收任务、路径尚不是桥接时提供；`relayStuck` 时强调。 */
+/** 「切换桥接」：进行中（等待 / 下载中）的FluxMesh接收任务、路径尚不是桥接时提供；`relayStuck` 时强调。 */
 export function canSwitchBridge(facts: ShareTaskFactsDto | undefined, taskState: string): boolean {
   return facts !== undefined && facts.isShareReceive && facts.pathKind !== 'bridge' && (taskState === 'downloading' || taskState === 'pending')
 }

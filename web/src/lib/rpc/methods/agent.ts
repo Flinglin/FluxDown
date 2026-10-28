@@ -345,12 +345,12 @@ const cloudNotify = {
     call<OkResult>(METHOD.AGENT_CLOUD_NOTIFY_VERIFY_EMAIL, params),
 };
 
-// 快传（临时文件分享）：仅当 hello 带 `agent.share` 能力（`CAPABILITY_AGENT_SHARE`）时可用。
+// FluxMesh（临时文件分享）：仅当 hello 带 `agent.share` 能力（`CAPABILITY_AGENT_SHARE`）时可用。
 // 状态经 `shareChanged` / `shareProgress` 推送到 `snapshot.share`，下列调用的返回值只是即时回执。
 const share = {
   /** 刷新云端策略后返回策略摘要 + 本机设置。 */
   config: () => call<ShareConfigDto>(METHOD.AGENT_SHARE_CONFIG),
-  /** 整体替换本机快传设置（以快照里的当前值为底稿修改后提交），返回规范化后的值。 */
+  /** 整体替换本机FluxMesh设置（以快照里的当前值为底稿修改后提交），返回规范化后的值。 */
   setLocalConfig: (params: ShareLocalConfigDto) =>
     call<ShareLocalConfigDto>(METHOD.AGENT_SHARE_SET_LOCAL_CONFIG, params),
   /** 从已完成的本机任务创建分享（多个任务合成一个分享）；创建前要给文件算块哈希，大文件耗时可远超默认超时，调用方按需传 `options.timeoutMs`。 */

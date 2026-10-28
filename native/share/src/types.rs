@@ -1,4 +1,4 @@
-//! 快传的数据类型（serde camelCase，对应设计文档 §9 契约）。
+//! FluxMesh的数据类型（serde camelCase，对应设计文档 §9 契约）。
 //!
 //! 这些类型同时是 FluxCloud 控制面 JSON 的镜像、客户端 UI 展示结构和上报结构：
 //! “展示即上报”，`NetSnapshot` / `SessionSummary` / `SessionSample` 在三处使用同一份。
@@ -121,7 +121,7 @@ pub enum ConnectionMode {
     DirectOnly,
 }
 
-/// 本机端点设置（客户端「快传」设置页，与 FluxCloud 策略无关）。
+/// 本机端点设置（客户端「FluxMesh」设置页，与 FluxCloud 策略无关）。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalEndpointConfig {

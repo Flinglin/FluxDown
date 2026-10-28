@@ -213,7 +213,7 @@ public enum HostMethod {
     public static let agentLinkDispatch = "agent.link.dispatch"
     /// `LinkDeviceParams` → `LinkControlCredentialDto`：向本机 agent 申请对某已配对主机的设备控制凭据（仅 `controllable && !revoked`）。
     public static let agentLinkControlCredential = "agent.link.controlCredential"
-    /// 快传（`agent.share.*`）：仅当主机 hello 带 `agent.share` 能力时可用；移动端暂不使用，常量只为与 `method.rs` 一一对应。
+    /// FluxMesh（`agent.share.*`）：仅当主机 hello 带 `agent.share` 能力时可用；移动端暂不使用，常量只为与 `method.rs` 一一对应。
     public static let agentShareConfig = "agent.share.config"
     public static let agentShareSetLocalConfig = "agent.share.setLocalConfig"
     public static let agentShareCreate = "agent.share.create"
@@ -313,7 +313,7 @@ public enum HostCapability {
     public static let agentExternalCapture = "agent.externalCapture"
     /// 按连接下发：本连接可在 agent 所在主机上打开 / 定位任务产物（`agent.platform.openTask` / `revealTask`）。
     public static let agentOpenTaskFiles = "agent.openTaskFiles"
-    /// 本主机编入了快传服务（`agent.share.*`）；移动端暂不使用。
+    /// 本主机编入了FluxMesh服务（`agent.share.*`）；移动端暂不使用。
     public static let agentShare = "agent.share"
     public static let clientSelections = "client.selections"
 }

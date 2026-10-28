@@ -1,5 +1,5 @@
 /**
- * 快传分享落地页的举报入口：一个紧凑的「举报」按钮，展开后是小表单。
+ * FluxMesh分享落地页的举报入口：一个紧凑的「举报」按钮，展开后是小表单。
  *
  * 提交到同源代理 `POST /api/cloud/share/public/<slug>/report`（见 src/lib/share-proxy.ts，FluxCloud 每 IP 5 次 / 小时）。
  * 发给上游的 reason 是固定中文文本（`REPORT_REASON_VALUE`，后台审核员阅读），界面文案按语言显示。

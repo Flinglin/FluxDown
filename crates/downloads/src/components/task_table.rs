@@ -449,7 +449,7 @@ pub(crate) struct TaskMenuFacts {
     pub(crate) is_seeding: bool,
     /// 已完成且做种已停止 / 达标（seeding_status 2..=7）、产物仍在：可继续（恢复做种）。
     pub(crate) can_resume_seeding: bool,
-    /// 快传「分享」入口对本构建 / 宿主可见（快传可用且宿主提供了入口）；选区内一致。
+    /// FluxMesh「分享」入口对本构建 / 宿主可见（FluxMesh可用且宿主提供了入口）；选区内一致。
     pub(crate) share_visible: bool,
     /// 本机当前可发起分享（已登录，或云端允许游客发起）。
     pub(crate) share_can_send: bool,
@@ -2342,7 +2342,7 @@ impl DownloadTableDelegate {
                 .child(self.status_label(task))
                 .into_any_element()
         };
-        // 快传接收任务：状态文案旁挂来源角标（只对本机任务）；角标与文案各自省略，不撑宽列。
+        // FluxMesh接收任务：状态文案旁挂来源角标（只对本机任务）；角标与文案各自省略，不撑宽列。
         let share_active = matches!(
             task.state,
             TaskState::Pending | TaskState::Downloading | TaskState::Paused

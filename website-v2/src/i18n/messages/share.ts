@@ -1,6 +1,6 @@
 import { defineMessages } from "../define";
 
-/** 快传分享页：/s/（说明与链接入口）与 /s/<slug>（分享落地页）。 */
+/** FluxMesh分享页：/s/（说明与链接入口）与 /s/<slug>（分享落地页）。 */
 export const share = defineMessages({
   en: {
     eyebrow: "FluxDown Quick Share",
@@ -103,21 +103,21 @@ export const share = defineMessages({
     },
   },
   zh: {
-    eyebrow: "FluxDown 快传",
+    eyebrow: "FluxDown FluxMesh",
     brand: "FluxDown",
     index: {
       meta: {
-        title: "快传 — 用 FluxDown 接收文件",
-        description: "快传在设备之间用 FluxDown 互传文件。在客户端输入 6 位取件码接收，或打开分享链接。",
+        title: "FluxMesh — 用 FluxDown 接收文件",
+        description: "FluxMesh在设备之间用 FluxDown 互传文件。在客户端输入 6 位取件码接收，或打开分享链接。",
       },
-      title: "接收一份<em>快传</em>",
-      lede: "快传在分享方在线时于设备之间直接传文件。输入 6 位取件码，或打开分享链接即可接收。",
+      title: "接收一份<em>FluxMesh</em>",
+      lede: "FluxMesh在分享方在线时于设备之间直接传文件。输入 6 位取件码，或打开分享链接即可接收。",
       stepsHeading: "怎么用",
       steps: [
         { title: "分享方发起分享", body: "在 FluxDown 中创建分享，会得到一个 6 位取件码和一条分享链接。" },
         {
           title: "在 FluxDown 里输入取件码",
-          body: "打开 FluxDown → 快传 → 接收，输入 6 位取件码。取件码只在客户端里输入。",
+          body: "打开 FluxDown → FluxMesh → 接收，输入 6 位取件码。取件码只在客户端里输入。",
         },
         {
           title: "或者打开分享链接",
@@ -129,15 +129,15 @@ export const share = defineMessages({
       linkPlaceholder: "https://fluxdown.com/s/…",
       linkSubmit: "打开分享",
       linkInvalid: "这不像分享链接。请粘贴完整链接，或 10–12 位的链接 ID。",
-      linkIsCode: "这是 6 位取件码。请在 FluxDown 中输入：快传 → 接收。",
+      linkIsCode: "这是 6 位取件码。请在 FluxDown 中输入：FluxMesh → 接收。",
       getApp: "下载 FluxDown",
     },
     landing: {
       meta: {
-        title: (name: string) => `${name} — FluxDown 快传`,
-        description: "一份 FluxDown 快传分享。可在浏览器下载，或用 FluxDown 打开。",
-        endedTitle: "分享已结束 — FluxDown 快传",
-        unavailableTitle: "分享暂不可用 — FluxDown 快传",
+        title: (name: string) => `${name} — FluxDown FluxMesh`,
+        description: "一份 FluxDown FluxMesh分享。可在浏览器下载，或用 FluxDown 打开。",
+        endedTitle: "分享已结束 — FluxDown FluxMesh",
+        unavailableTitle: "分享暂不可用 — FluxDown FluxMesh",
       },
       filesHeading: "文件",
       fileCount: (n: number) => `${n} 个文件`,
@@ -156,7 +156,7 @@ export const share = defineMessages({
       statusLive: "需分享方在线",
       pickupCode: {
         label: "取件码",
-        hint: "在任意设备的 FluxDown「快传 → 接收」中输入。",
+        hint: "在任意设备的 FluxDown「FluxMesh → 接收」中输入。",
         copy: "复制",
         copied: "已复制",
         copyAria: "复制取件码",

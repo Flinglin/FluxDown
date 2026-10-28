@@ -80,7 +80,7 @@ struct Shared {
     snapshots: watch::Sender<Option<Arc<NetSnapshot>>>,
 }
 
-/// 快传端点：同时承担分享方（接入请求）与接收方（出站连接）。可克隆，克隆体共享同一个端点。
+/// FluxMesh端点：同时承担分享方（接入请求）与接收方（出站连接）。可克隆，克隆体共享同一个端点。
 #[derive(Clone)]
 pub struct ShareEndpoint {
     shared: Arc<Shared>,
