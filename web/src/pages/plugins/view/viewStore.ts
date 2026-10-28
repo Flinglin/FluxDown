@@ -3,11 +3,13 @@
 // - `pluginViewFrame` 按 seq 应用，断档（seq != last+1）或应用失败改取 `view.snapshot`；
 // - `pluginViewClosed` 标记会话结束（显示「已结束」+ 重新打开）；
 // - 连接重新就绪（重连、快照整体替换）后对全部会话重取 snapshot，会话已不存在则重新 open；
+// - 插件包修订号（`packageRevision`）变化（更新 / dev 重载）后，该插件全部已挂载会话自动重开，
+//   含已因 `pluginUnloaded` 结束的（对应 GPUI `windows::plugin::remount_changed`）；
 // - 每 30 s 对所有存活会话发 keepalive（daemon 90 s 无续期即关闭）。
 
 import { useSyncExternalStore } from 'react'
 import { RpcError, errorMessage, rpc, rpcStore, subscribeServiceEvents } from '../../../lib/rpc'
-import type { DaemonEvent, EventFrame, ViewEventDto, ViewNode } from '../../../lib/rpc'
+import type { DaemonEvent, EventFrame, PluginDto, ViewEventDto, ViewNode } from '../../../lib/rpc'
 import { VIEW_CLOSE_REASON_REQUESTED, VIEW_ERROR_PROP, applyViewOps } from '../../../lib/rpc/protocol/pluginView'
 import type { ViewEffect } from '../../../lib/rpc/protocol/pluginView'
 import { toast } from '../../../ui'
@@ -43,6 +45,10 @@ export function daemonEventOf(frame: EventFrame): DaemonEvent | null {
 }
 
 const live = new Map<string, ViewSession>()
+/** 已挂载（open 过且未 dispose）的会话，含已结束的；修订号变化时据此重开。 */
+const mounted = new Set<ViewSession>()
+/** 每个插件最近一次见到的包修订号（只记 daemon 下发的值）。 */
+const revisions = new Map<string, number>()
 
 /**
  * open 应答之前就到达的会话动作（插件可在 `init` 里 `ctx.navigate()` / `ctx.close()`，这些事件与
@@ -125,6 +131,7 @@ export class ViewSession {
 
   /** 打开（或重新打开）会话。 */
   async open(): Promise<void> {
+    mount(this)
     const epoch = ++this.epoch
     this.unregister()
     this.set({ phase: 'loading', error: null, reason: null })
@@ -167,10 +174,19 @@ export class ViewSession {
   dispose(): void {
     this.disposed = true
     this.epoch += 1
+    mounted.delete(this)
     const id = this.id
     this.unregister()
     this.listeners.clear()
     if (id !== null) void rpc.daemon.plugin.viewClose({ session: id }).catch(() => undefined)
+  }
+
+  /** 插件包被替换后原地重开：先关掉仍存活的旧 daemon 会话，再 open。 */
+  async reopen(): Promise<void> {
+    if (this.disposed) return
+    const id = this.id
+    if (id !== null) void rpc.daemon.plugin.viewClose({ session: id }).catch(() => undefined)
+    await this.open()
   }
 
   /** 应用一帧；seq 非 last+1 或应用失败时改取 snapshot。 */
@@ -245,6 +261,36 @@ let unsubscribeEvents: (() => void) | null = null
 let unsubscribeStore: (() => void) | null = null
 let keepaliveTimer: ReturnType<typeof setInterval> | null = null
 let wasReady = rpcStore.peek().connection.phase === 'ready'
+let lastPlugins: readonly PluginRevision[] | undefined
+
+function mount(session: ViewSession): void {
+  if (mounted.has(session)) return
+  mounted.add(session)
+  const { identity } = session.target
+  const revision = rpcStore.peek().snapshot?.daemon.plugins.find((plugin) => plugin.identity === identity)?.packageRevision
+  if (revision !== undefined) revisions.set(identity, revision)
+}
+
+type PluginRevision = Pick<PluginDto, 'identity' | 'packageRevision'>
+
+/**
+ * 插件表更新：某插件的包修订号相对上次见到的值变化，就重开它的全部已挂载会话；返回的 Promise 在
+ * 全部重开结束后落定。插件暂时不可见 / 旧 daemon 不下发修订号时保留旧视图与旧基准，不触发重开。
+ */
+export async function reopenOnRevisionChange(plugins: readonly PluginRevision[]): Promise<void> {
+  const reopening: Promise<void>[] = []
+  for (const plugin of plugins) {
+    const next = plugin.packageRevision
+    if (next === undefined) continue
+    const previous = revisions.get(plugin.identity)
+    revisions.set(plugin.identity, next)
+    if (previous === undefined || previous === next) continue
+    for (const session of mounted) {
+      if (session.target.identity === plugin.identity) reopening.push(session.reopen())
+    }
+  }
+  await Promise.all(reopening)
+}
 
 function runEffect(effect: ViewEffect): void {
   if (effect.kind !== 'navigate' || !('target' in effect) || typeof effect.target !== 'string') return
@@ -289,10 +335,16 @@ function resyncAll(): void {
 }
 
 function onStore(): void {
-  const ready = rpcStore.peek().connection.phase === 'ready'
+  const state = rpcStore.peek()
+  const ready = state.connection.phase === 'ready'
   // 重新进入就绪（重连 / 重新同步）：断线期间可能漏帧，全部重取。
   if (ready && !wasReady) resyncAll()
   wasReady = ready
+  const plugins = state.snapshot?.daemon.plugins
+  if (plugins !== undefined && plugins !== lastPlugins) {
+    lastPlugins = plugins
+    void reopenOnRevisionChange(plugins)
+  }
 }
 
 function keepalive(): void {
@@ -308,7 +360,7 @@ function ensureRunning(): void {
 }
 
 function stopIfIdle(): void {
-  if (live.size > 0 || opening > 0) return
+  if (live.size > 0 || opening > 0 || mounted.size > 0) return
   unsubscribeEvents?.()
   unsubscribeEvents = null
   unsubscribeStore?.()

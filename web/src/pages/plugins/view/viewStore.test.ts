@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rpc } from '../../../lib/rpc'
 import type { EventFrame, PluginViewOpenedDto, ViewNode } from '../../../lib/rpc'
-import { ViewSession, onPluginViewEventForTest, setPluginNavigator } from './viewStore'
+import { ViewSession, onPluginViewEventForTest, reopenOnRevisionChange, setPluginNavigator } from './viewStore'
 
 const root = (text: string): ViewNode => ({ id: 'root', k: 'text', p: { text }, c: [] })
 
@@ -147,5 +147,85 @@ describe('plugin view actions before the open reply', () => {
     expect(closed).toBe(0)
     expect(session.getState().phase).toBe('ready')
     session.dispose()
+  })
+})
+
+describe('plugin package revision reopen', () => {
+  const plugin = rpc.daemon.plugin
+  const original = { viewOpen: plugin.viewOpen, viewClose: plugin.viewClose }
+  afterEach(() => {
+    Object.assign(plugin, original)
+  })
+
+  /** 每次 open 返回递增的会话 id；记录 open 次数与被关闭的会话。 */
+  function countingDaemon() {
+    const log = { opened: 0, closed: [] as string[] }
+    Object.assign(plugin, {
+      viewOpen: () => {
+        log.opened += 1
+        return Promise.resolve({ session: `r${log.opened}`, seq: 0, tree: root('init') })
+      },
+      viewClose: ({ session }: { session: string }) => {
+        log.closed.push(session)
+        return Promise.resolve({})
+      },
+    })
+    return log
+  }
+
+  test('revision change reopens live sessions of that plugin only and closes the old one', async () => {
+    const log = countingDaemon()
+    const mine = new ViewSession({ identity: 'rev-a@x', view: 'v', locale: 'en' })
+    const other = new ViewSession({ identity: 'rev-b@x', view: 'v', locale: 'en' })
+    await mine.open()
+    await other.open()
+    expect(log.opened).toBe(2)
+    const plugins = (a: number) => [{ identity: 'rev-a@x', packageRevision: a }, { identity: 'rev-b@x', packageRevision: 1 }]
+    await reopenOnRevisionChange(plugins(1))
+    await reopenOnRevisionChange(plugins(1))
+    expect(log.opened).toBe(2)
+    await reopenOnRevisionChange(plugins(2))
+    expect(log.opened).toBe(3)
+    expect(log.closed).toEqual(['r1'])
+    expect(mine.sessionId).toBe('r3')
+    expect(mine.getState().phase).toBe('ready')
+    expect(other.sessionId).toBe('r2')
+    mine.dispose()
+    other.dispose()
+  })
+
+  test('sessions ended by pluginUnloaded reopen on the next revision', async () => {
+    const log = countingDaemon()
+    const session = new ViewSession({ identity: 'rev-c@x', view: 'v', locale: 'en' })
+    await session.open()
+    await reopenOnRevisionChange([{ identity: 'rev-c@x', packageRevision: 5 }])
+    onPluginViewEventForTest(daemonFrame({ type: 'pluginViewClosed', data: { session: 'r1', reason: 'pluginUnloaded' } }))
+    expect(session.getState().phase).toBe('closed')
+    await reopenOnRevisionChange([{ identity: 'rev-c@x', packageRevision: 6 }])
+    expect(log.opened).toBe(2)
+    expect(log.closed).toEqual([])
+    expect(session.getState().phase).toBe('ready')
+    session.dispose()
+  })
+
+  test('missing revision keeps the baseline and the current view', async () => {
+    const log = countingDaemon()
+    const session = new ViewSession({ identity: 'rev-d@x', view: 'v', locale: 'en' })
+    await session.open()
+    await reopenOnRevisionChange([{ identity: 'rev-d@x', packageRevision: 3 }])
+    await reopenOnRevisionChange([{ identity: 'rev-d@x' }])
+    await reopenOnRevisionChange([{ identity: 'rev-d@x', packageRevision: 3 }])
+    expect(log.opened).toBe(1)
+    session.dispose()
+  })
+
+  test('disposed sessions are not reopened', async () => {
+    const log = countingDaemon()
+    const session = new ViewSession({ identity: 'rev-e@x', view: 'v', locale: 'en' })
+    await session.open()
+    await reopenOnRevisionChange([{ identity: 'rev-e@x', packageRevision: 1 }])
+    session.dispose()
+    await reopenOnRevisionChange([{ identity: 'rev-e@x', packageRevision: 2 }])
+    expect(log.opened).toBe(1)
   })
 })
