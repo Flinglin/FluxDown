@@ -244,6 +244,8 @@ public enum HostMethod {
     public static let agentReferralValidate = "agent.referral.validate"
     public static let agentPlatformOpenTask = "agent.platform.openTask"
     public static let agentPlatformRevealTask = "agent.platform.revealTask"
+    /// 把任务产物以文件写入主机系统剪贴板；仅桌面主机本机来源，移动端不使用。
+    public static let agentPlatformCopyTaskFiles = "agent.platform.copyTaskFiles"
     public static let agentPlatformOpenPath = "agent.platform.openPath"
     public static let agentPlatformIntegrationGet = "agent.platform.integrationGet"
     public static let agentPlatformSetAutostart = "agent.platform.setAutostart"
@@ -313,6 +315,8 @@ public enum HostCapability {
     public static let agentExternalCapture = "agent.externalCapture"
     /// 按连接下发：本连接可在 agent 所在主机上打开 / 定位任务产物（`agent.platform.openTask` / `revealTask`）。
     public static let agentOpenTaskFiles = "agent.openTaskFiles"
+    /// 按连接下发：本连接可把任务产物写入 agent 所在主机的系统剪贴板（`agent.platform.copyTaskFiles`）。
+    public static let agentCopyTaskFiles = "agent.copyTaskFiles"
     /// 本主机编入了FluxMesh服务（`agent.share.*`）；移动端暂不使用。
     public static let agentShare = "agent.share"
     public static let clientSelections = "client.selections"

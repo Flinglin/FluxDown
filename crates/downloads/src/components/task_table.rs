@@ -499,6 +499,11 @@ impl TaskMenuFacts {
         self.is_local && self.is_bt && self.state == TaskState::Completed && !self.file_missing
     }
 
+    /// 本地已完成且产物仍在下载目录：「打开文件」「复制文件」的共同前提。
+    pub(crate) fn has_product_on_disk(&self) -> bool {
+        self.is_local && self.state == TaskState::Completed && !self.file_missing
+    }
+
     /// 「分享」判定用的任务事实。
     pub(crate) fn share_row(&self) -> ShareRow {
         ShareRow {
@@ -541,6 +546,8 @@ pub(crate) enum MenuEntry {
     CancelBoost,
     OpenFile,
     OpenFolder,
+    /// 把产物以文件写入系统剪贴板（条件同 [`MenuEntry::OpenFile`]，可多选）。
+    CopyFile,
     Rename,
     /// 更换下载链接（单选；条件见 [`TaskMenuFacts::can_change_url`]）。
     ChangeUrl,
@@ -605,14 +612,15 @@ pub(crate) fn context_menu_items(selection: &[TaskMenuFacts]) -> Vec<MenuEntry> 
             });
         }
     }
-    if selection
-        .iter()
-        .all(|task| task.is_local && task.state == TaskState::Completed && !task.file_missing)
-    {
+    if selection.iter().all(TaskMenuFacts::has_product_on_disk) {
         items.push(MenuEntry::OpenFile);
     }
     if selection.iter().all(|task| task.is_local) {
         items.push(MenuEntry::OpenFolder);
+    }
+    // 产物都在磁盘上才能整体放进剪贴板（agent 遇到任一缺失即整体拒绝）。
+    if selection.iter().all(TaskMenuFacts::has_product_on_disk) {
+        items.push(MenuEntry::CopyFile);
     }
     if let [only] = selection
         && only.is_local
@@ -2791,6 +2799,11 @@ impl DownloadTableDelegate {
                 self.strings.open_folder.clone(),
                 FluxIcon::FolderOpen,
                 Box::new(crate::actions::RevealSelected),
+            ),
+            MenuEntry::CopyFile => menu.menu_with_icon(
+                self.strings.copy_file.clone(),
+                FluxIcon::File,
+                Box::new(crate::actions::CopySelectedFiles),
             ),
             MenuEntry::Rename => menu.menu_with_icon(
                 self.strings.rename_task.clone(),
@@ -5773,6 +5786,7 @@ mod context_menu_tests {
                 MenuEntry::Boost,
                 MenuEntry::OpenFile,
                 MenuEntry::OpenFolder,
+                MenuEntry::CopyFile,
                 MenuEntry::Rename,
                 MenuEntry::Redownload,
                 MenuEntry::CopyUrl,
@@ -5875,18 +5889,24 @@ mod context_menu_tests {
     }
 
     #[test]
-    fn missing_file_hides_open_file_but_keeps_folder_and_redownload() {
+    fn missing_file_hides_open_and_copy_file_but_keeps_folder_and_redownload() {
         let mut missing = task(true, TaskState::Completed);
         missing.file_missing = true;
         let items = context_menu_items(&[missing]);
         assert!(!items.contains(&MenuEntry::OpenFile));
+        assert!(!items.contains(&MenuEntry::CopyFile));
         assert!(items.contains(&MenuEntry::OpenFolder));
         assert!(items.contains(&MenuEntry::Redownload));
-        // 与可打开的任务混选：「打开文件」要求全体成立。
-        assert!(
-            !context_menu_items(&[task(true, TaskState::Completed), missing])
-                .contains(&MenuEntry::OpenFile)
-        );
+        // 与可打开的任务混选：「打开文件」「复制文件」要求全体成立。
+        let mixed = context_menu_items(&[task(true, TaskState::Completed), missing]);
+        assert!(!mixed.contains(&MenuEntry::OpenFile));
+        assert!(!mixed.contains(&MenuEntry::CopyFile));
+        // 多个产物都在：一次复制全部。
+        let both = [
+            task(true, TaskState::Completed),
+            task(true, TaskState::Completed),
+        ];
+        assert!(context_menu_items(&both).contains(&MenuEntry::CopyFile));
     }
 
     #[test]

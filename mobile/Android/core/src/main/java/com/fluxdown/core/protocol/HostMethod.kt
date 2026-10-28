@@ -240,6 +240,8 @@ object HostMethod {
     const val agentReferralValidate = "agent.referral.validate"
     const val agentPlatformOpenTask = "agent.platform.openTask"
     const val agentPlatformRevealTask = "agent.platform.revealTask"
+    /** 把任务产物以文件写入主机系统剪贴板；仅桌面主机本机来源，移动端不使用。 */
+    const val agentPlatformCopyTaskFiles = "agent.platform.copyTaskFiles"
     const val agentPlatformOpenPath = "agent.platform.openPath"
     const val agentPlatformIntegrationGet = "agent.platform.integrationGet"
     const val agentPlatformSetAutostart = "agent.platform.setAutostart"
@@ -309,6 +311,8 @@ object HostCapability {
     const val agentExternalCapture = "agent.externalCapture"
     /** 按连接下发：本连接可在 agent 所在主机上打开 / 定位任务产物（`agent.platform.openTask` / `revealTask`）。 */
     const val agentOpenTaskFiles = "agent.openTaskFiles"
+    /** 按连接下发：本连接可把任务产物写入 agent 所在主机的系统剪贴板（`agent.platform.copyTaskFiles`）。 */
+    const val agentCopyTaskFiles = "agent.copyTaskFiles"
     /** 本主机编入了FluxMesh服务（`agent.share.*`）；移动端暂不使用。 */
     const val agentShare = "agent.share"
     const val clientSelections = "client.selections"

@@ -85,6 +85,7 @@
 - **Windows 上最小化的窗口边界报告为 `Windowed`，最大化状态要与平台标志取或**：只看 bounds 会把「最小化的最大化窗口」存成普通窗口 → `crates/app/src/windows/bounds.rs::resolve_maximized`、回归 `minimized_maximized_window_keeps_maximized`。
 - **进度 / 完成窗口里「打开文件 / 文件夹」不等打开命令返回**：Windows 上它要等系统打开调用返回，可能比对方出现在前台还晚，窗口该关而不关；会关窗时点击即请宿主等对方接管前台 → `crates/downloads/src/pages/progress_window.rs::hand_off`。
 - **Windows / Linux 标题栏菜单（gpui-component `AppMenuBar`）以「打开菜单时的焦点」为派发目标**：焦点为空（启动后未点列表）、在标题栏搜索框或不在下载页时，挂在下载页元素上的动作只沿标题栏冒泡、点了无效，且菜单项从不置灰；下载页动作须有应用级兜底（切到下载页、聚焦后派发；焦点已在下载页内视为下载页主动让出，不接管）。兜底里 `update` 窗口必须用 `AnyWindowHandle`，`WindowHandle<V>` 会租借根视图，冒泡到根视图监听器即 panic → `crates/app/src/menus.rs::dispatch_in_downloads`。
+- **GPUI 剪贴板写不了文件**：`ClipboardEntry::ExternalPaths` 在 gpui-fast 三个平台的写入路径都是空操作（macOS `pasteboard.rs::write`、Windows `clipboard.rs::write_to_clipboard`、Linux 只 `set_text`），`cx.write_to_clipboard` 不报错但剪贴板没有文件；「复制文件」改由常驻 agent 经 arboard `Set::file_list` 写入（Linux X11 内容归写入进程，实例须常驻）→ `native/agent/src/platform/clipboard_files.rs`、入口 `crates/downloads/src/pages/task_copy.rs`。
 
 ## Web SPA
 

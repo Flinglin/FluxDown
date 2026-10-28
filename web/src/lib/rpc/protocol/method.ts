@@ -206,9 +206,11 @@ export const METHOD = {
   AGENT_PLUGIN_FAVORITE_LIST: 'agent.pluginFavorite.list',
   AGENT_PLUGIN_FAVORITE_SET: 'agent.pluginFavorite.set',
 
-  // 以下方法读写宿主机路径 / 桌面集成，Web 不使用。
+  // 以下方法读写宿主机路径 / 桌面集成，按连接能力门控（多数 Web 不使用）。
   AGENT_PLATFORM_OPEN_TASK: 'agent.platform.openTask',
   AGENT_PLATFORM_REVEAL_TASK: 'agent.platform.revealTask',
+  /** 把任务产物以文件写入 agent 所在主机的系统剪贴板；仅当 hello 带 `agent.copyTaskFiles` 能力时可用。 */
+  AGENT_PLATFORM_COPY_TASK_FILES: 'agent.platform.copyTaskFiles',
   AGENT_PLATFORM_OPEN_PATH: 'agent.platform.openPath',
   AGENT_PLATFORM_INTEGRATION_GET: 'agent.platform.integrationGet',
   AGENT_PLATFORM_SET_AUTOSTART: 'agent.platform.setAutostart',
@@ -298,6 +300,11 @@ export const CAPABILITY_AGENT_DEVICE_LINK = 'agent.deviceLink';
 export const CAPABILITY_AGENT_EXTERNAL_CAPTURE = 'agent.externalCapture';
 /** 按连接下发：本连接可在 agent 所在主机上打开 / 定位任务产物（`agent.platform.openTask` / `revealTask`）。 */
 export const CAPABILITY_AGENT_OPEN_TASK_FILES = 'agent.openTaskFiles';
+/**
+ * 按连接下发：本连接可把任务产物写入 agent 所在主机的系统剪贴板（`agent.platform.copyTaskFiles`）。
+ * 只在本机来源 + 桌面构建 + 有图形会话时下发；远程 / NAS 连接没有（浏览器无法把文件写进系统剪贴板）。
+ */
+export const CAPABILITY_AGENT_COPY_TASK_FILES = 'agent.copyTaskFiles';
 /** 本 agent 编入了FluxMesh服务（`agent.share.*`）；条件能力，未编入FluxMesh的构建不下发。 */
 export const CAPABILITY_AGENT_SHARE = 'agent.share';
 /** 客户端能力：可处理交互选择（HLS/BT/变体），放入握手 capabilities。 */

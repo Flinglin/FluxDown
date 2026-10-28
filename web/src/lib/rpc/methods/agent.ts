@@ -389,10 +389,14 @@ const share = {
 
 // 桌面集成：在 agent 所在主机上打开 / 定位任务产物。仅当本连接的 hello 带
 // `agent.openTaskFiles` 能力时可用（见 downloads/model/actions.ts）；否则 agent 返回 Unsupported。
+// `copyTaskFiles` 另需 `agent.copyTaskFiles` 能力。
 const platform = {
   openTask: (params: { taskId: string }) => call<OkResult>(METHOD.AGENT_PLATFORM_OPEN_TASK, params),
   revealTask: (params: { taskId: string }) =>
     call<OkResult>(METHOD.AGENT_PLATFORM_REVEAL_TASK, params),
+  /** 产物整体写入主机剪贴板；任一产物不在磁盘上 → `notFound`，不写半份。 */
+  copyTaskFiles: (params: { taskIds: string[] }) =>
+    call<OkResult>(METHOD.AGENT_PLATFORM_COPY_TASK_FILES, params),
 };
 
 export const agent = {

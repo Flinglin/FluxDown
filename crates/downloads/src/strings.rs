@@ -73,6 +73,8 @@ pub(crate) struct DownloadStrings {
     pub(crate) main_queue: SharedString,
     pub(crate) open_file: SharedString,
     pub(crate) open_folder: SharedString,
+    /// 右键「复制文件」：把产物以文件写入系统剪贴板。
+    pub(crate) copy_file: SharedString,
     pub(crate) remote_tasks: SharedString,
     pub(crate) sidebar_queues: SharedString,
     pub(crate) status_all: SharedString,
@@ -265,6 +267,7 @@ impl DownloadStrings {
             resume_all_queue_stopped: shared(translator.text("resumeAllQueueStopped")),
             open_file: shared(translator.text("openFile")),
             open_folder: shared(translator.text("openFolder")),
+            copy_file: shared(translator.text("copyFileAction")),
             remote_tasks: shared(translator.text("remoteTasksGroup")),
             sidebar_queues: shared(translator.text(keys::SIDEBAR_QUEUES)),
             status_all: shared(translator.text(keys::TAB_ALL)),
