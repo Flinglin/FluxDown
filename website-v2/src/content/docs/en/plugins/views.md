@@ -17,6 +17,7 @@ A plugin can show UI without shipping any UI code. The `main` script returns a t
 | `settings` | Portable and desktop. A tab in the plugin's settings dialog. | Portable only. A tab in the plugin's settings dialog (only while the plugin is enabled, loaded and fully authorized). | Not rendered |
 | `taskDetail` | Portable and desktop. A tab in the task detail panel and in stand-alone task detail windows. | Portable only. | Not rendered |
 | `window` | **Desktop implementation only.** Opened from the plugin row. | No entry. | Not rendered |
+| `auth` | Portable and desktop. The whole content of the plugin's **Log in** dialog (replaces the default site / login-info form). The dialog title stays "Log in <plugin>". | Portable only. Same. | Not rendered; the default login flow is used |
 
 - Only plugins that are **enabled, loaded and have no pending consent** contribute views and commands. The Web settings tab additionally requires the plugin to be usable in the same sense.
 - On the Web a view is shown only when its `portable` flag is true. A view that declares `desktop` without `portable: true` never appears on the Web; opening its address directly shows the "The view session has ended" placeholder, not a "desktop only" card.
@@ -50,7 +51,7 @@ A plugin can show UI without shipping any UI code. The `main` script returns a t
 |---|---|
 | `id` | `^[a-z][a-z0-9-]{0,31}$`, unique among the plugin's views. |
 | `title` | 1–40 characters. Shown as the page / tab / window title. |
-| `location` | `activity`, `settings`, `taskDetail` or `window`. At most one `settings` view per plugin. |
+| `location` | `activity`, `settings`, `taskDetail`, `window` or `auth`. At most one `settings` view and at most one `auth` view per plugin. `auth` requires the top-level `auth` declaration (see [Custom login UI](/docs/en/plugins/auth-guide/#custom-login-ui)); older apps reject the unknown location, so set `minAppVersion`. |
 | `portable` | Only valid together with `desktop`. `true` means `main` also implements the view. Without `desktop` a view is always portable. |
 | `desktop` | `{ entry, networkHosts?, width?, height? }`; needs the `desktop` permission. See [Native desktop UI](/docs/en/plugins/desktop-ui-guide/). |
 
@@ -184,8 +185,29 @@ flux.ui.view(id: string, def: {
 | `taskId` | The task a `taskDetail` view is attached to; `null` for every other location. |
 | `locale` | The client's UI language when the session was opened (for example `zh-CN`, `en`); an empty string if the client did not report one. It is not updated when the user switches language. |
 | `refresh()` | Requests a re-render of this session. Keep `ctx` (for example inside `state`) to refresh from timers, commands or event handlers. |
+| `close()` | Closes the container that hosts this view and ends the session: the login dialog (`auth`), the settings dialog (`settings`) or a stand-alone window. A view embedded in a page (activity page, task-detail tab) has no container, so it shows "The view session has ended" with a **Reopen** button instead. Throws `close/navigate is not available until the view has opened` when called before the first frame is returned (during `init`). |
+| `navigate(target)` | Returns a promise. Brings the main window to the front and switches to a page. `target` is `"downloads"`, `"rss"`, `"webhooks"`, `"share"`, or `{ view: "<id>" }` for one of this plugin's `activity` views. An unknown target rejects with `navigate: unknown target …`; a `{ view }` that is not an `activity` view of this plugin rejects with `navigate: view '<id>' is not an activity view of this plugin`. If the page does not exist on the client (for example the view is hidden) the client ignores the request. Only the client that opened this session is affected. Throws the same `close/navigate is not available until the view has opened` error during `init`. |
 
 TypeScript types `ViewContext`, `ViewEvent` and `ViewDefinition` are exported by `fluxdown-plugin-sdk` (see [SDK reference](/docs/en/plugins/sdk/)).
+
+Example: an activity page that adds a download and then jumps to the download list:
+
+```js
+flux.ui.view("add", {
+  init: (ctx) => ({ ctx, url: "" }),
+  render: (state) =>
+    h("stack", { gap: "sm", padding: "md" },
+      h("input", { key: "url", value: state.url, placeholder: "https://…" }),
+      h("button", { key: "add", text: "Add and show downloads", variant: "primary" })),
+  async event(state, ev) {
+    if (ev.node === "root/url" && ev.type === "change") state.url = String(ev.value);
+    if (ev.node === "root/add" && ev.type === "press") {
+      await flux.tasks.create({ request: { url: state.url } }); // needs the `tasks` permission
+      await state.ctx.navigate("downloads");
+    }
+  },
+});
+```
 
 ### Event objects
 

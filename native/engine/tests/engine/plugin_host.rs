@@ -430,6 +430,118 @@ async fn plugin_host_delivers_declared_events_timers_and_toasts() {
     assert_eq!(state["seen"], json!(["t1"]));
 }
 
+const CTX_MANIFEST: &str = r#"{
+  "identity": "tester@host",
+  "name": "Ctx Test",
+  "version": "1.0.0",
+  "main": { "entry": "main.js" },
+  "contributes": {
+    "views": [
+      { "id": "v", "title": "V", "location": "activity" },
+      { "id": "s", "title": "S", "location": "settings" }
+    ]
+  }
+}"#;
+
+const CTX_JS: &str = r#"
+const log = [];
+flux.ui.view("v", {
+  init: async (ctx) => {
+    for (const act of [() => ctx.close(), () => ctx.navigate("rss")]) {
+      try { act(); log.push("no-throw"); } catch (e) { log.push(String(e.message)); }
+    }
+    return {};
+  },
+  render: () => flux.ui.h("text", { text: "x" }),
+  event: async (st, ev, ctx) => {
+    if (ev.action === "close") { ctx.close(); return; }
+    try { await ctx.navigate(ev.target); log.push("ok"); } catch (e) { log.push(String(e.message)); }
+  },
+});
+flux.ui.view("s", { render: () => flux.ui.h("text", { text: "s" }) });
+flux.rpc.handle("log", async () => log);
+"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plugin_view_ctx_close_and_navigate() {
+    let fx = fixture_with(CTX_MANIFEST, CTX_JS, &[], &[]).await;
+    let (session, _) = fx
+        .pm
+        .open_view(IDENTITY, "v", json!({}), None, "en")
+        .await
+        .expect("open view");
+    let not_ready = "close/navigate is not available until the view has opened";
+    let log = fx
+        .pm
+        .invoke(IDENTITY, "log", Value::Null)
+        .await
+        .expect("log");
+    assert_eq!(log, json!([not_ready, not_ready]));
+
+    for target in [
+        json!("downloads"),
+        json!({ "view": "v" }),
+        json!({ "view": "s" }),
+        json!("nowhere"),
+    ] {
+        fx.pm
+            .view_event(&session, json!({ "action": "navigate", "target": target }))
+            .expect("queue event");
+    }
+    // 事件串行处理：等日志再增加 4 条。
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let log = loop {
+        let log = fx
+            .pm
+            .invoke(IDENTITY, "log", Value::Null)
+            .await
+            .expect("log");
+        if log.as_array().is_some_and(|a| a.len() >= 6) {
+            break log;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "timed out: {log}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(log[2], "ok");
+    assert_eq!(log[3], "ok");
+    assert_eq!(
+        log[4],
+        "navigate: view 's' is not an activity view of this plugin"
+    );
+    assert_eq!(log[5], "navigate: unknown target \"nowhere\"");
+
+    let targets: Vec<String> = fx
+        .sink
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::PluginViewNavigate { session: s, target } if *s == session => {
+                Some(target.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(targets, ["downloads", "plugin:tester@host:v"]);
+
+    fx.pm
+        .view_event(&session, json!({ "action": "close" }))
+        .expect("queue close");
+    let reason = fx
+        .sink
+        .wait_for(|event| match event {
+            EngineEvent::PluginViewClosed { session: s, reason } if *s == session => {
+                Some(reason.clone())
+            }
+            _ => None,
+        })
+        .await;
+    assert_eq!(reason, "requested");
+    // 会话已移除：再投递事件报错。
+    assert!(fx.pm.view_event(&session, json!({})).is_err());
+}
+
 const PAGE_MANIFEST: &str = r#"{
   "identity": "tester@host",
   "name": "Page Test",

@@ -489,8 +489,9 @@ pub enum DaemonEvent {
     /// 常驻插件宿主的可移植视图增量帧。不改变 daemon 快照；agent 原样转发给全部 UI
     /// 连接，客户端按 `session` 过滤、忽略未知会话。
     PluginViewFrame(crate::PluginViewFrameDto),
-    /// 可移植视图会话已结束（`reason`：`closed` / `expired` / `pluginUnloaded`）。
-    /// 不改变 daemon 快照；agent 原样转发。
+    /// 可移植视图会话已结束（`reason`：`closed` / `expired` / `pluginUnloaded` /
+    /// `requested`——插件经 `ctx.close()` 请求关闭承载它的容器，见
+    /// [`crate::VIEW_CLOSE_REASON_REQUESTED`]）。不改变 daemon 快照；agent 原样转发。
     PluginViewClosed {
         session: String,
         reason: String,

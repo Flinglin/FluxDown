@@ -204,8 +204,12 @@ pub enum EngineEvent {
     },
     /// 可移植视图渲染 / 事件处理失败（会话仍保持打开，下一次渲染可恢复）。
     PluginViewFailed { session: String, message: String },
-    /// 可移植视图会话已结束（`reason`：`closed` / `expired` / `pluginUnloaded`）。
+    /// 可移植视图会话已结束（`reason`：`closed` / `expired` / `pluginUnloaded` /
+    /// `requested`——插件经 `ctx.close()` 请求关闭承载容器）。
     PluginViewClosed { session: String, reason: String },
+    /// 插件经 `ctx.navigate()` 请求主界面跳转；`target` 为已校验的路由 id
+    /// （内置 `downloads` / `rss` / `webhooks` / `share`，或 `plugin:<identity>:<view>`）。
+    PluginViewNavigate { session: String, target: String },
     /// 插件经 `flux.ui.toast` 请求的提示（`level`：info/success/warning/error）。
     PluginToast {
         identity: String,

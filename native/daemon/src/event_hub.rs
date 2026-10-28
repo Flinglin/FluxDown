@@ -925,6 +925,16 @@ impl fluxdown_engine::events::EventSink for DaemonEngineEventSink {
                     .publish(DaemonEvent::PluginViewClosed { session, reason });
                 return;
             }
+            EngineEvent::PluginViewNavigate { session, target } => {
+                if let Some(frame) = self
+                    .0
+                    .plugin_views
+                    .effect(&session, fluxdown_protocol::ViewEffect::Navigate { target })
+                {
+                    self.0.publish(DaemonEvent::PluginViewFrame(frame));
+                }
+                return;
+            }
             EngineEvent::PluginToast {
                 identity,
                 level,

@@ -26,13 +26,21 @@ use pages::{managed_components::ComponentUi, plugins::PluginsUi};
 
 pub type PortFuture<T> = Pin<Box<dyn Future<Output = Result<T, RpcErrorData>> + Send + 'static>>;
 
-/// 由 app 注入的插件视图工厂：`(插件, 视图声明, 任务 id, window, cx)` → 视图。
-/// 扩展页的插件设置对话框用它渲染 `location == "settings"` 的视图。
+/// 插件视图的承载位置：宿主（app）据此决定视图的 `ViewContainer`（能否关闭承载它的容器）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PluginViewSlot {
+    /// 当前窗口里最上层的对话框；插件请求关闭（`ctx.close()` / `fluxdown.close()`）即关闭它。
+    Dialog,
+}
+
+/// 由 app 注入的插件视图工厂：`(插件, 视图声明, 任务 id, 承载位置, window, cx)` → 视图。
+/// 扩展页的插件设置对话框与登录对话框用它渲染 `location == "settings"` / `"auth"` 的视图。
 pub type PluginViewFactory = Rc<
     dyn Fn(
         &fluxdown_protocol::PluginDto,
         &fluxdown_protocol::PluginViewDeclDto,
         Option<String>,
+        PluginViewSlot,
         &mut Window,
         &mut App,
     ) -> AnyView,

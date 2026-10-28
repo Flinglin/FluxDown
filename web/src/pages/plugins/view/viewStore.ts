@@ -8,7 +8,8 @@
 import { useSyncExternalStore } from 'react'
 import { RpcError, errorMessage, rpc, rpcStore, subscribeServiceEvents } from '../../../lib/rpc'
 import type { DaemonEvent, EventFrame, ViewEventDto, ViewNode } from '../../../lib/rpc'
-import { VIEW_ERROR_PROP, applyViewOps } from '../../../lib/rpc/protocol/pluginView'
+import { VIEW_CLOSE_REASON_REQUESTED, VIEW_ERROR_PROP, applyViewOps } from '../../../lib/rpc/protocol/pluginView'
+import type { ViewEffect } from '../../../lib/rpc/protocol/pluginView'
 import { toast } from '../../../ui'
 import type { ToastKind } from '../../../ui'
 
@@ -43,6 +44,13 @@ export function daemonEventOf(frame: EventFrame): DaemonEvent | null {
 
 const live = new Map<string, ViewSession>()
 
+let pluginNavigator: ((target: string) => void) | null = null
+
+/** 注册主界面跳转器（外壳挂一次）；`null` 注销。未注册时 navigate 动作被忽略。 */
+export function setPluginNavigator(fn: ((target: string) => void) | null): void {
+  pluginNavigator = fn
+}
+
 export class ViewSession {
   private state: ViewSessionState = INITIAL
   private id: string | null = null
@@ -52,6 +60,9 @@ export class ViewSession {
   private epoch = 0
   private resyncing = false
   private readonly listeners = new Set<() => void>()
+
+  /** 容器关闭处理（登录 / 设置弹窗等）；未设置则 requested 关闭显示「已结束」。 */
+  onRequestClose?: () => void
 
   constructor(readonly target: ViewTarget) {}
 
@@ -138,6 +149,17 @@ export class ViewSession {
     }
   }
 
+  /** `pluginViewClosed`：插件主动 `ctx.close()` 且有可关闭容器 → 注销并交给容器；否则进入「已结束」。 */
+  handleClosed(reason: string): void {
+    if (reason === VIEW_CLOSE_REASON_REQUESTED && this.onRequestClose !== undefined) {
+      const close = this.onRequestClose
+      this.unregister()
+      close()
+      return
+    }
+    this.markClosed(reason)
+  }
+
   markClosed(reason: string): void {
     this.unregister()
     this.set({ phase: 'closed', reason })
@@ -182,6 +204,13 @@ let unsubscribeStore: (() => void) | null = null
 let keepaliveTimer: ReturnType<typeof setInterval> | null = null
 let wasReady = rpcStore.peek().connection.phase === 'ready'
 
+function runEffect(effect: ViewEffect): void {
+  if (effect.kind === 'navigate' && 'target' in effect && typeof effect.target === 'string') pluginNavigator?.(effect.target)
+}
+
+/** 仅测试用：直接注入事件帧。 */
+export const onPluginViewEventForTest = (frame: EventFrame): void => onFrame(frame)
+
 function onFrame(frame: EventFrame): void {
   // agent 重连 daemon 后整体替换快照：断线期间可能漏帧。
   if (frame.event.service === 'agent' && frame.event.event.type === 'daemonSnapshotReplaced') {
@@ -191,9 +220,13 @@ function onFrame(frame: EventFrame): void {
   const event = daemonEventOf(frame)
   if (event === null) return
   if (event.type === 'pluginViewFrame') {
-    live.get(event.data.session)?.applyFrame(event.data.seq, event.data.ops)
+    const session = live.get(event.data.session)
+    if (session === undefined) return
+    // 动作帧：先执行 effects（不受 seq 影响），再按 seq 规则处理 ops。
+    for (const effect of event.data.effects ?? []) runEffect(effect)
+    session.applyFrame(event.data.seq, event.data.ops)
   } else if (event.type === 'pluginViewClosed') {
-    live.get(event.data.session)?.markClosed(event.data.reason)
+    live.get(event.data.session)?.handleClosed(event.data.reason)
   }
 }
 

@@ -30,7 +30,7 @@ use gpui_component::{
 
 use super::Frame;
 use crate::{
-    ExtensionsTab, ExtensionsView,
+    ExtensionsTab, ExtensionsView, PluginViewSlot,
     components::{
         plugin_audit::open_plugin_audit,
         plugin_auth::PluginAuthDialog,
@@ -1421,7 +1421,14 @@ impl ExtensionsView {
         let translator_entity = self.translator.clone();
         let port = self.controller.port().clone();
         let view = match (self.settings_view(plugin), &self.plugin_view_factory) {
-            (Some(decl), Some(factory)) => Some(factory(plugin, decl, None, window, cx)),
+            (Some(decl), Some(factory)) => Some(factory(
+                plugin,
+                decl,
+                None,
+                PluginViewSlot::Dialog,
+                window,
+                cx,
+            )),
             _ => None,
         };
         let form = (!plugin.settings.is_empty()).then(|| {
@@ -1477,14 +1484,34 @@ impl ExtensionsView {
         let Some(plugin) = self.controller.plugin(identity) else {
             return;
         };
-        let translator = self.translator.clone();
-        let port = self.controller.port().clone();
-        let identity = plugin.identity.clone();
         let title = SharedString::from(
             self.translator
                 .read(cx)
                 .text_with("pluginAuthDialogTitle", &[("name", &plugin.name)]),
         );
+        // 插件自绘登录界面：弹窗只承载该视图（插件经 `ctx.close()` 自行关闭弹窗）。
+        if let (Some(decl), Some(factory)) = (self.auth_view(plugin), &self.plugin_view_factory) {
+            let view = factory(plugin, decl, None, PluginViewSlot::Dialog, window, cx);
+            window.open_dialog(cx, move |dialog_view, _, cx| {
+                let view = view.clone();
+                dialog_view
+                    .title(fluxdown_ui_components::dialog_title(title.clone(), cx))
+                    .w(active_theme(cx).text_extent(520.))
+                    .content(move |content, _, cx| {
+                        content.min_h_0().child(
+                            div()
+                                .w_full()
+                                .h(active_theme(cx).text_extent(420.))
+                                .overflow_hidden()
+                                .child(view.clone()),
+                        )
+                    })
+            });
+            return;
+        }
+        let translator = self.translator.clone();
+        let port = self.controller.port().clone();
+        let identity = plugin.identity.clone();
         let dialog = cx.new(|cx| PluginAuthDialog::new(translator, port, identity, window, cx));
         let dialog_for_cancel = dialog.clone();
         window.open_dialog(cx, move |dialog_view, _, cx| {
@@ -1516,6 +1543,37 @@ impl ExtensionsView {
             .views
             .iter()
             .find(|view| view.location == "settings")
+    }
+
+    /// 插件的 auth 位置视图：插件可用（已启用、已加载、无待授权）、视图工厂已注入，且视图在
+    /// 本机可渲染（可移植，或桌面脚本包在本机）时才接管登录弹窗；否则沿用固定登录流程。
+    fn auth_view<'a>(
+        &self,
+        plugin: &'a PluginDto,
+    ) -> Option<&'a fluxdown_protocol::PluginViewDeclDto> {
+        if self.plugin_view_factory.is_none()
+            || !plugin.enabled
+            || plugin.load_status != "Loaded"
+            || !plugin.consent_pending.is_empty()
+            || !plugin.consent_pending_hosts.is_empty()
+        {
+            return None;
+        }
+        plugin
+            .contributions
+            .views
+            .iter()
+            .find(|view| view.location == "auth")
+            .filter(|view| {
+                view.portable
+                    || view
+                        .desktop
+                        .as_ref()
+                        .zip(plugin.package_dir.as_ref())
+                        .is_some_and(|(entry, dir)| {
+                            std::path::Path::new(dir).join(&entry.entry).is_file()
+                        })
+            })
     }
 
     fn open_consent(&self, plugin: PluginDto, window: &mut Window, cx: &mut Context<Self>) {

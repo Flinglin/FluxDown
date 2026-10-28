@@ -127,7 +127,7 @@ export type DaemonEvent =
   | { type: 'taskNotice'; data: TaskNoticeDto }
   /** 可移植插件视图的增量帧：不改变快照；客户端按 `session` 过滤，忽略未知会话。 */
   | { type: 'pluginViewFrame'; data: PluginViewFrameDto }
-  /** 可移植视图会话已结束（`reason`：`closed` / `expired` / `pluginUnloaded`）；不改变快照。 */
+  /** 可移植视图会话已结束（`reason`：`closed` / `expired` / `pluginUnloaded` / `requested`）；不改变快照。 */
   | { type: 'pluginViewClosed'; data: { session: string; reason: string } }
   /** 插件经 `flux.ui.toast` 请求的提示；不改变快照。 */
   | { type: 'pluginToast'; data: { identity: string; level: string; text: string } };

@@ -421,6 +421,52 @@ fn inject_host_bridge(
         globals.set("__flux_toast", f)?;
     }
 
+    // __flux_view_close(session) -> String(JSON 信封)；JS 侧遇 __fluxError 抛出
+    {
+        let ev = events.clone();
+        let pid = identity.to_string();
+        let f = Function::new(ctx.clone(), move |session: String| -> String {
+            match ev.close_view(&pid, &session) {
+                Ok(()) => serde_json::json!({ "value": null }),
+                Err(e) => serde_json::json!({ "__fluxError": plain_error(&e) }),
+            }
+            .to_string()
+        })?
+        .with_name("__flux_view_close")?;
+        globals.set("__flux_view_close", f)?;
+    }
+
+    // __flux_view_navigate(session, targetJson) -> Promise<String(JSON)>
+    {
+        let ev = events.clone();
+        let pid = identity.to_string();
+        let dl = interrupt_ns.clone();
+        let f = Function::new(
+            ctx.clone(),
+            Async(move |session: String, target_json: String| {
+                let ev = ev.clone();
+                let pid = pid.clone();
+                let dl = dl.clone();
+                async move {
+                    let payload = match serde_json::from_str::<serde_json::Value>(&target_json) {
+                        Ok(target) => {
+                            match credited(&dl, ev.navigate(&pid, &session, target)).await {
+                                Ok(()) => serde_json::json!({ "value": null }),
+                                Err(e) => serde_json::json!({ "__fluxError": plain_error(&e) }),
+                            }
+                        }
+                        Err(e) => serde_json::json!({
+                            "__fluxError": format!("navigate: unknown target ({e})")
+                        }),
+                    };
+                    Ok::<String, rquickjs::Error>(payload.to_string())
+                }
+            }),
+        )?
+        .with_name("__flux_view_navigate")?;
+        globals.set("__flux_view_navigate", f)?;
+    }
+
     // __flux_timer_set(id, delayMs) / __flux_timer_clear(id)
     {
         let ev = events.clone();
@@ -684,12 +730,27 @@ const HOST_PRELUDE: &str = r#"
     };
   }
 
-  const makeCtx = (session, props, taskId, locale) => ({
+  const requireReady = (s) => {
+    if (!s.ready) throw new Error('close/navigate is not available until the view has opened');
+  };
+  const makeCtx = (s, session, props, taskId, locale) => ({
     session,
     props: props || {},
     taskId: taskId === undefined ? null : taskId,
     locale: locale || '',
     refresh() { __flux_view_refresh(session); },
+    close() {
+      requireReady(s);
+      const r = JSON.parse(__flux_view_close(session));
+      if (r.__fluxError) throw new Error(r.__fluxError);
+    },
+    navigate(target) {
+      requireReady(s);
+      return __flux_view_navigate(session, JSON.stringify(target === undefined ? null : target)).then((raw) => {
+        const r = JSON.parse(raw);
+        if (r.__fluxError) throw new Error(r.__fluxError);
+      });
+    },
   });
   const renderSession = async (s) => {
     const tree = await s.def.render(s.state, s.ctx);
@@ -706,14 +767,17 @@ const HOST_PRELUDE: &str = r#"
     async viewOpen(a) {
       const def = views.get(a.view);
       if (!def) throw new Error('view not registered: ' + a.view);
-      const s = { def, ctx: makeCtx(a.session, a.props, a.taskId, a.locale), state: {} };
+      const s = { def, ready: false, ctx: null, state: {} };
+      s.ctx = makeCtx(s, a.session, a.props, a.taskId, a.locale);
       sessions.set(a.session, s);
       try {
         if (typeof def.init === 'function') {
           const st = await def.init(s.ctx);
           if (st !== undefined) s.state = st;
         }
-        return await renderSession(s);
+        const tree = await renderSession(s);
+        s.ready = true;
+        return tree;
       } catch (e) {
         sessions.delete(a.session);
         throw e;

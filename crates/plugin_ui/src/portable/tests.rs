@@ -1,15 +1,17 @@
 use std::{
+    cell::{Cell, RefCell},
     collections::BTreeMap,
+    rc::Rc,
     sync::{Arc, Mutex},
 };
 
-use fluxdown_protocol::{PluginViewFrameDto, ViewOp};
+use fluxdown_protocol::{PluginViewFrameDto, VIEW_CLOSE_REASON_REQUESTED, ViewEffect, ViewOp};
 use fluxdown_ui_i18n::I18nCatalog;
 use gpui::{AppContext as _, Entity, TestApp};
 use serde_json::{Value, json};
 
 use super::{PluginViewHost, dispatch_closed, dispatch_frame, install, render, resync_all};
-use crate::{PluginUiPort, PortFuture};
+use crate::{PluginUiPort, PortFuture, ViewContainer, set_navigator};
 
 fn tree(text: &str) -> Value {
     json!({
@@ -69,6 +71,7 @@ fn frame(seq: u64, text: &str) -> PluginViewFrameDto {
             set,
             unset: Vec::new(),
         }],
+        effects: Vec::new(),
     }
 }
 
@@ -82,6 +85,10 @@ fn text_of(host: &PluginViewHost) -> String {
 }
 
 fn setup() -> (TestApp, Arc<MockPort>, Entity<PluginViewHost>) {
+    setup_with(ViewContainer::default())
+}
+
+fn setup_with(container: ViewContainer) -> (TestApp, Arc<MockPort>, Entity<PluginViewHost>) {
     let port = Arc::new(MockPort {
         session_exists: Mutex::new(true),
         ..MockPort::default()
@@ -97,6 +104,7 @@ fn setup() -> (TestApp, Arc<MockPort>, Entity<PluginViewHost>) {
                 "t@p".to_owned(),
                 "main".to_owned(),
                 None,
+                container,
                 port,
                 translator,
                 cx,
@@ -163,6 +171,120 @@ fn closed_session_is_marked_and_reopen_opens_a_new_one() {
     app.run_until_parked();
     assert_eq!(port.count("daemon.plugin.view.open"), 2);
     app.update(|cx| assert!(!host.read(cx).is_closed()));
+}
+
+/// 记录跳转请求 `(identity, route)`；`fail` 为真时模拟目标不存在。
+fn install_navigator(app: &mut TestApp, fail: bool) -> Rc<RefCell<Vec<(String, String)>>> {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let recorder = seen.clone();
+    app.update(|cx| {
+        set_navigator(
+            cx,
+            Rc::new(move |identity, route, _| {
+                recorder
+                    .borrow_mut()
+                    .push((identity.to_owned(), route.to_owned()));
+                if fail {
+                    Err("missing".to_owned())
+                } else {
+                    Ok(())
+                }
+            }),
+        );
+    });
+    seen
+}
+
+fn navigate_frame(seq: u64, target: &str) -> PluginViewFrameDto {
+    PluginViewFrameDto {
+        session: "s1".to_owned(),
+        seq,
+        ops: Vec::new(),
+        effects: vec![
+            ViewEffect::Unknown,
+            ViewEffect::Navigate {
+                target: target.to_owned(),
+            },
+        ],
+    }
+}
+
+#[test]
+fn effects_only_frame_navigates_without_touching_tree_or_seq() {
+    let (mut app, port, host) = setup();
+    let seen = install_navigator(&mut app, false);
+
+    // 动作帧沿用会话当前序号（0），不改树、不触发 snapshot。
+    app.update(|cx| dispatch_frame(navigate_frame(0, "downloads"), cx));
+    app.run_until_parked();
+    assert_eq!(*seen.borrow(), [("t@p".to_owned(), "downloads".to_owned())]);
+    app.update(|cx| {
+        assert_eq!(host.read(cx).seq(), 0);
+        assert_eq!(text_of(host.read(cx)), "0");
+    });
+    assert_eq!(port.count("daemon.plugin.view.snapshot"), 0);
+
+    // 带 ops 的下一帧：动作先执行，ops 仍按序号规则应用。
+    let mut next = frame(1, "1");
+    next.effects = vec![ViewEffect::Navigate {
+        target: "plugin:t@p:dash".to_owned(),
+    }];
+    app.update(|cx| dispatch_frame(next, cx));
+    assert_eq!(seen.borrow().len(), 2);
+    assert_eq!(seen.borrow()[1].1, "plugin:t@p:dash");
+    app.update(|cx| {
+        assert_eq!(host.read(cx).seq(), 1);
+        assert_eq!(text_of(host.read(cx)), "1");
+    });
+}
+
+#[test]
+fn failed_navigation_and_foreign_sessions_are_ignored() {
+    let (mut app, _port, host) = setup();
+    let seen = install_navigator(&mut app, true);
+    app.update(|cx| dispatch_frame(navigate_frame(0, "rss"), cx));
+    assert_eq!(seen.borrow().len(), 1);
+    app.update(|cx| assert_eq!(host.read(cx).seq(), 0));
+
+    let mut other = navigate_frame(0, "rss");
+    other.session = "other".to_owned();
+    app.update(|cx| dispatch_frame(other, cx));
+    assert_eq!(seen.borrow().len(), 1);
+}
+
+#[test]
+fn requested_close_closes_a_closable_container() {
+    let closes = Rc::new(Cell::new(0_u32));
+    let counter = closes.clone();
+    let container = ViewContainer::closable(move |_| counter.set(counter.get() + 1));
+    let (mut app, _port, host) = setup_with(container);
+
+    app.update(|cx| dispatch_closed("s1", VIEW_CLOSE_REASON_REQUESTED, cx));
+    assert_eq!(closes.get(), 1);
+    app.update(|cx| {
+        // 容器会随之关闭，不显示「已结束」。
+        assert!(!host.read(cx).is_closed());
+        assert_eq!(host.read(cx).session(), None);
+    });
+
+    // 其他原因（插件卸载等）仍显示已结束态，不动容器。
+    let (mut app, _port, host) = setup_with(ViewContainer::closable({
+        let counter = closes.clone();
+        move |_| counter.set(counter.get() + 1)
+    }));
+    app.update(|cx| dispatch_closed("s1", "pluginUnloaded", cx));
+    assert_eq!(closes.get(), 1);
+    app.update(|cx| assert!(host.read(cx).is_closed()));
+}
+
+#[test]
+fn requested_close_without_a_container_shows_the_closed_state() {
+    let (mut app, _port, host) = setup();
+    app.update(|cx| dispatch_closed("s1", VIEW_CLOSE_REASON_REQUESTED, cx));
+    app.update(|cx| {
+        assert!(host.read(cx).is_closed());
+        assert_eq!(host.read(cx).session(), None);
+    });
 }
 
 #[test]

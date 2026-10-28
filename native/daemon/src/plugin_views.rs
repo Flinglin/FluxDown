@@ -11,7 +11,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
 
 use fluxdown_protocol::{
-    PluginViewFrameDto, VIEW_ROOT_ID, ViewNode, ViewOp, apply_view_ops, diff_view, normalize_view,
+    PluginViewFrameDto, VIEW_ROOT_ID, ViewEffect, ViewNode, ViewOp, apply_view_ops, diff_view,
+    normalize_view,
 };
 
 /// 单帧 ops 序列化后的上限（1 MiB）。
@@ -79,6 +80,7 @@ impl PluginViewStore {
             session: session.to_owned(),
             seq: stored.seq,
             ops,
+            effects: Vec::new(),
         })
     }
 
@@ -101,6 +103,22 @@ impl PluginViewStore {
             session: session.to_owned(),
             seq: stored.seq,
             ops,
+            effects: Vec::new(),
+        })
+    }
+
+    /// 动作帧：携带宿主副作用（跳转等），seq 取会话当前值且不递增、ops 为空。
+    /// 客户端先执行 effects，再按原 seq 规则处理 ops（空 ops 不会推进序号）。
+    /// 未知会话返回 `None`。
+    #[must_use]
+    pub fn effect(&self, session: &str, effect: ViewEffect) -> Option<PluginViewFrameDto> {
+        let sessions = lock(&self.sessions);
+        let stored = sessions.get(session)?;
+        Some(PluginViewFrameDto {
+            session: session.to_owned(),
+            seq: stored.seq,
+            ops: Vec::new(),
+            effects: vec![effect],
         })
     }
 }
@@ -118,6 +136,35 @@ mod tests {
 
     fn opened(store: &PluginViewStore, session: &str, text: &str) {
         store.open(session, normalize_view(&text_tree(text)).unwrap());
+    }
+
+    #[test]
+    fn effect_frame_keeps_seq_and_unknown_session_is_none() {
+        let store = PluginViewStore::default();
+        opened(&store, "s", "0");
+        let _ = store.rendered("s", &text_tree("1")).unwrap();
+        let frame = store
+            .effect(
+                "s",
+                ViewEffect::Navigate {
+                    target: "rss".to_owned(),
+                },
+            )
+            .unwrap();
+        assert_eq!(frame.seq, 1);
+        assert!(frame.ops.is_empty());
+        assert_eq!(frame.effects.len(), 1);
+        assert_eq!(store.snapshot("s").unwrap().0, 1);
+        assert!(
+            store
+                .effect(
+                    "nope",
+                    ViewEffect::Navigate {
+                        target: "rss".to_owned()
+                    }
+                )
+                .is_none()
+        );
     }
 
     #[test]
