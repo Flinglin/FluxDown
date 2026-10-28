@@ -35,6 +35,7 @@
 - **完成后的整目录 rename 在 Windows 上会因做种句柄存活而 ACCESS_DENIED，必须保留逐文件降级**：librqbit 对种子内全部文件持句柄直到任务删除，`pause()` 只转移不关闭（BUG-BT-DIR-RENAME-2X）；文件级 rename 对 FULL-share 句柄免疫且仍是同卷零拷贝 → `native/engine/src/bt_downloader.rs::move_path_with_file_replace` / `move_dir_recursive`（回归 `move_dir_recursive_continues_after_child_error` 等）。
 - **完成布局的批内重名判定用小写折叠名**：种子内仅大小写不同的 basename 在 Windows 上是同一 dst，精确比较会漏判并互相覆盖 → `native/engine/src/bt_downloader.rs::compute_completion_layout`（`taken`）。
 - **Windows 上 BT 新增选项必须经 `build_add_torrent_options` 注入 sparse 工厂**：新建任务不应物理预留全部空间 → `native/engine/src/bt_downloader.rs::build_add_torrent_options`、回归 `native/engine/tests/engine/bt_sparse_add.rs::fresh_add_creates_sparse_files_without_physical_reservation`（`cfg(all(windows, feature = "bt"))`）。
+- **文件选择对话框期间的「先暂停」只能落在已转 Live 的种子上**：librqbit 在初检中接受 `pause` 的方式是中止初检，种子停在 Initializing 且无检查在跑；Path B 随后的 `apply_only_files_after_init` 等初检结束永远等不到——部分选择或带 BEP-47 padding 文件的种子（选择框隐藏 padding，「全选」也少于 `file_count`）卡在「准备中」，手动暂停再继续（删句柄重新 add）才恢复 → `native/engine/src/bt_downloader.rs`（对话框后台暂停任务的 `handle.live()` 门槛）、回归 `selection_save_lifecycle::bt_dialog_partial_selection_reaches_downloading`。
 - **eD2K 根哈希的输入序列只能经 `build_root_input` 构造**：块数恰为 part_size 整数倍时的 off-by-one（尾部空块）集中在这一个转换点处理 → `native/engine/src/ed2k/hash.rs::build_root_input`、回归 `build_root_input_phantom_tail_appends_empty`。
 - **Kad 收包循环遇 Windows `WSAECONNRESET(10054)` 必须忽略并继续等到 deadline**：向已死节点发包触发的 ICMP 端口不可达，会被 Windows 报在**下一次** `recv_from` 上；据此返回 `None` 会让一个死节点终止整个接收窗口、漏掉其后存活节点的回包 → `native/engine/src/ed2k/kad/node.rs::recv_within`。
 
