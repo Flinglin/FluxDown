@@ -451,6 +451,7 @@ impl CaptureService {
                 name: String::new(),
                 source_url: request.url,
                 error: String::new(),
+                plugin_id: String::new(),
                 items: Vec::new(),
             });
         }
