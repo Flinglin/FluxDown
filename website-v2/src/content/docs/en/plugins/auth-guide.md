@@ -69,8 +69,8 @@ By default the **Log in** button opens the fixed dialog described above. A plugi
 ```
 
 - At most one `auth` view per plugin, and it requires the top-level `auth` declaration (and therefore the `auth` permission). The view is portable (rendered from `main` with `flux.ui.view`) or a [desktop script](/docs/en/plugins/desktop-ui-guide/); the desktop app prefers the desktop script and the Web UI shows portable views only.
-- When the plugin is enabled, loaded and has no pending consent, the dialog hosts only your view. The title stays "Log in <plugin>"; the site / login-info form and the fixed buttons are not shown. Otherwise, and in the mobile apps, the default dialog is used. The button is still shown whenever the plugin has `auth.entry`.
-- Drive the login from the view: call your own `flux.rpc.handle` handlers or run the flow in `main`, store the result with `flux.auth.save`, then call `ctx.close()` to dismiss the dialog (desktop scripts: `fluxdown.close()`).
+- When the plugin is enabled, loaded and has no pending consent, the dialog hosts only your view. The title stays "Log in <plugin>"; the site / login-info form and the fixed buttons are not shown. Otherwise, and in the mobile apps, the default dialog is used. The desktop app also falls back to the default dialog when the view only has a desktop script and the plugin package is not on this machine (a remote host). The button is still shown whenever the plugin has `auth.entry`.
+- Drive the login from the view: call your own `flux.rpc.handle` handlers or run the flow in `main`, store the result with `flux.auth.save`, then call `ctx.close()` to dismiss the dialog (desktop scripts: `fluxdown.close()`). If the user is already logged in you can call `ctx.close()` straight from `init`.
 - Apps that predate this location reject the manifest, so set `minAppVersion` to the next release or later.
 
 ```js

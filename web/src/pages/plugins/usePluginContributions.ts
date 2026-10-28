@@ -53,7 +53,7 @@ export function usePluginShellBridge(): void {
         void navigate({ to: '/plugins/$pluginId/$viewId', params: { pluginId: parsed.identity, viewId: parsed.viewId } })
         return
       }
-      console.debug('plugin navigate: target not available, ignored', target)
+      console.warn('plugin navigate ignored: target not available on this client', target)
     })
     return () => setPluginNavigator(null)
   }, [entries, navigate])

@@ -148,14 +148,16 @@ export interface ViewContext {
    * Closes the container hosting this view (login dialog, settings dialog, standalone
    * window) and ends the session. For views embedded in a page (activity page, task
    * detail tab) there is no container: the view just shows as "ended" with a reopen button.
-   * Throws if called before the view has opened (during `init`).
+   * Idempotent. May be called inside `init` (for example when already logged in): the client
+   * shows the view and closes it right away.
    */
   close(): void;
   /**
    * Brings the main window to the front and switches to the target page. Rejects on an
    * unknown target or a `{ view }` that is not an `activity` view of this plugin. Ignored by
    * the client if the target page does not exist. Only the client that opened this view is
-   * affected. Throws if called before the view has opened (during `init`).
+   * affected. Rejects when called after `close()` (navigate first, then close). May be called
+   * inside `init`.
    */
   navigate(target: NavigateTarget): Promise<void>;
 }

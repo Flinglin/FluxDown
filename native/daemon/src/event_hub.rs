@@ -926,13 +926,11 @@ impl fluxdown_engine::events::EventSink for DaemonEngineEventSink {
                 return;
             }
             EngineEvent::PluginViewNavigate { session, target } => {
-                if let Some(frame) = self
+                let frame = self
                     .0
                     .plugin_views
-                    .effect(&session, fluxdown_protocol::ViewEffect::Navigate { target })
-                {
-                    self.0.publish(DaemonEvent::PluginViewFrame(frame));
-                }
+                    .effect(&session, fluxdown_protocol::ViewEffect::Navigate { target });
+                self.0.publish(DaemonEvent::PluginViewFrame(frame));
                 return;
             }
             EngineEvent::PluginToast {
@@ -945,6 +943,16 @@ impl fluxdown_engine::events::EventSink for DaemonEngineEventSink {
                     level,
                     text,
                 });
+                return;
+            }
+            #[cfg(feature = "plugins")]
+            EngineEvent::PluginsChanged(plugins) => {
+                self.0.publish(DaemonEvent::PluginsChanged(
+                    plugins
+                        .iter()
+                        .map(fluxdown_engine_protocol::plugin_info_to_dto)
+                        .collect(),
+                ));
                 return;
             }
             EngineEvent::PluginAutoDisabled { identity, reason } => {

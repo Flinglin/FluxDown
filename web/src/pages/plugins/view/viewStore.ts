@@ -44,6 +44,33 @@ export function daemonEventOf(frame: EventFrame): DaemonEvent | null {
 
 const live = new Map<string, ViewSession>()
 
+/**
+ * open 应答之前就到达的会话动作（插件可在 `init` 里 `ctx.navigate()` / `ctx.close()`，这些事件与
+ * open 应答走不同通道，可能先到）。只在有 open 进行中时缓存，登记会话时执行；全部 open 结束即清空。
+ * daemon 向所有 UI 连接广播，别的客户端的会话也会落进来，故设上限。
+ */
+interface EarlyActions {
+  effects: ViewEffect[]
+  closed: string | null
+}
+const EARLY_SESSIONS_MAX = 32
+const early = new Map<string, EarlyActions>()
+let opening = 0
+
+function stashEarly(session: string, record: (actions: EarlyActions) => void): void {
+  if (opening === 0) return
+  let actions = early.get(session)
+  if (actions === undefined) {
+    if (early.size >= EARLY_SESSIONS_MAX) {
+      console.warn('plugin view early actions dropped: too many pending sessions', session)
+      return
+    }
+    actions = { effects: [], closed: null }
+    early.set(session, actions)
+  }
+  record(actions)
+}
+
 let pluginNavigator: ((target: string) => void) | null = null
 
 /** 注册主界面跳转器（外壳挂一次）；`null` 注销。未注册时 navigate 动作被忽略。 */
@@ -101,6 +128,9 @@ export class ViewSession {
     const epoch = ++this.epoch
     this.unregister()
     this.set({ phase: 'loading', error: null, reason: null })
+    // open 进行中就订阅事件并缓存未知会话的动作：插件 init 里发出的动作可能先于应答到达。
+    opening += 1
+    ensureRunning()
     try {
       const opened = await rpc.daemon.plugin.viewOpen({
         identity: this.target.identity,
@@ -109,15 +139,27 @@ export class ViewSession {
         locale: this.target.locale,
       })
       if (this.disposed || epoch !== this.epoch) {
+        early.delete(opened.session)
         void rpc.daemon.plugin.viewClose({ session: opened.session }).catch(() => undefined)
         return
       }
       this.seq = opened.seq
       this.register(opened.session)
       this.set({ phase: 'ready', tree: opened.tree })
+      const pending = early.get(opened.session)
+      if (pending !== undefined) {
+        early.delete(opened.session)
+        // 与 daemon 发出的先后一致：先执行动作，再处理关闭。
+        for (const effect of pending.effects) runEffect(effect)
+        if (pending.closed !== null) this.handleClosed(pending.closed)
+      }
     } catch (error) {
       if (this.disposed || epoch !== this.epoch) return
       this.set({ phase: 'failed', error: errorMessage(error) })
+    } finally {
+      opening -= 1
+      if (opening === 0) early.clear()
+      stopIfIdle()
     }
   }
 
@@ -205,7 +247,12 @@ let keepaliveTimer: ReturnType<typeof setInterval> | null = null
 let wasReady = rpcStore.peek().connection.phase === 'ready'
 
 function runEffect(effect: ViewEffect): void {
-  if (effect.kind === 'navigate' && 'target' in effect && typeof effect.target === 'string') pluginNavigator?.(effect.target)
+  if (effect.kind !== 'navigate' || !('target' in effect) || typeof effect.target !== 'string') return
+  if (pluginNavigator === null) {
+    console.warn('plugin navigate ignored: no navigator registered', effect.target)
+    return
+  }
+  pluginNavigator(effect.target)
 }
 
 /** 仅测试用：直接注入事件帧。 */
@@ -221,12 +268,19 @@ function onFrame(frame: EventFrame): void {
   if (event === null) return
   if (event.type === 'pluginViewFrame') {
     const session = live.get(event.data.session)
-    if (session === undefined) return
+    const effects = event.data.effects ?? []
+    if (session === undefined) {
+      if (effects.length > 0) stashEarly(event.data.session, (actions) => actions.effects.push(...effects))
+      return
+    }
     // 动作帧：先执行 effects（不受 seq 影响），再按 seq 规则处理 ops。
-    for (const effect of event.data.effects ?? []) runEffect(effect)
+    for (const effect of effects) runEffect(effect)
     session.applyFrame(event.data.seq, event.data.ops)
   } else if (event.type === 'pluginViewClosed') {
-    live.get(event.data.session)?.handleClosed(event.data.reason)
+    const session = live.get(event.data.session)
+    const { reason } = event.data
+    if (session === undefined) stashEarly(event.data.session, (actions) => (actions.closed = reason))
+    else session.handleClosed(reason)
   }
 }
 
@@ -254,7 +308,7 @@ function ensureRunning(): void {
 }
 
 function stopIfIdle(): void {
-  if (live.size > 0) return
+  if (live.size > 0 || opening > 0) return
   unsubscribeEvents?.()
   unsubscribeEvents = null
   unsubscribeStore?.()

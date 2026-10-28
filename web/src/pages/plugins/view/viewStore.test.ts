@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import type { EventFrame, ViewNode } from '../../../lib/rpc'
+import { rpc } from '../../../lib/rpc'
+import type { EventFrame, PluginViewOpenedDto, ViewNode } from '../../../lib/rpc'
 import { ViewSession, onPluginViewEventForTest, setPluginNavigator } from './viewStore'
 
 const root = (text: string): ViewNode => ({ id: 'root', k: 'text', p: { text }, c: [] })
@@ -87,6 +88,64 @@ describe('plugin view requested close', () => {
     onPluginViewEventForTest(daemonFrame({ type: 'pluginViewClosed', data: { session: 's5', reason: 'expired' } }))
     expect(closed).toBe(0)
     expect(session.getState().phase).toBe('closed')
+    session.dispose()
+  })
+})
+
+describe('plugin view actions before the open reply', () => {
+  const plugin = rpc.daemon.plugin
+  const original = { viewOpen: plugin.viewOpen, viewClose: plugin.viewClose }
+  afterEach(() => {
+    Object.assign(plugin, original)
+  })
+
+  /** 让 `viewOpen` 挂起，返回放行函数。 */
+  function holdOpen(session: string): () => void {
+    let release: () => void = () => undefined
+    const reply = new Promise<PluginViewOpenedDto>((resolve) => {
+      release = () => resolve({ session, seq: 0, tree: root('init') })
+    })
+    Object.assign(plugin, { viewOpen: () => reply, viewClose: () => Promise.resolve({}) })
+    return () => release()
+  }
+
+  test('navigate and close from init run once the session registers', async () => {
+    const targets: string[] = []
+    setPluginNavigator((target) => targets.push(target))
+    const release = holdOpen('e1')
+    const session = new ViewSession({ identity: 'a@x', view: 'v', locale: 'en' })
+    let closed = 0
+    session.onRequestClose = () => {
+      closed += 1
+    }
+    const opening = session.open()
+    onPluginViewEventForTest(
+      daemonFrame({ type: 'pluginViewFrame', data: { session: 'e1', seq: 0, ops: [], effects: [{ kind: 'navigate', target: 'downloads' }] } }),
+    )
+    onPluginViewEventForTest(daemonFrame({ type: 'pluginViewClosed', data: { session: 'e1', reason: 'requested' } }))
+    expect(targets).toEqual([])
+    expect(closed).toBe(0)
+    release()
+    await opening
+    expect(targets).toEqual(['downloads'])
+    expect(closed).toBe(1)
+    expect(session.sessionId).toBeNull()
+    session.dispose()
+  })
+
+  test('actions for unknown sessions are dropped when no open is in flight', async () => {
+    const session = new ViewSession({ identity: 'a@x', view: 'v', locale: 'en' })
+    let closed = 0
+    session.onRequestClose = () => {
+      closed += 1
+    }
+    onPluginViewEventForTest(daemonFrame({ type: 'pluginViewClosed', data: { session: 'e2', reason: 'requested' } }))
+    const release = holdOpen('e2')
+    const opening = session.open()
+    release()
+    await opening
+    expect(closed).toBe(0)
+    expect(session.getState().phase).toBe('ready')
     session.dispose()
   })
 })

@@ -145,6 +145,8 @@ impl PluginViewHost {
             locale: (!locale.is_empty()).then_some(locale),
         };
         let call = self.call("daemon.plugin.view.open", serde_json::to_value(&params));
+        // open 进行中缓存未知会话的动作：插件在 init 里 close / navigate 的事件可能先于应答到达。
+        PortableSessions::begin_open(cx);
         cx.spawn(async move |this, cx| {
             let result = decode!(call.await, PluginViewOpenedDto);
             if this
@@ -153,6 +155,7 @@ impl PluginViewHost {
             {
                 log::debug!("plugin view host released before open finished");
             }
+            cx.update(PortableSessions::end_open);
         })
         .detach();
         cx.notify();
@@ -166,7 +169,10 @@ impl PluginViewHost {
                 self.seq = opened.seq;
                 self.tree = Some(opened.tree);
                 self.revision += 1;
-                PortableSessions::register(opened.session, cx.weak_entity(), cx);
+                let early = PortableSessions::register(opened.session, cx.weak_entity(), cx);
+                if let Some(early) = early {
+                    self.apply_early(early, cx);
+                }
             }
             Err(message) => {
                 self.phase = Phase::Closed;
@@ -174,6 +180,16 @@ impl PluginViewHost {
             }
         }
         cx.notify();
+    }
+
+    /// 执行 open 应答前已到达的动作：先动作、后关闭（与 daemon 发出的先后一致）。
+    fn apply_early(&mut self, early: super::EarlyActions, cx: &mut Context<Self>) {
+        for effect in &early.effects {
+            self.run_effect(effect, cx);
+        }
+        if let Some(reason) = early.closed {
+            self.mark_closed(&reason, cx);
+        }
     }
 
     /// 应用 daemon 推来的帧。
@@ -213,15 +229,20 @@ impl PluginViewHost {
     fn run_effect(&self, effect: &ViewEffect, cx: &mut App) {
         match effect {
             ViewEffect::Navigate { target } => {
+                // 插件那边 `ctx.navigate()` 已成功返回，这里失败只能留在日志里，用 warn 便于诊断。
                 if let Err(message) = crate::navigate(cx, &self.identity, target) {
-                    log::debug!(
+                    log::warn!(
                         "plugin view {}/{} navigate to {target} ignored: {message}",
                         self.identity,
                         self.view
                     );
                 }
             }
-            ViewEffect::Unknown => {}
+            ViewEffect::Unknown => log::debug!(
+                "plugin view {}/{} sent an action this client does not support",
+                self.identity,
+                self.view
+            ),
         }
     }
 

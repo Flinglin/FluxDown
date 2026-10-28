@@ -109,17 +109,20 @@ impl PluginViewStore {
 
     /// 动作帧：携带宿主副作用（跳转等），seq 取会话当前值且不递增、ops 为空。
     /// 客户端先执行 effects，再按原 seq 规则处理 ops（空 ops 不会推进序号）。
-    /// 未知会话返回 `None`。
+    ///
+    /// 会话尚未登记（插件在 `init` 里发起动作，open 应答还没返回）时 seq 取 0：客户端在 open
+    /// 进行中会按会话缓存动作，登记后执行，因此动作不能因存储里暂时没有该会话而丢弃。
     #[must_use]
-    pub fn effect(&self, session: &str, effect: ViewEffect) -> Option<PluginViewFrameDto> {
-        let sessions = lock(&self.sessions);
-        let stored = sessions.get(session)?;
-        Some(PluginViewFrameDto {
+    pub fn effect(&self, session: &str, effect: ViewEffect) -> PluginViewFrameDto {
+        let seq = lock(&self.sessions)
+            .get(session)
+            .map_or(0, |stored| stored.seq);
+        PluginViewFrameDto {
             session: session.to_owned(),
-            seq: stored.seq,
+            seq,
             ops: Vec::new(),
             effects: vec![effect],
-        })
+        }
     }
 }
 
@@ -139,32 +142,21 @@ mod tests {
     }
 
     #[test]
-    fn effect_frame_keeps_seq_and_unknown_session_is_none() {
+    fn effect_frame_keeps_seq_and_is_emitted_before_registration() {
         let store = PluginViewStore::default();
+        let navigate = || ViewEffect::Navigate {
+            target: "rss".to_owned(),
+        };
+        // 插件在 init 里跳转：会话尚未登记，动作照样成帧（seq 0），交给客户端缓存。
+        let early = store.effect("s", navigate());
+        assert_eq!((early.seq, early.effects.len()), (0, 1));
         opened(&store, "s", "0");
         let _ = store.rendered("s", &text_tree("1")).unwrap();
-        let frame = store
-            .effect(
-                "s",
-                ViewEffect::Navigate {
-                    target: "rss".to_owned(),
-                },
-            )
-            .unwrap();
+        let frame = store.effect("s", navigate());
         assert_eq!(frame.seq, 1);
         assert!(frame.ops.is_empty());
-        assert_eq!(frame.effects.len(), 1);
+        assert_eq!(frame.effects, vec![navigate()]);
         assert_eq!(store.snapshot("s").unwrap().0, 1);
-        assert!(
-            store
-                .effect(
-                    "nope",
-                    ViewEffect::Navigate {
-                        target: "rss".to_owned()
-                    }
-                )
-                .is_none()
-        );
     }
 
     #[test]

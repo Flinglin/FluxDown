@@ -730,9 +730,8 @@ const HOST_PRELUDE: &str = r#"
     };
   }
 
-  const requireReady = (s) => {
-    if (!s.ready) throw new Error('close/navigate is not available until the view has opened');
-  };
+  // close / navigate 在 init 内也可调用：动作随会话一起送达客户端（客户端在 open 应答前到达的
+  // 动作会先缓存，登记会话后再执行）。close 幂等：会话已请求关闭后再次调用不做任何事。
   const makeCtx = (s, session, props, taskId, locale) => ({
     session,
     props: props || {},
@@ -740,12 +739,13 @@ const HOST_PRELUDE: &str = r#"
     locale: locale || '',
     refresh() { __flux_view_refresh(session); },
     close() {
-      requireReady(s);
+      if (s.closing) return;
       const r = JSON.parse(__flux_view_close(session));
       if (r.__fluxError) throw new Error(r.__fluxError);
+      s.closing = true;
     },
     navigate(target) {
-      requireReady(s);
+      if (s.closing) return Promise.reject(new Error('navigate: the view has been closed; call navigate() before close()'));
       return __flux_view_navigate(session, JSON.stringify(target === undefined ? null : target)).then((raw) => {
         const r = JSON.parse(raw);
         if (r.__fluxError) throw new Error(r.__fluxError);
@@ -767,7 +767,7 @@ const HOST_PRELUDE: &str = r#"
     async viewOpen(a) {
       const def = views.get(a.view);
       if (!def) throw new Error('view not registered: ' + a.view);
-      const s = { def, ready: false, ctx: null, state: {} };
+      const s = { def, closing: false, ctx: null, state: {} };
       s.ctx = makeCtx(s, a.session, a.props, a.taskId, a.locale);
       sessions.set(a.session, s);
       try {
@@ -775,9 +775,7 @@ const HOST_PRELUDE: &str = r#"
           const st = await def.init(s.ctx);
           if (st !== undefined) s.state = st;
         }
-        const tree = await renderSession(s);
-        s.ready = true;
-        return tree;
+        return await renderSession(s);
       } catch (e) {
         sessions.delete(a.session);
         throw e;

@@ -51,6 +51,7 @@
 - **resolver 的 `audioUrl: ""` 是「无音轨」，不能当轨对**：`Some("")` 曾让任务走 DASH 下载器、把直链当 MPD 拉取解析而失败（YouTube「仅音频」档、变体切到无音轨档都会命中）；空串在落入 `QueuedTask` 时就要归一成 `None` → `native/engine/src/download_manager.rs::apply_resolve_to_queued`、回归 `native/engine/tests/engine/plugin_lazy_resolve.rs::explicit_empty_audio_url_downloads_single_file`。
 - **`ephemeral` 结果的 `totalBytes` 只能给准确值**：引擎跳过探测并按它切 Range，估算值（码率 × 时长）偏大时尾段 416 反复重试直到任务失败；拿不到准确长度就给 0 / 不给 → `packages/plugin-sdk/examples/youtube-down/src/formats.js::toVariant`（YouTube 音画合一的 itag 18 没有 `contentLength`）。
 - **在 QuickJS 里跑 yt-dlp-ejs 要放宽 resolver 堆上限**：冷解析约 3 MB 的播放器 JS（meriyah AST）峰值 160–180 MiB，默认 64 MiB 必 OOM；预处理产物缓存进 `flux.fs` 后热路径约 50–64 MiB → manifest `resolvers[0].memoryLimitMb`（`native/engine/src/plugin/manager.rs::resolve_budget_for`、`RESOLVE_MEMORY_CEILING`），示例 `packages/plugin-sdk/examples/youtube-down/src/player.js`。
+- **可移植视图的动作 / 关闭事件可能先于 `view.open` 应答到达客户端**：插件在 `init` 里 `ctx.navigate()` / `ctx.close()` 时，事件经广播通道、应答经 RPC 通道各自送达，客户端按会话 id 找宿主会扑空而静默丢失；daemon 也会在登记前收到关闭、留下永不清理的存储条目。客户端在 open 进行中按会话缓存动作、登记时执行，daemon 登记后用 `has_view_session` 补清 → GPUI `crates/plugin_ui/src/portable/mod.rs::PortableSessions::{stash,register}`、Web `web/src/pages/plugins/view/viewStore.ts::stashEarly`、`native/daemon/src/plugin_host_rpc.rs`（`DAEMON_PLUGIN_VIEW_OPEN`）；回归 `actions_arriving_before_the_open_reply_run_once_the_session_registers`、`actions_from_init_reach_clients_and_closed_session_is_not_stored`。
 
 ## daemon / agent 本机服务
 

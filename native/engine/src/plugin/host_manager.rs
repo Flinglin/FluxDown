@@ -1071,21 +1071,19 @@ impl PluginManager {
     // 设置
     // ---------------------------------------------------------------------
 
-    /// 校验 `session` 属于 `identity` 且已完成首帧（`ctx.close/navigate` 共用）。
+    /// 校验 `session` 属于 `identity`（`ctx.close/navigate` 共用）。`init` 期间（首帧返回前）也
+    /// 放行：动作经事件送达客户端，客户端在 open 应答前收到的动作会先缓存、登记会话后再执行。
     fn check_view_session(&self, identity: &str, session: &str) -> Result<(), PluginError> {
-        let sessions = lock(&self.host.sessions);
-        match sessions.get(session) {
-            Some(entry) if entry.identity == identity => {
-                if entry.opened {
-                    Ok(())
-                } else {
-                    Err(PluginError::Runtime(
-                        "close/navigate is not available until the view has opened".to_string(),
-                    ))
-                }
-            }
+        match lock(&self.host.sessions).get(session) {
+            Some(entry) if entry.identity == identity => Ok(()),
             _ => Err(PluginError::Runtime(format!("unknown session: {session}"))),
         }
+    }
+
+    /// 会话是否仍存在（daemon 在 open 应答前据此清理插件已在 `init` 中关闭的会话）。
+    #[must_use]
+    pub fn has_view_session(&self, session: &str) -> bool {
+        lock(&self.host.sessions).contains_key(session)
     }
 
     /// `ctx.close()`：原因固定为 `requested`（对应 `fluxdown_protocol::VIEW_CLOSE_REASON_REQUESTED`；
