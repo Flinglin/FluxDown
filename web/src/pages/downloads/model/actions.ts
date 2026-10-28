@@ -120,7 +120,11 @@ export async function resumeIfFailed(taskId: string, wasFailed: boolean): Promis
 }
 
 export function isPluginRetryError(view: DownloadTaskView): boolean {
-  return view.state === 'failed' && view.errorMessage.startsWith(PLUGIN_ERROR_PREFIX)
+  return (
+    view.state === 'failed' &&
+    view.groupId === '' &&
+    view.errorMessage.startsWith(PLUGIN_ERROR_PREFIX)
+  )
 }
 
 export async function confirmIgnorePluginRetry(taskId: string): Promise<boolean> {

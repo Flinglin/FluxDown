@@ -441,7 +441,7 @@ pub(crate) struct TaskMenuFacts {
     pub(crate) is_bt: bool,
     /// `url` 是 http(s) / ftp 链接（引擎 `change_task_url` 仅接受这些源）。
     pub(crate) url_replaceable: bool,
-    /// 失败态且错误消息带插件重试前缀。
+    /// 失败态、错误消息带插件重试前缀且非任务组成员（组成员的原始链接是分享页，daemon 拒绝忽略重试）。
     pub(crate) is_plugin_retry_error: bool,
     /// 已完成但产物已不在下载目录（文件跟踪扫描结果）。
     pub(crate) file_missing: bool,
@@ -455,7 +455,8 @@ pub(crate) struct TaskMenuFacts {
     pub(crate) share_can_send: bool,
 }
 
-/// 引擎/daemon 插件系统失败任务的错误消息前缀。
+/// 可「忽略插件重试」的插件失败错误消息前缀（引擎 `handle_resolve_ready`；二段解析任务
+/// 失败用 `[解析插件]`，不匹配本前缀，daemon 也拒绝对其忽略插件）。
 pub(crate) const PLUGIN_ERROR_PREFIX: &str = "[插件]";
 
 /// `url` 以任一 scheme 前缀开头（ASCII 大小写不敏感，不分配）。
@@ -520,6 +521,7 @@ pub(crate) fn task_menu_facts_for(store: &TaskStore, key: &RowKey) -> Option<Tas
         is_bt: is_bt_url(&row.url),
         url_replaceable: is_replaceable_url(&row.url),
         is_plugin_retry_error: row.state == TaskState::Failed
+            && row.group_id.is_empty()
             && row.error_message.starts_with(PLUGIN_ERROR_PREFIX),
         file_missing: row.is_file_missing(),
         is_seeding: row.is_seeding(),
@@ -5824,6 +5826,33 @@ mod context_menu_tests {
         let plain_failure = task(true, TaskState::Failed);
         assert!(!context_menu_items(&[plain_failure]).contains(&MenuEntry::IgnorePluginRetry));
         assert_eq!(PLUGIN_ERROR_PREFIX, "[插件]");
+    }
+
+    #[test]
+    fn plugin_retry_fact_excludes_task_group_members() {
+        use fluxdown_protocol::TaskDto;
+
+        use super::task_menu_facts_for;
+        use crate::model::{DownloadTaskView, RowKey, TaskStore};
+
+        let store = TaskStore::default();
+        for (id, group) in [("solo", ""), ("member", "g1")] {
+            let dto: TaskDto = serde_json::from_value(serde_json::json!({
+                "taskId": id, "url": "https://example.com/f", "fileName": "f.zip",
+                "saveDir": "/tmp", "status": 4, "downloadedBytes": 0, "totalBytes": 10,
+                "errorMessage": "[插件] yt: boom", "createdAt": "1", "proxyUrl": "",
+                "queueId": "", "checksum": "", "groupId": group
+            }))
+            .expect("task");
+            store.push_local(DownloadTaskView::local(&dto, None, false));
+        }
+        let fact = |id: &str| {
+            task_menu_facts_for(&store, &RowKey::Local(id.to_owned()))
+                .expect("facts")
+                .is_plugin_retry_error
+        };
+        assert!(fact("solo"));
+        assert!(!fact("member"));
     }
 
     #[test]
